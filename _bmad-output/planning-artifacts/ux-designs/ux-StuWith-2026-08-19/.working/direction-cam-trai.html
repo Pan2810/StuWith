@@ -1,0 +1,129 @@
+<!doctype html><html lang="vi"><head><meta charset="utf-8"><title>Hướng 4 — Cắm trại</title>
+<style>
+/* ============ HƯỚNG 4 — "CẮM TRẠI" ============
+   bg #F3F0FF · surface #FFFFFF · line #E0D9F5 · ink #211A3D
+   primary #6C4CF0 (tím) · coral #FF6F52 · coin #F5A623 · ok #17B978
+   radius 24 · viền dày 2px · bóng lệch · chữ rất đậm · biểu tượng to
+   Register: vui, ẩn danh là trò chơi, uy tín/huy hiệu như game.   */
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#E7E1FB;color:#211A3D;font:15px/1.5 "Segoe UI",system-ui,sans-serif;padding:32px}
+.wrap{max-width:1180px;margin:0 auto}
+.note{background:#FFF;border:2px solid #211A3D;border-radius:20px;padding:18px 22px;margin-bottom:28px;box-shadow:5px 5px 0 #6C4CF0}
+.note h2{font:800 21px/1.3 inherit;margin-bottom:8px}
+.note p{color:#5A5375;font-size:14px;max-width:80ch}
+.frame{border:2px solid #211A3D;border-radius:24px;overflow:hidden;background:#F3F0FF;margin-bottom:32px;box-shadow:6px 6px 0 #211A3D1A}
+.chrome{background:#FFF;border-bottom:2px solid #211A3D;padding:9px 16px;font-size:12px;color:#8B84A8;display:flex;gap:8px;align-items:center}
+.dot{width:10px;height:10px;border-radius:50%;background:#FF6F52;border:1.5px solid #211A3D}
+.label{margin:0 0 10px;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#6C4CF0;font-weight:800}
+.topbar{display:flex;justify-content:space-between;align-items:center;gap:24px;padding:18px 24px;background:#FFF;border-bottom:2px solid #211A3D}
+.topbar h1{font:800 22px/1.25 inherit}
+.topbar p{color:#5A5375;font-size:13.5px;margin-top:5px;font-weight:600}
+.chip{display:inline-flex;align-items:center;gap:6px;font-size:13px;padding:8px 14px;border-radius:999px;border:2px solid #211A3D;background:#FFF;color:#211A3D;font-weight:800;white-space:nowrap}
+.chip.ok{background:#D6F7E8}
+.chip.warn{background:#FFE0D9}
+.chip.coin{background:#FFEFCF}
+.meta{display:flex;gap:10px}
+.body{display:grid;grid-template-columns:1fr 330px}
+.stage{padding:22px}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.tile{aspect-ratio:4/3;border-radius:22px;background:#FFF;border:2px solid #211A3D;position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center}
+.tile.live{background:linear-gradient(150deg,#C9BEFB,#A895F5 60%,#8E79EF)}
+.tile.speak{box-shadow:0 0 0 4px #17B978}
+.av{width:70px;height:70px;border-radius:22px;background:#FFEFCF;display:flex;align-items:center;justify-content:center;font:800 22px/1 inherit;color:#211A3D;border:2px solid #211A3D;transform:rotate(-3deg)}
+.nm{position:absolute;left:10px;bottom:10px;font-size:12.5px;font-weight:800;color:#211A3D;background:#FFF;padding:4px 10px;border-radius:999px;border:2px solid #211A3D}
+.bdg{position:absolute;right:9px;top:9px;font-size:11px;font-weight:800;padding:4px 9px;border-radius:999px;background:#FFEFCF;color:#211A3D;border:2px solid #211A3D}
+.mut{position:absolute;left:10px;top:9px;font-size:11px;font-weight:800;color:#211A3D;background:#FFE0D9;padding:4px 9px;border-radius:999px;border:2px solid #211A3D}
+.controls{display:flex;gap:10px;justify-content:center;margin-top:22px;padding-top:20px;border-top:2px dashed #C9BEFB;flex-wrap:wrap}
+.btn{padding:13px 20px;border-radius:999px;border:2px solid #211A3D;background:#FFF;color:#211A3D;font-size:14px;font-weight:800}
+.btn.pri{background:#6C4CF0;color:#FFF;box-shadow:3px 3px 0 #211A3D}
+.btn.dan{background:#FFE0D9}
+.rail{border-left:2px solid #211A3D;padding:20px;display:flex;flex-direction:column;gap:14px;background:#F9F7FF}
+.card{background:#FFF;border:2px solid #211A3D;border-radius:22px;padding:18px}
+.card.ask{background:#FFEFCF;box-shadow:4px 4px 0 #211A3D}
+.card h3{font:800 15px/1.3 inherit;margin-bottom:4px}
+.card small{color:#5A5375;font-size:13px;display:block;line-height:1.55;font-weight:600}
+.count{font:800 44px/1 inherit;color:#211A3D;margin:10px 0 4px;letter-spacing:-.02em}
+.bar{height:12px;border-radius:999px;background:#FFF;border:2px solid #211A3D;overflow:hidden;margin-top:12px}
+.bar i{display:block;height:100%;width:68%;background:#F5A623}
+.msg{margin-bottom:12px;font-size:14px;line-height:1.5}
+.msg b{color:#6C4CF0;font-weight:800}
+.msg span{color:#211A3D}
+.comp{margin-top:auto;border:2px dashed #C9BEFB;border-radius:18px;padding:13px 15px;color:#8B84A8;font-size:13.5px;background:#F9F7FF;font-weight:600}
+.warnbar{display:flex;gap:10px;align-items:center;padding:14px 24px;background:#FFE0D9;border-bottom:2px solid #211A3D;color:#211A3D;font-size:14px;font-weight:800}
+</style></head><body><div class="wrap">
+
+<div class="note"><h2>Hướng 4 — “Cắm trại”</h2>
+<p>Tím đậm, coral, viền đen dày và bóng lệch — ngôn ngữ hình đồ chơi. Ẩn mặt và filter được đối xử như một trò vui chứ không phải tính năng ẩn danh nghiêm trọng, huy hiệu và hạng uy tín trông như thành tựu trong game. Vui, dễ nhớ, dễ chia sẻ — nhưng phải cân nhắc với lớp Campus của tổ chức và với ngôn ngữ pháp lý quanh coin.</p></div>
+
+<p class="label">Màn chủ đạo · Phòng học live · mạng tốt</p>
+<div class="frame">
+ <div class="chrome"><span class="dot"></span><span class="dot" style="background:#F5A623"></span><span class="dot" style="background:#17B978"></span>&nbsp; stuwith.app/room/giai-tich-1</div>
+ <div class="topbar">
+   <div><h1>Ôn Giải tích 1 — Tích phân từng phần</h1>
+     <p>Host <b>Minh Anh</b> · 🎓 Thạc sĩ Toán (đã xác minh) · Study Circle · 6/25 người</p></div>
+   <div class="meta"><span class="chip ok">● Mạng tốt</span><span class="chip coin">◈ 1.000.000</span></div>
+ </div>
+ <div class="body">
+  <div class="stage">
+   <div class="grid">
+     <div class="tile live speak"><span class="nm">Minh Anh · Host</span><span class="bdg">Đang nói</span></div>
+     <div class="tile live"><span class="nm">Trâm</span></div>
+     <div class="tile"><div class="av">HK</div><span class="nm">Hoàng Khang</span><span class="bdg">Ẩn mặt</span></div>
+     <div class="tile live"><span class="nm">Duy</span><span class="bdg">🐱 Mèo</span></div>
+     <div class="tile"><div class="av">NL</div><span class="nm">Ngọc Lan</span><span class="mut">🎤 tắt</span></div>
+     <div class="tile"><div class="av">Bạn</div><span class="nm">Bạn</span><span class="bdg">Ẩn mặt</span></div>
+   </div>
+   <div class="controls">
+     <button class="btn">🎤 Micro</button><button class="btn">📷 Camera</button>
+     <button class="btn pri">🙈 Chế độ khuôn mặt</button><button class="btn">✋ Giơ tay</button>
+     <button class="btn">◈ Hỏi riêng</button><button class="btn dan">Rời phòng</button>
+   </div>
+  </div>
+  <div class="rail">
+    <div class="card ask"><h3>Đang hỏi riêng · Minh Anh</h3>
+      <small>120 coin/phút · trừ theo block 1 phút</small>
+      <div class="count">08:20</div>
+      <small>Còn lại với số coin hiện có. Hết coin phiên tự dừng.</small>
+      <div class="bar"><i></i></div></div>
+    <div class="card" style="flex:1">
+      <h3 style="margin-bottom:12px">Chat cả phòng</h3>
+      <div class="msg"><b>Trâm</b><br><span>Ai giải giúp câu 3b với ạ</span></div>
+      <div class="msg"><b>Minh Anh</b><br><span>Đặt u = ln x rồi làm từng phần nhé</span></div>
+      <div class="msg"><b>Hoàng Khang</b><br><span>Mình mở mic hỏi được không</span></div>
+      <div class="comp">Nhắn cả phòng — miễn phí</div>
+    </div>
+  </div>
+ </div>
+</div>
+
+<p class="label">Trạng thái bắt buộc · mạng yếu → video tụt xuống avatar</p>
+<div class="frame">
+ <div class="warnbar">⚠ Mạng yếu — đã tắt video để giữ tiếng. Âm thanh vẫn thông suốt.</div>
+ <div class="topbar">
+   <div><h1>Ôn Giải tích 1 — Tích phân từng phần</h1>
+     <p>Host <b>Minh Anh</b> · chế độ nhẹ · 6/25 người</p></div>
+   <div class="meta"><span class="chip warn">● Mạng yếu</span><span class="chip coin">◈ 1.000.000</span></div>
+ </div>
+ <div class="body">
+  <div class="stage">
+   <div class="grid">
+     <div class="tile speak"><div class="av">MA</div><span class="nm">Minh Anh · Host</span><span class="bdg">Đang nói</span></div>
+     <div class="tile"><div class="av">TR</div><span class="nm">Trâm</span></div>
+     <div class="tile"><div class="av">HK</div><span class="nm">Hoàng Khang</span></div>
+     <div class="tile"><div class="av">DU</div><span class="nm">Duy</span></div>
+     <div class="tile"><div class="av">NL</div><span class="nm">Ngọc Lan</span><span class="mut">🎤 tắt</span></div>
+     <div class="tile"><div class="av">Bạn</div><span class="nm">Bạn</span></div>
+   </div>
+   <div class="controls"><button class="btn">🎤 Micro</button><button class="btn">📷 Bật lại camera</button>
+     <button class="btn pri">🙈 Chế độ khuôn mặt</button><button class="btn dan">Rời phòng</button></div>
+  </div>
+  <div class="rail">
+    <div class="card"><h3>Chất lượng kết nối</h3>
+      <small>Video của mọi người đã chuyển thành avatar. Bạn vẫn nghe và nói bình thường.</small></div>
+    <div class="card" style="flex:1"><h3 style="margin-bottom:12px">Chat cả phòng</h3>
+      <div class="msg"><b>Minh Anh</b><br><span>Mạng mình yếu, mình tắt hình nói tiếp nhé</span></div>
+      <div class="comp">Nhắn cả phòng — miễn phí</div></div>
+  </div>
+ </div>
+</div>
+</div></body></html>

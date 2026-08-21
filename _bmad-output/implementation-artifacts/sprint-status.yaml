@@ -1,0 +1,104 @@
+# STATUS DEFINITIONS:
+# ==================
+# Epic Status:
+#   - backlog: Epic not yet started
+#   - in-progress: Epic actively being worked on
+#   - done: All stories in epic completed
+
+# Story Status:
+#   - backlog: Story only exists in epic file
+#   - ready-for-dev: Story file created, ready for development
+#   - in-progress: Developer actively working on implementation
+#   - review: Implementation complete, ready for review
+#   - done: Story completed
+
+# Retrospective Status:
+#   - optional: Can be completed but not required
+#   - done: Retrospective has been completed
+
+# Action Item Status:
+#   - open: Committed during a retrospective, not yet addressed
+#   - in-progress: Actively being worked on
+#   - done: Completed
+
+# WORKFLOW NOTES:
+# ===============
+# - Epic transitions to 'in-progress' automatically when its first story starts (via build's sprint sync)
+# - Stories can be worked in parallel if team capacity allows
+# - Developer typically creates the next story after the previous one is 'done' to incorporate learnings
+# - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
+# - Retrospective appends its action items to action_items; the status view surfaces open ones
+generated: 08-21-2026 21:27
+last_updated: 08-21-2026 21:27
+project: StuWith
+project_key: NOKEY
+tracking_system: file-system
+story_location: _bmad-output/implementation-artifacts
+development_status:
+  epic-1: backlog
+  1-1-dựng-khung-monorepo-hai-process-và-bốn-cổng-ci: backlog
+  1-2-đăng-nhập-bằng-bốn-provider-mạng-xã-hội: backlog
+  1-3-trạng-thái-lỗi-đăng-nhập-và-chống-brute-force: backlog
+  1-4-khai-ngày-sinh-khi-tạo-hồ-sơ-lần-đầu: backlog
+  1-5-cổng-chặn-hành-vi-có-tiền-theo-tuổi: backlog
+  1-6-hệ-thiết-kế-cắm-trại-token-light-và-dark: backlog
+  1-7-audit-log-append-only-và-lọc-pii-khỏi-log: backlog
+  epic-1-retrospective: optional
+
+  epic-2: backlog
+  2-1-tạo-phòng-học-với-chủ-đề-và-quyền: backlog
+  2-2-cấp-token-vào-phòng-kèm-giữ-chỗ-nguyên-tử: backlog
+  2-3-màn-pre-join-xem-trước-chọn-khuôn-mặt-thử-mic: backlog
+  2-4-vào-phòng-và-nghe-thấy-nhau: backlog
+  2-5-thang-suy-giảm-mạng-bốn-bậc: backlog
+  2-6-lưới-người-tham-gia-đi-được-bằng-bàn-phím: backlog
+  2-7-ba-chế-độ-khuôn-mặt-xử-lý-client-side: backlog
+  2-8-chat-cả-phòng-với-lọc-nội-dung-và-report: backlog
+  epic-2-retrospective: optional
+
+  epic-3: backlog
+  3-1-sổ-cái-coin-và-số-dư-không-ghi-trực-tiếp-được: backlog
+  3-2-ví-coin-số-dư-và-lịch-sử-giao-dịch: backlog
+  3-3-bật-nhận-hỏi-riêng-và-đặt-giá-trong-khung: backlog
+  3-4-thẻ-xác-nhận-trước-khi-trừ-đồng-coin-đầu-tiên: backlog
+  3-5-phiên-hỏi-riêng-với-đồng-hồ-chạy-ở-server: backlog
+  3-6-ba-cách-một-phiên-dừng-hết-coin-mất-mạng-tắt-mic: backlog
+  3-7-phiên-nhiều-người-mỗi-người-một-đồng-hồ: backlog
+  3-8-trạng-thái-bận-và-xin-tham-gia-hai-phiếu: backlog
+  3-9-người-vào-sau-tính-từ-block-sau-khi-vào: backlog
+  epic-3-retrospective: optional
+
+  epic-4: backlog
+  4-1-một-cửa-duy-nhất-cho-mọi-input-đi-vào-ai: backlog
+  4-2-ai-match-theo-nguyện-vọng: backlog
+  4-3-xác-minh-danh-tính-qua-nhà-cung-cấp-bên-thứ-ba: backlog
+  4-4-huy-hiệu-học-vấn-và-badge-kỹ-năng: backlog
+  4-5-điểm-nỗ-lực-và-hạng-theo-mùa: backlog
+  4-6-kênh-lệnh-bền-giữa-hai-process: backlog
+  4-7-report-xử-lý-vi-phạm-và-thu-hồi-quyền: backlog
+  4-8-đóng-phòng-theo-giao-thức-hai-bước: backlog
+  epic-4-retrospective: optional
+
+  epic-5: backlog
+  5-1-ba-gói-dịch-vụ-và-trần-người-theo-gói: backlog
+  5-2-nạp-coin-qua-cổng-thanh-toán: backlog
+  5-3-ba-trạng-thái-khi-quay-lại-từ-cổng-thanh-toán: backlog
+  epic-5-retrospective: optional
+
+action_items:
+  - epic: 1
+    action: "Chốt nền tảng CI + framework test — Story 1.1 dựng bốn cổng chất lượng (AD-20) nên phải chọn trước khi build story đầu tiên"
+    owner: "IPan"
+    status: open
+  - epic: 2
+    action: "Chốt SDK face-filter client-side cho Story 2.7 — PRD §6 hẹn quyết ở Architecture nhưng bảng Stack không có dòng nào; ràng buộc đã đủ (client-side, >=20 FPS trên máy 4 nhân/8GB/không GPU rời, 3 chế độ, tự hạ bậc)"
+    owner: "IPan"
+    status: open
+  - epic: 4
+    action: "Chốt nhà cung cấp embedding và SỐ CHIỀU vector cho Story 4.2 — AC ghi nguyên văn vector(n) với n chưa có giá trị; spine cảnh báo đổi số chiều là migration sinh lại toàn bộ vector"
+    owner: "IPan"
+    status: open
+  - epic: 5
+    action: "Chốt cổng thanh toán (Stripe/VNPay/Momo) cho Story 5.2 — phụ thuộc pháp nhân và tài khoản merchant, AD-8 đã cô lập khỏi sổ cái nên hoãn được tới sát Epic 5"
+    owner: "IPan"
+    status: open

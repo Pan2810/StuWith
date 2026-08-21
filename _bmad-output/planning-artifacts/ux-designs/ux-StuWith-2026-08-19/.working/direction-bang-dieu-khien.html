@@ -1,0 +1,144 @@
+<!doctype html><html lang="vi"><head><meta charset="utf-8"><title>Hướng 3 — Bảng điều khiển</title>
+<style>
+/* ============ HƯỚNG 3 — "BẢNG ĐIỀU KHIỂN" ============
+   bg #0B0C0E · surface #14161A · surface2 #1A1D22 · line #272B32
+   primary #22D3A0 (tín hiệu) · coin #FFC24B · warn #FF9F45 · danger #FF6B6B
+   text #E9ECF1 · muted #838C99 · radius 6 · số liệu monospace · mật độ cao
+   Register: nghiêm túc, đo đếm được, mọi con số đều là dữ liệu.  */
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#08090B;color:#E9ECF1;font:14px/1.5 "Segoe UI",system-ui,sans-serif;padding:32px}
+.mono{font-family:"Cascadia Mono",Consolas,"Courier New",monospace}
+.wrap{max-width:1180px;margin:0 auto}
+.note{background:#14161A;border:1px solid #272B32;border-left:3px solid #22D3A0;border-radius:6px;padding:18px 22px;margin-bottom:28px}
+.note h2{font:600 19px/1.3 inherit;margin-bottom:8px}
+.note p{color:#838C99;font-size:13.5px;max-width:80ch}
+.frame{border:1px solid #272B32;border-radius:8px;overflow:hidden;background:#0B0C0E;margin-bottom:32px}
+.chrome{background:#101216;border-bottom:1px solid #272B32;padding:8px 14px;font-size:11.5px;color:#5C6570;display:flex;gap:8px;align-items:center}
+.dot{width:8px;height:8px;border-radius:50%;background:#272B32}
+.label{margin:0 0 10px;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:#5C6570;font-weight:600}
+.topbar{display:flex;justify-content:space-between;align-items:center;gap:20px;padding:14px 20px;border-bottom:1px solid #1E2126;background:#101216}
+.topbar h1{font:600 16px/1.3 inherit}
+.topbar p{color:#838C99;font-size:12px;margin-top:3px}
+.kv{font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:#5C6570;display:block;margin-bottom:3px}
+.chip{display:inline-flex;flex-direction:column;padding:6px 12px;border-radius:6px;border:1px solid #272B32;background:#14161A;white-space:nowrap}
+.chip b{font-size:13.5px;font-weight:600}
+.chip.ok b{color:#22D3A0}.chip.warn b{color:#FF9F45}.chip.coin b{color:#FFC24B}
+.meta{display:flex;gap:8px}
+.body{display:grid;grid-template-columns:1fr 300px}
+.stage{padding:16px 20px 20px}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.tile{aspect-ratio:16/10;border-radius:6px;background:#14161A;border:1px solid #22262D;position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center}
+.tile.live{background:linear-gradient(160deg,#1D2A2E,#16202A 60%,#12171E)}
+.tile.speak{border-color:#22D3A0}
+.av{width:48px;height:48px;border-radius:6px;background:#1E232B;display:flex;align-items:center;justify-content:center;font:600 15px/1 "Cascadia Mono",Consolas,monospace;color:#22D3A0;border:1px solid #2C333C}
+.nm{position:absolute;left:8px;bottom:7px;font-size:11.5px;color:#C3CAD4}
+.bdg{position:absolute;right:7px;top:7px;font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;padding:2px 6px;border-radius:3px;background:#0B0C0ECC;border:1px solid #272B32;color:#838C99}
+.mut{position:absolute;left:8px;top:7px;font-size:10px;color:#FF9F45;letter-spacing:.08em;text-transform:uppercase}
+.stats{display:flex;gap:8px;margin-top:12px;font-size:11px;color:#5C6570}
+.stats span{border:1px solid #1E2126;border-radius:4px;padding:4px 9px}
+.controls{display:flex;gap:6px;justify-content:flex-start;margin-top:14px;padding-top:14px;border-top:1px solid #1E2126;flex-wrap:wrap}
+.btn{padding:9px 14px;border-radius:6px;border:1px solid #272B32;background:#14161A;color:#C3CAD4;font-size:12.5px}
+.btn.pri{background:#22D3A0;border-color:#22D3A0;color:#062018;font-weight:600}
+.btn.dan{color:#FF6B6B;border-color:#3D2626}
+.rail{border-left:1px solid #1E2126;padding:16px;display:flex;flex-direction:column;gap:12px;background:#0E1013}
+.card{background:#14161A;border:1px solid #272B32;border-radius:6px;padding:14px}
+.card.ask{border-color:#3F3520;background:#181510}
+.card h3{font:600 12.5px/1.3 inherit;margin-bottom:6px;letter-spacing:.04em}
+.card small{color:#838C99;font-size:12px;display:block;line-height:1.5}
+.count{font:600 36px/1 "Cascadia Mono",Consolas,monospace;color:#FFC24B;margin:10px 0 2px;letter-spacing:-.02em}
+.bar{height:3px;background:#272B32;overflow:hidden;margin-top:10px;border-radius:2px}
+.bar i{display:block;height:100%;width:68%;background:#FFC24B}
+.row{display:flex;justify-content:space-between;font-size:11.5px;color:#838C99;padding:5px 0;border-bottom:1px solid #1A1D22}
+.row b{color:#C3CAD4;font-weight:500}
+.msg{margin-bottom:10px;font-size:12.5px;line-height:1.5}
+.msg b{color:#22D3A0;font-weight:600}
+.msg span{color:#C3CAD4}
+.comp{margin-top:auto;border:1px solid #272B32;border-radius:6px;padding:10px 12px;color:#4F5762;font-size:12px;background:#14161A}
+.warnbar{display:flex;gap:10px;align-items:center;padding:10px 20px;background:#1A140C;border-bottom:1px solid #3F3520;color:#FF9F45;font-size:12.5px}
+</style></head><body><div class="wrap">
+
+<div class="note"><h2>Hướng 3 — “Bảng điều khiển”</h2>
+<p>Mật độ cao, bo góc nhỏ, nhãn viết hoa giãn chữ, mọi con số (coin, đồng hồ, bitrate) dùng font monospace nên đọc lướt được và không nhảy layout khi đếm ngược. Coi phòng học như một bàn điều khiển: trạng thái mạng, số coin, thời gian còn lại luôn hiển thị dạng số liệu. Nghiêm túc, hợp host chuyên nghiệp và lớp Campus đông người.</p></div>
+
+<p class="label">Màn chủ đạo · Phòng học live · mạng tốt</p>
+<div class="frame">
+ <div class="chrome"><span class="dot"></span><span class="dot"></span><span class="dot"></span>&nbsp; stuwith.app/room/giai-tich-1</div>
+ <div class="topbar">
+   <div><h1>Ôn Giải tích 1 — Tích phân từng phần</h1>
+     <p>MINH ANH · 🎓 Thạc sĩ Toán (đã xác minh) · CIRCLE · 6/25</p></div>
+   <div class="meta">
+     <span class="chip ok"><span class="kv">Kết nối</span><b class="mono">TỐT · 1.2 Mbps</b></span>
+     <span class="chip coin"><span class="kv">Số dư</span><b class="mono">1.000.000</b></span>
+   </div>
+ </div>
+ <div class="body">
+  <div class="stage">
+   <div class="grid">
+     <div class="tile live speak"><span class="nm">Minh Anh · Host</span><span class="bdg">Đang nói</span></div>
+     <div class="tile live"><span class="nm">Trâm</span><span class="bdg">720p</span></div>
+     <div class="tile"><div class="av">HK</div><span class="nm">Hoàng Khang</span><span class="bdg">Ẩn mặt</span></div>
+     <div class="tile live"><span class="nm">Duy</span><span class="bdg">Filter</span></div>
+     <div class="tile"><div class="av">NL</div><span class="nm">Ngọc Lan</span><span class="mut">Mic tắt</span></div>
+     <div class="tile"><div class="av">You</div><span class="nm">Bạn</span><span class="bdg">Ẩn mặt</span></div>
+   </div>
+   <div class="stats"><span class="mono">Audio Opus · DTX bật</span><span class="mono">Video simulcast · L3</span><span class="mono">Mất gói 0.4%</span><span class="mono">RTT 48ms</span></div>
+   <div class="controls">
+     <button class="btn">Micro</button><button class="btn">Camera</button>
+     <button class="btn pri">Chế độ khuôn mặt</button><button class="btn">Giơ tay</button>
+     <button class="btn">Hỏi riêng</button><button class="btn dan">Rời phòng</button>
+   </div>
+  </div>
+  <div class="rail">
+    <div class="card ask"><h3>PHIÊN HỎI RIÊNG · MINH ANH</h3>
+      <div class="count">08:20</div>
+      <div class="row"><span>Đơn giá</span><b class="mono">120 coin/phút</b></div>
+      <div class="row"><span>Block</span><b class="mono">1 phút</b></div>
+      <div class="row" style="border:0"><span>Đã trừ</span><b class="mono">240 coin</b></div>
+      <div class="bar"><i></i></div>
+      <small style="margin-top:8px">Hết coin phiên tự dừng, số dư không âm.</small></div>
+    <div class="card" style="flex:1">
+      <h3 style="margin-bottom:10px">CHAT CẢ PHÒNG</h3>
+      <div class="msg"><b>Trâm</b> <span>Ai giải giúp câu 3b với ạ</span></div>
+      <div class="msg"><b>Minh Anh</b> <span>Đặt u = ln x rồi làm từng phần nhé</span></div>
+      <div class="msg"><b>Hoàng Khang</b> <span>Mình mở mic hỏi được không</span></div>
+      <div class="comp">Nhắn cả phòng — miễn phí</div>
+    </div>
+  </div>
+ </div>
+</div>
+
+<p class="label">Trạng thái bắt buộc · mạng yếu → video tụt xuống avatar</p>
+<div class="frame">
+ <div class="warnbar">⚠ MẠNG YẾU — video đã tắt để giữ tiếng. Audio thông suốt.</div>
+ <div class="topbar">
+   <div><h1>Ôn Giải tích 1 — Tích phân từng phần</h1>
+     <p>MINH ANH · CHẾ ĐỘ NHẸ · 6/25</p></div>
+   <div class="meta">
+     <span class="chip warn"><span class="kv">Kết nối</span><b class="mono">YẾU · 90 kbps</b></span>
+     <span class="chip coin"><span class="kv">Số dư</span><b class="mono">1.000.000</b></span>
+   </div>
+ </div>
+ <div class="body">
+  <div class="stage">
+   <div class="grid">
+     <div class="tile speak"><div class="av">MA</div><span class="nm">Minh Anh · Host</span><span class="bdg">Đang nói</span></div>
+     <div class="tile"><div class="av">TR</div><span class="nm">Trâm</span></div>
+     <div class="tile"><div class="av">HK</div><span class="nm">Hoàng Khang</span></div>
+     <div class="tile"><div class="av">DU</div><span class="nm">Duy</span></div>
+     <div class="tile"><div class="av">NL</div><span class="nm">Ngọc Lan</span><span class="mut">Mic tắt</span></div>
+     <div class="tile"><div class="av">You</div><span class="nm">Bạn</span></div>
+   </div>
+   <div class="stats"><span class="mono">Audio Opus · RED bật</span><span class="mono">Video TẮT</span><span class="mono">Mất gói 6.1%</span><span class="mono">RTT 310ms</span></div>
+   <div class="controls"><button class="btn">Micro</button><button class="btn">Bật lại camera</button>
+     <button class="btn pri">Chế độ khuôn mặt</button><button class="btn dan">Rời phòng</button></div>
+  </div>
+  <div class="rail">
+    <div class="card"><h3>CHẤT LƯỢNG KẾT NỐI</h3>
+      <small>Video của mọi người đã chuyển thành avatar. Bạn vẫn nghe và nói bình thường.</small></div>
+    <div class="card" style="flex:1"><h3 style="margin-bottom:10px">CHAT CẢ PHÒNG</h3>
+      <div class="msg"><b>Minh Anh</b> <span>Mạng mình yếu, mình tắt hình nói tiếp nhé</span></div>
+      <div class="comp">Nhắn cả phòng — miễn phí</div></div>
+  </div>
+ </div>
+</div>
+</div></body></html>

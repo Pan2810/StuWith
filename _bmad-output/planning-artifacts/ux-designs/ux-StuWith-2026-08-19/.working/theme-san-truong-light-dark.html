@@ -1,0 +1,141 @@
+<!doctype html><html lang="vi"><head><meta charset="utf-8"><title>Sân trường — Light &amp; Dark</title>
+<style>
+/* ===== StuWith · "Sân trường" · cặp bảng màu light + dark =====
+   Mọi tỉ lệ tương phản dưới đây đã tính bằng công thức WCAG 2.1 (relative luminance).
+   LIGHT: bg #F7F4EE · surface #FFFFFF · line #E4DED2 · text #1B2124 · muted #666E73
+          primary #1F7A5A · coin #8A5310/#FDF7E9 · warn #96431A/#FDF2E7 · ok #166B4E/#EAF6F0
+   DARK : bg #14150F · surface #1D1F17 · surface2 #252822 · line #3A3E34 · text #EDE8DC · muted #A7A99C
+          primary #5FD3A4 (onPrimary #07261B) · coin #F2C46B · warn #F5A26A · ok #5FD3A4 · danger #FF8B8B  */
+*{box-sizing:border-box;margin:0;padding:0}
+body{font:15px/1.5 "Segoe UI",system-ui,sans-serif;background:#2A2C26;padding:28px;color:#EDE8DC}
+.wrap{max-width:1240px;margin:0 auto}
+h2.t{font-size:13px;letter-spacing:.12em;text-transform:uppercase;color:#A7A99C;margin:0 0 12px;font-weight:700}
+.pair{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:28px}
+.pane{border-radius:18px;overflow:hidden;border:1px solid #3A3E34}
+/* --- shared structure, tokens overridden per theme --- */
+.app{--bg:#F7F4EE;--surface:#FFFFFF;--line:#E4DED2;--text:#1B2124;--muted:#666E73;
+     --primary:#1F7A5A;--onPrimary:#FFFFFF;--coin:#8A5310;--coinBg:#FDF7E9;--coinLine:#F0DCB4;
+     --warn:#96431A;--warnBg:#FDF2E7;--warnLine:#F0D2B4;--ok:#166B4E;--okBg:#EAF6F0;--okLine:#BFE0D0;
+     --tile:linear-gradient(150deg,#CFE3D8,#B8D3C6 60%,#A7C6B7);--avBg:#EDF3EF;--avLine:#CFE3D8;
+     background:var(--bg);color:var(--text)}
+.app.dark{--bg:#14150F;--surface:#1D1F17;--line:#3A3E34;--text:#EDE8DC;--muted:#A7A99C;
+     --primary:#5FD3A4;--onPrimary:#07261B;--coin:#F2C46B;--coinBg:#2A2416;--coinLine:#4A3F22;
+     --warn:#F5A26A;--warnBg:#2B1E14;--warnLine:#4C3521;--ok:#5FD3A4;--okBg:#152A22;--okLine:#27503F;
+     --tile:linear-gradient(150deg,#2C4438,#25382E 60%,#1F2E26);--avBg:#222C25;--avLine:#33443A}
+.tag{padding:7px 14px;font-size:12px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;background:#1D1F17;color:#A7A99C;border-bottom:1px solid #3A3E34}
+.topbar{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;padding:16px 18px;background:var(--surface);border-bottom:1px solid var(--line)}
+.topbar h1{font:700 16px/1.3 inherit;color:var(--text)}
+.topbar p{color:var(--muted);font-size:12px;margin-top:4px}
+.chip{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;padding:6px 11px;border-radius:999px;border:1.5px solid var(--line);background:var(--surface);color:var(--text);font-weight:700;white-space:nowrap}
+.chip.ok{color:var(--ok);border-color:var(--okLine);background:var(--okBg)}
+.chip.warn{color:var(--warn);border-color:var(--warnLine);background:var(--warnBg)}
+.chip.coin{color:var(--coin);border-color:var(--coinLine);background:var(--coinBg)}
+.meta{display:flex;gap:7px;flex-wrap:wrap;justify-content:flex-end}
+.stage{padding:16px 18px}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.tile{aspect-ratio:4/3;border-radius:16px;background:var(--surface);border:1.5px solid var(--line);position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center}
+.tile.live{background:var(--tile);border-color:transparent}
+.tile.speak{border:3px solid var(--primary)}
+.av{width:44px;height:44px;border-radius:50%;background:var(--avBg);display:flex;align-items:center;justify-content:center;font:700 14px/1 inherit;color:var(--primary);border:2px solid var(--avLine)}
+.nm{position:absolute;left:8px;bottom:7px;font-size:11px;font-weight:700;color:var(--text);background:var(--surface);padding:2px 7px;border-radius:999px;border:1px solid var(--line)}
+.bdg{position:absolute;right:7px;top:7px;font-size:10px;font-weight:700;padding:3px 7px;border-radius:999px;background:var(--surface);color:var(--muted);border:1px solid var(--line)}
+.controls{display:flex;gap:7px;justify-content:center;margin-top:16px;padding-top:14px;border-top:1px solid var(--line);flex-wrap:wrap}
+.btn{padding:10px 14px;border-radius:12px;border:1.5px solid var(--line);background:var(--surface);color:var(--text);font-size:12px;font-weight:700}
+.btn.pri{background:var(--primary);border-color:var(--primary);color:var(--onPrimary)}
+.btn.dan{color:var(--warn);border-color:var(--warnLine);background:var(--warnBg)}
+.askcard{margin:0 18px 18px;background:var(--coinBg);border:1.5px solid var(--coinLine);border-radius:16px;padding:14px}
+.askcard h3{font:700 13px/1.3 inherit;color:var(--text)}
+.askcard small{color:var(--muted);font-size:12px;display:block}
+.count{font:700 32px/1 inherit;color:var(--coin);margin:8px 0 2px}
+.bar{height:8px;border-radius:999px;background:var(--surface);border:1px solid var(--coinLine);overflow:hidden;margin-top:10px}
+.bar i{display:block;height:100%;width:68%;background:var(--coin)}
+/* swatch table */
+table{width:100%;border-collapse:collapse;background:#1D1F17;border-radius:14px;overflow:hidden;font-size:13px}
+th,td{padding:9px 14px;text-align:left;border-bottom:1px solid #2A2E26}
+th{background:#252822;color:#A7A99C;font-size:11px;letter-spacing:.1em;text-transform:uppercase}
+td.sw{width:1%;white-space:nowrap}
+.box{display:inline-block;width:22px;height:22px;border-radius:6px;border:1px solid #4A4F44;vertical-align:middle;margin-right:8px}
+code{font-family:Consolas,"Courier New",monospace;font-size:12.5px;color:#EDE8DC}
+.pass{color:#5FD3A4;font-weight:700}
+.note{background:#1D1F17;border:1px solid #3A3E34;border-left:3px solid #5FD3A4;border-radius:12px;padding:16px 20px;margin-bottom:24px;color:#A7A99C;font-size:14px}
+.note b{color:#EDE8DC}
+</style></head><body><div class="wrap">
+
+<div class="note"><b>Cùng một màn hình, hai chế độ.</b> Dark không phải bản đảo màu máy móc: nền tối giữ sắc ấm (ngả vàng-ô liu) để không mất chất “giấy” của Sân trường, còn xanh lá được đẩy sáng lên #5FD3A4 cho đủ tương phản. Mọi cặp màu dưới bảng đều đã tính tỉ lệ theo WCAG 2.1 và <b>đạt tối thiểu AA (4.5:1)</b> cho chữ thường.</div>
+
+<h2 class="t">Phòng học live · mạng tốt</h2>
+<div class="pair">
+  <div class="pane"><div class="tag">Light</div><div class="app">
+    <div class="topbar"><div><h1>Ôn Giải tích 1 — Tích phân từng phần</h1><p>Minh Anh · 🎓 Thạc sĩ Toán · Circle · 6/25</p></div>
+      <div class="meta"><span class="chip ok">● Mạng tốt</span><span class="chip coin">◈ 1.000.000</span></div></div>
+    <div class="stage"><div class="grid">
+      <div class="tile live speak"><span class="nm">Minh Anh</span><span class="bdg">Đang nói</span></div>
+      <div class="tile live"><span class="nm">Trâm</span></div>
+      <div class="tile"><div class="av">HK</div><span class="nm">Khang</span><span class="bdg">Ẩn mặt</span></div>
+      <div class="tile live"><span class="nm">Duy</span><span class="bdg">Filter</span></div>
+      <div class="tile"><div class="av">NL</div><span class="nm">Ngọc Lan</span></div>
+      <div class="tile"><div class="av">Bạn</div><span class="nm">Bạn</span><span class="bdg">Ẩn mặt</span></div>
+    </div><div class="controls"><button class="btn">🎤 Micro</button><button class="btn">📷 Camera</button>
+      <button class="btn pri">🙈 Khuôn mặt</button><button class="btn dan">Rời phòng</button></div></div>
+    <div class="askcard"><h3>Đang hỏi riêng · Minh Anh</h3><small>120 coin/phút · block 1 phút</small>
+      <div class="count">08:20</div><small>Hết coin phiên tự dừng.</small><div class="bar"><i></i></div></div>
+  </div></div>
+  <div class="pane"><div class="tag">Dark</div><div class="app dark">
+    <div class="topbar"><div><h1>Ôn Giải tích 1 — Tích phân từng phần</h1><p>Minh Anh · 🎓 Thạc sĩ Toán · Circle · 6/25</p></div>
+      <div class="meta"><span class="chip ok">● Mạng tốt</span><span class="chip coin">◈ 1.000.000</span></div></div>
+    <div class="stage"><div class="grid">
+      <div class="tile live speak"><span class="nm">Minh Anh</span><span class="bdg">Đang nói</span></div>
+      <div class="tile live"><span class="nm">Trâm</span></div>
+      <div class="tile"><div class="av">HK</div><span class="nm">Khang</span><span class="bdg">Ẩn mặt</span></div>
+      <div class="tile live"><span class="nm">Duy</span><span class="bdg">Filter</span></div>
+      <div class="tile"><div class="av">NL</div><span class="nm">Ngọc Lan</span></div>
+      <div class="tile"><div class="av">Bạn</div><span class="nm">Bạn</span><span class="bdg">Ẩn mặt</span></div>
+    </div><div class="controls"><button class="btn">🎤 Micro</button><button class="btn">📷 Camera</button>
+      <button class="btn pri">🙈 Khuôn mặt</button><button class="btn dan">Rời phòng</button></div></div>
+    <div class="askcard"><h3>Đang hỏi riêng · Minh Anh</h3><small>120 coin/phút · block 1 phút</small>
+      <div class="count">08:20</div><small>Hết coin phiên tự dừng.</small><div class="bar"><i></i></div></div>
+  </div></div>
+</div>
+
+<h2 class="t">Mạng yếu · video tụt xuống avatar</h2>
+<div class="pair">
+  <div class="pane"><div class="tag">Light</div><div class="app">
+    <div class="topbar"><div><h1>Ôn Giải tích 1 — Tích phân từng phần</h1><p>Chế độ nhẹ · 6/25</p></div>
+      <div class="meta"><span class="chip warn">● Mạng yếu</span></div></div>
+    <div class="stage"><div class="grid">
+      <div class="tile speak"><div class="av">MA</div><span class="nm">Minh Anh</span><span class="bdg">Đang nói</span></div>
+      <div class="tile"><div class="av">TR</div><span class="nm">Trâm</span></div>
+      <div class="tile"><div class="av">HK</div><span class="nm">Khang</span></div>
+      <div class="tile"><div class="av">DU</div><span class="nm">Duy</span></div>
+      <div class="tile"><div class="av">NL</div><span class="nm">Ngọc Lan</span></div>
+      <div class="tile"><div class="av">Bạn</div><span class="nm">Bạn</span></div>
+    </div><div class="controls"><button class="btn">🎤 Micro</button><button class="btn pri">📷 Bật lại camera</button></div></div>
+  </div></div>
+  <div class="pane"><div class="tag">Dark</div><div class="app dark">
+    <div class="topbar"><div><h1>Ôn Giải tích 1 — Tích phân từng phần</h1><p>Chế độ nhẹ · 6/25</p></div>
+      <div class="meta"><span class="chip warn">● Mạng yếu</span></div></div>
+    <div class="stage"><div class="grid">
+      <div class="tile speak"><div class="av">MA</div><span class="nm">Minh Anh</span><span class="bdg">Đang nói</span></div>
+      <div class="tile"><div class="av">TR</div><span class="nm">Trâm</span></div>
+      <div class="tile"><div class="av">HK</div><span class="nm">Khang</span></div>
+      <div class="tile"><div class="av">DU</div><span class="nm">Duy</span></div>
+      <div class="tile"><div class="av">NL</div><span class="nm">Ngọc Lan</span></div>
+      <div class="tile"><div class="av">Bạn</div><span class="nm">Bạn</span></div>
+    </div><div class="controls"><button class="btn">🎤 Micro</button><button class="btn pri">📷 Bật lại camera</button></div></div>
+  </div></div>
+</div>
+
+<h2 class="t">Token màu &amp; tương phản đã kiểm (WCAG 2.1)</h2>
+<table>
+<tr><th>Vai trò</th><th>Light</th><th>Dark</th><th>Cặp kiểm</th><th>Tỉ lệ</th></tr>
+<tr><td>background</td><td class="sw"><span class="box" style="background:#F7F4EE"></span><code>#F7F4EE</code></td><td class="sw"><span class="box" style="background:#14150F"></span><code>#14150F</code></td><td>text trên bg</td><td class="pass">14.83 / 15.02 ✓ AAA</td></tr>
+<tr><td>surface</td><td class="sw"><span class="box" style="background:#FFFFFF"></span><code>#FFFFFF</code></td><td class="sw"><span class="box" style="background:#1D1F17"></span><code>#1D1F17</code></td><td>text trên surface</td><td class="pass">16.28 / 13.63 ✓ AAA</td></tr>
+<tr><td>text</td><td class="sw"><span class="box" style="background:#1B2124"></span><code>#1B2124</code></td><td class="sw"><span class="box" style="background:#EDE8DC"></span><code>#EDE8DC</code></td><td>—</td><td>—</td></tr>
+<tr><td>muted</td><td class="sw"><span class="box" style="background:#666E73"></span><code>#666E73</code></td><td class="sw"><span class="box" style="background:#A7A99C"></span><code>#A7A99C</code></td><td>muted trên bg/surface</td><td class="pass">4.73 / 6.98 ✓ AA</td></tr>
+<tr><td>primary</td><td class="sw"><span class="box" style="background:#1F7A5A"></span><code>#1F7A5A</code></td><td class="sw"><span class="box" style="background:#5FD3A4"></span><code>#5FD3A4</code></td><td>onPrimary trên primary</td><td class="pass">5.26 / 8.71 ✓ AA</td></tr>
+<tr><td>coin</td><td class="sw"><span class="box" style="background:#8A5310"></span><code>#8A5310</code></td><td class="sw"><span class="box" style="background:#F2C46B"></span><code>#F2C46B</code></td><td>coin trên nền coin</td><td class="pass">5.91 / 10.22 ✓ AA</td></tr>
+<tr><td>warn (mạng yếu)</td><td class="sw"><span class="box" style="background:#96431A"></span><code>#96431A</code></td><td class="sw"><span class="box" style="background:#F5A26A"></span><code>#F5A26A</code></td><td>warn trên nền warn</td><td class="pass">6.11 / 8.14 ✓ AA</td></tr>
+<tr><td>ok (mạng tốt)</td><td class="sw"><span class="box" style="background:#166B4E"></span><code>#166B4E</code></td><td class="sw"><span class="box" style="background:#5FD3A4"></span><code>#5FD3A4</code></td><td>ok trên nền ok</td><td class="pass">5.83 / 9.00 ✓ AA</td></tr>
+</table>
+<p style="color:#A7A99C;font-size:13px;margin-top:14px">⚠ Lưu ý: trạng thái mạng <b>không</b> chỉ dựa vào màu — luôn kèm chữ (“Mạng tốt” / “Mạng yếu”) để đạt WCAG 1.4.1 (không truyền tin chỉ bằng màu), quan trọng với người mù màu đỏ-lục — đúng cặp màu đang dùng.</p>
+</div></body></html>

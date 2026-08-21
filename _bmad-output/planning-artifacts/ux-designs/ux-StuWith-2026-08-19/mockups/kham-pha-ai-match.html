@@ -1,0 +1,151 @@
+<!doctype html><html lang="vi"><head><meta charset="utf-8"><title>StuWith · Khám phá &amp; AI match — Cắm trại</title>
+<style>
+/* Mockup 1:1 — KHÁM PHÁ + AI MATCH + ĐĂNG NHẬP (kèm state lỗi). Hệ "Cắm trại". */
+*{box-sizing:border-box;margin:0;padding:0}
+body{font:15px/1.55 "Be Vietnam Pro",Roboto,"Segoe UI",system-ui,sans-serif;background:#3B3358;padding:28px;color:#EDE9FF}
+.wrap{max-width:1060px;margin:0 auto}
+.cap{font-size:12px;letter-spacing:.1em;text-transform:uppercase;font-weight:800;color:#C9BEFB;margin:0 0 10px}
+.app{--base:#F3F0FF;--raised:#FFFFFF;--sunken:#E7E1FB;--ink:#211A3D;--ink2:#5A5375;--bink:#211A3D;--bdec:#DCD5F5;
+  --primary:#6C4CF0;--onp:#FFFFFF;--ok:#0C6B46;--okc:#DFF7EC;--warn:#97301A;--warnc:#FFE8E2;
+  --coin:#7E5200;--coinc:#FFF3D6;--coinf:#F5A623;--tvid:#A895F5;--tav:#FFF3D6;
+  background:var(--base);color:var(--ink);border-radius:22px;overflow:hidden;border:2px solid #211A3D;margin-bottom:26px}
+.app.dark{--base:#121020;--raised:#1C1833;--sunken:#0B0917;--ink:#EDE9FF;--ink2:#A9A2C9;--bink:#7268B5;--bdec:#332C57;
+  --primary:#A78BFA;--onp:#14092E;--ok:#4FDDA6;--okc:#102E22;--warn:#FF9878;--warnc:#331A14;
+  --coin:#FFC85C;--coinc:#33290F;--coinf:#FFC85C;--tvid:#3A2E6B;--tav:#33290F}
+.hdr{padding:15px 28px;border-bottom:2px solid var(--bink);background:var(--raised);display:flex;justify-content:space-between;align-items:center;gap:16px}
+.logo{font-weight:800;font-size:19px;letter-spacing:-.02em}
+.logo span{color:var(--primary)}
+.hright{display:flex;gap:10px;align-items:center}
+.chip{display:inline-flex;align-items:center;gap:5px;font-size:12.5px;font-weight:800;padding:7px 13px;border-radius:9999px;border:2px solid var(--bink);background:var(--coinc);color:var(--coin);font-variant-numeric:tabular-nums}
+.me{width:38px;height:38px;border-radius:14px;background:var(--tav);border:2px solid var(--bink);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px;color:var(--ink);transform:rotate(-3deg)}
+.main{padding:32px}
+.hero{background:var(--raised);border:2px solid var(--bink);border-radius:22px;padding:26px 28px;margin-bottom:26px;box-shadow:6px 6px 0 var(--bink)}
+.hero h1{font-size:34px;font-weight:800;line-height:1.15;letter-spacing:-.02em;margin-bottom:6px}
+.hero p{color:var(--ink2);font-size:13px;font-weight:600;margin-bottom:18px}
+.field{display:flex;gap:12px}
+.input{flex:1;border:2px dashed var(--bdec);border-radius:20px;background:var(--base);padding:15px 18px;font-size:15px;min-height:56px;display:flex;align-items:center;font-weight:600}
+.input.filled{border-style:solid;border-color:var(--bink);color:var(--ink);font-weight:700}
+.btn{min-height:56px;border-radius:9999px;border:2px solid var(--bink);background:var(--primary);color:var(--onp);font:800 15px/1.55 inherit;padding:13px 26px;white-space:nowrap;box-shadow:3px 3px 0 var(--bink)}
+.btn.ghost{background:var(--raised);color:var(--ink);box-shadow:none}
+.alt{margin-top:14px;display:flex;align-items:center;gap:12px;font-size:13px;color:var(--ink2);font-weight:700}
+.sec{font-size:12.5px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--ink2);margin:0 0 12px}
+.cards{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:26px}
+.card{background:var(--raised);border:2px solid var(--bink);border-radius:22px;padding:18px;display:flex;flex-direction:column;gap:10px}
+.card.top{box-shadow:5px 5px 0 var(--primary)}
+.match{display:inline-flex;align-items:center;gap:6px;align-self:flex-start;font-size:12px;font-weight:800;padding:5px 11px;border-radius:9999px;background:var(--okc);border:2px solid var(--bink);color:var(--ok);font-variant-numeric:tabular-nums}
+.card h3{font-size:17px;font-weight:800;line-height:1.3}
+.card .d{font-size:13px;color:var(--ink2);line-height:1.5;font-weight:600}
+.host{display:flex;gap:9px;align-items:center;padding-top:12px;border-top:2px solid var(--bdec);margin-top:auto}
+.hav{width:34px;height:34px;border-radius:12px;background:var(--tvid);border:2px solid var(--bink);flex:none}
+.hn{font-size:13px;font-weight:800}
+.badges{display:flex;gap:5px;flex-wrap:wrap;margin-top:3px}
+.badge{font-size:11px;font-weight:800;padding:3px 8px;border-radius:9999px;border:2px solid var(--bink);color:var(--ink)}
+.foot{display:flex;justify-content:space-between;align-items:center;font-size:12.5px;font-weight:700;color:var(--ink2);font-variant-numeric:tabular-nums;gap:8px}
+.pill{font-size:11.5px;font-weight:800;padding:4px 10px;border-radius:9999px;border:2px solid var(--bink);background:var(--coinc);color:var(--coin);white-space:nowrap}
+.recent{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.rcard{background:var(--raised);border:2px solid var(--bink);border-radius:20px;padding:14px;font-size:13px}
+.rcard b{display:block;font-size:14px;font-weight:800;margin-bottom:4px;line-height:1.3}
+.rcard span{color:var(--ink2);font-weight:600;font-size:12.5px}
+.empty{background:var(--raised);border:2px dashed var(--bdec);border-radius:22px;padding:28px;text-align:center}
+.empty p{font-size:17px;font-weight:800;margin-bottom:6px}
+.empty small{color:var(--ink2);font-size:13px;font-weight:600;display:block;margin-bottom:16px}
+/* đăng nhập */
+.login{max-width:420px;margin:0 auto;padding:44px 0}
+.login h1{font-size:34px;font-weight:800;letter-spacing:-.02em;line-height:1.15;text-align:center;margin-bottom:8px}
+.login p.l{text-align:center;color:var(--ink2);font-size:13.5px;font-weight:600;margin-bottom:26px}
+.prov{display:flex;flex-direction:column;gap:10px}
+.pbtn{min-height:52px;border-radius:9999px;border:2px solid var(--bink);background:var(--raised);color:var(--ink);font:800 15px/1.55 inherit;display:flex;align-items:center;justify-content:center;gap:10px}
+.errbox{border:2px solid var(--bink);background:var(--warnc);color:var(--warn);border-radius:20px;padding:14px 16px;font-size:13.5px;font-weight:800;margin-bottom:18px;box-shadow:4px 4px 0 var(--bink)}
+.errbox small{display:block;font-weight:600;color:var(--ink);margin-top:4px;font-variant-numeric:tabular-nums}
+</style></head><body><div class="wrap">
+
+<p class="cap">Đăng nhập · state lỗi và rate-limit (US-0.1 AC3, AC4)</p>
+<div class="app">
+  <div class="main"><div class="login">
+    <h1>Học cùng người lạ,<br>không cần lộ mặt.</h1>
+    <p class="l">Chọn một cách đăng nhập. Không cần tạo mật khẩu.</p>
+    <div class="errbox">Không đăng nhập được. Thử lại hoặc chọn cách khác.
+      <small>Thử lại sau 24 giây.</small></div>
+    <div class="prov">
+      <button class="pbtn">Tiếp tục với Google</button>
+      <button class="pbtn">Tiếp tục với Facebook</button>
+      <button class="pbtn">Tiếp tục với Apple</button>
+      <button class="pbtn">Tiếp tục với Microsoft</button>
+    </div>
+  </div></div>
+</div>
+
+<p class="cap">Khám phá · sau khi nhập nguyện vọng · Light</p>
+<div class="app">
+  <div class="hdr"><div class="logo">Stu<span>With</span></div>
+    <div class="hright"><span class="chip">◈ 1.000.000 coin</span><div class="me">TR</div></div></div>
+  <div class="main">
+    <div class="hero">
+      <h1>Bạn đang muốn học gì?</h1>
+      <p>Viết bằng câu đầy đủ — càng kể rõ hoàn cảnh, hệ thống càng tìm đúng lớp.</p>
+      <div class="field">
+        <div class="input filled">tích phân từng phần, mai thi</div>
+        <button class="btn">Tìm lớp</button>
+      </div>
+      <div class="alt"><span>Chưa biết học gì?</span><button class="btn ghost" style="min-height:44px;padding:10px 20px">Vào ngẫu nhiên theo AI</button></div>
+    </div>
+
+    <p class="sec">Khớp nhất với nguyện vọng của bạn</p>
+    <div class="cards">
+      <div class="card top">
+        <span class="match"><span aria-hidden="true">✦</span> Khớp 94%</span>
+        <h3>Ôn Giải tích 1 — Tích phân từng phần</h3>
+        <p class="d">Ôn kỹ thuật đặt u, dv. Mang theo đề cương chương 4.</p>
+        <div class="host"><div class="hav"></div><div><div class="hn">Minh Anh</div>
+          <div class="badges"><span class="badge"><span aria-hidden="true">🎓</span> Thạc sĩ Toán</span><span class="badge"><span aria-hidden="true">▲</span> Vàng</span></div></div></div>
+        <div class="foot"><span>6 / 25 · đang học</span><span class="pill">◈ 120/phút</span></div>
+      </div>
+      <div class="card">
+        <span class="match"><span aria-hidden="true">✦</span> Khớp 81%</span>
+        <h3>Toán cao cấp — hỏi đáp tự do</h3>
+        <p class="d">Không giảng bài, ai kẹt gì hỏi nấy. Vào ra thoải mái.</p>
+        <div class="host"><div class="hav"></div><div><div class="hn">Khánh</div>
+          <div class="badges"><span class="badge"><span aria-hidden="true">🎓</span> Kỹ sư</span></div></div></div>
+        <div class="foot"><span>4 / 6 · đang học</span><span class="pill">◈ 80/phút</span></div>
+      </div>
+      <div class="card">
+        <span class="match"><span aria-hidden="true">✦</span> Khớp 67%</span>
+        <h3>Học chung im lặng — ca đêm</h3>
+        <p class="d">Mở mic tuỳ ý, chủ yếu ngồi học cùng nhau cho đỡ nản.</p>
+        <div class="host"><div class="hav"></div><div><div class="hn">Ngọc Lan</div>
+          <div class="badges"><span class="badge"><span aria-hidden="true">▲</span> Bạc</span></div></div></div>
+        <div class="foot"><span>11 / 25 · đang học</span><span>Không nhận hỏi riêng</span></div>
+      </div>
+    </div>
+
+    <p class="sec">Lớp bạn đã học</p>
+    <div class="recent">
+      <div class="rcard"><b>Giải tích 1 — chương 3</b><span>Minh Anh · 2 ngày trước</span></div>
+      <div class="rcard"><b>Tiếng Anh IELTS Writing</b><span>Thu Hà · 5 ngày trước</span></div>
+      <div class="rcard"><b>Lập trình C cơ bản</b><span>Khánh · 1 tuần trước</span></div>
+      <div class="rcard"><b>Học chung im lặng</b><span>Ngọc Lan · 2 tuần trước</span></div>
+    </div>
+  </div>
+</div>
+
+<p class="cap">Khám phá · trạng thái không có kết quả · Dark</p>
+<div class="app dark">
+  <div class="hdr"><div class="logo">Stu<span>With</span></div>
+    <div class="hright"><span class="chip">◈ 1.000.000 coin</span><div class="me">TR</div></div></div>
+  <div class="main">
+    <div class="hero">
+      <h1>Bạn đang muốn học gì?</h1>
+      <p>Viết bằng câu đầy đủ — càng kể rõ hoàn cảnh, hệ thống càng tìm đúng lớp.</p>
+      <div class="field">
+        <div class="input filled">nhiếp ảnh phim khổ trung bình</div>
+        <button class="btn">Tìm lớp</button>
+      </div>
+    </div>
+    <div class="empty">
+      <p>Chưa có lớp nào khớp.</p>
+      <small>Thử mô tả nguyện vọng bằng câu đầy đủ, hoặc vào một lớp ngẫu nhiên do AI chọn.</small>
+      <button class="btn">Vào ngẫu nhiên theo AI</button>
+    </div>
+  </div>
+</div>
+</div></body></html>

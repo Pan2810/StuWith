@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<title>StuWith — Báo cáo kiểm định UX</title>
+<style>
+  :root {
+    --bg: #fafaf9;
+    --surface: #ffffff;
+    --border: #e7e5e4;
+    --text: #1c1917;
+    --muted: #78716c;
+
+    --verdict-strong: #16a34a;
+    --verdict-adequate: #65a30d;
+    --verdict-thin: #d97706;
+    --verdict-broken: #dc2626;
+
+    --sev-low: #64748b;
+    --sev-medium: #ca8a04;
+    --sev-high: #ea580c;
+    --sev-critical: #dc2626;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    font-size: 15px;
+  }
+  .container { max-width: 960px; margin: 0 auto; padding: 32px 24px 64px; }
+
+  header.report-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 24px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 24px;
+  }
+  .title h1 { margin: 0; font-size: 22px; font-weight: 600; letter-spacing: -0.01em; }
+  .title .subtitle { color: var(--muted); font-size: 13px; margin-top: 4px; font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+
+  .synthesis {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--muted);
+    border-radius: 8px;
+    padding: 18px 22px;
+    margin-bottom: 24px;
+    font-size: 15.5px;
+  }
+  .synthesis p { margin: 0 0 10px; }
+  .synthesis p:last-child { margin-bottom: 0; }
+
+  .dimension-summary {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 10px;
+    margin-bottom: 24px;
+  }
+  .dim-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+  }
+  .dim-card .dim-name { font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+  .dim-card .dim-verdict { font-size: 14px; font-weight: 600; }
+
+  section.dimension, section.reviewer-section { margin-bottom: 14px; }
+  section.dimension details, section.reviewer-section details {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  section summary {
+    padding: 14px 20px;
+    cursor: pointer;
+    user-select: none;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  section summary::-webkit-details-marker { display: none; }
+  section summary::before {
+    content: "▸";
+    display: inline-block;
+    color: var(--muted);
+    transition: transform 0.15s ease;
+  }
+  section details[open] summary::before { transform: rotate(90deg); }
+  section summary h2 {
+    display: inline;
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: -0.005em;
+    flex: 1;
+  }
+  .verdict-pill {
+    font-size: 11px;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: white;
+  }
+  .verdict-strong { background: var(--verdict-strong); }
+  .verdict-adequate { background: var(--verdict-adequate); }
+  .verdict-thin { background: var(--verdict-thin); }
+  .verdict-broken { background: var(--verdict-broken); }
+
+  .dim-body { padding: 4px 20px 18px; }
+  .dim-judgment { color: var(--text); font-size: 14.5px; }
+  .dim-judgment p { margin: 0 0 10px; }
+
+  .findings-list { padding: 0 20px 4px; }
+  article.finding {
+    padding: 14px 0;
+    border-top: 1px solid var(--border);
+  }
+  article.finding:first-child { border-top: none; }
+  article.finding header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 6px;
+  }
+  .badge {
+    font-size: 10.5px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    line-height: 1.4;
+  }
+  .badge-sev-low { background: rgba(100, 116, 139, 0.12); color: var(--sev-low); }
+  .badge-sev-medium { background: rgba(202, 138, 4, 0.14); color: var(--sev-medium); }
+  .badge-sev-high { background: rgba(234, 88, 12, 0.14); color: var(--sev-high); }
+  .badge-sev-critical { background: rgba(220, 38, 38, 0.14); color: var(--sev-critical); }
+  .finding-title { margin: 0; font-size: 15px; font-weight: 500; flex: 1; min-width: 200px; }
+  .finding-location { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12.5px; color: var(--muted); }
+  .finding-note, .finding-fix { margin-top: 6px; font-size: 14px; }
+  .finding-fix strong { color: var(--muted); font-weight: 500; }
+
+  .reviewer-source {
+    font-size: 12px;
+    color: var(--muted);
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+
+  .mechanical {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin-top: 24px;
+    font-size: 14px;
+  }
+  .mechanical h3 { margin: 0 0 10px; font-size: 14px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .mechanical ul { margin: 0; padding-left: 20px; }
+  .mechanical li { margin-bottom: 4px; color: var(--text); }
+
+  footer.report-footer {
+    margin-top: 40px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+    font-size: 12px;
+    color: var(--muted);
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  footer .meta { display: flex; gap: 24px; flex-wrap: wrap; }
+</style>
+</head>
+<body>
+  <div class="container">
+
+    <header class="report-header">
+      <div class="title">
+        <h1>StuWith — Báo cáo kiểm định UX</h1>
+        <div class="subtitle">_bmad-output/planning-artifacts/ux-designs/ux-StuWith-2026-08-19/</div>
+      </div>
+    </header>
+
+    <div class="synthesis">
+      <p>Cặp spine phủ được phần lõi và cam kết đúng những chỗ khó — luật tiền, thang suy giảm mạng, đồng thuận ghi hình đều đã được quyết chứ không để mở. Nhưng nó <strong>chưa dùng được như một hợp đồng máy đọc</strong>: tên component trong <code>DESIGN.md</code> và <code>EXPERIENCE.md</code> không khớp nhau, và cặp token light/dark tồn tại mà không có luật ánh xạ, nên consumer phía dưới sẽ phải đoán.</p>
+      <p>Lỗ hổng thật về nội dung nằm ở phần an toàn: <code>moderator</code> là một vai trò trong PRD nhưng <strong>không có bề mặt nào</strong> trong IA, và không có Key Flow nào cho báo cáo/xử lý — với một sản phẩm bán chính tính năng ẩn danh, đó là mảng rủi ro cao nhất lại được đặc tả mỏng nhất.</p>
+      <p>Lệ kiểm tiếp cận cho một bức tranh lệch: phần <em>tĩnh</em> (màu, tương phản, kích thước chạm) mạnh hơn mức thường thấy — bảy cặp chịu lực đều có số đo thật. Phần <em>động</em> (ngữ nghĩa của lưới video, đồng hồ đếm ngược, chat realtime) thì chưa đủ luật để ngăn một bản cài đặt biến trình đọc màn hình thành cực hình. Tổng: <strong>2 critical · 7 high · 11 medium · 11 low</strong>.</p>
+    </div>
+
+    <div class="dimension-summary">
+      <div class="dim-card"><div class="dim-name">Flow coverage</div><div class="dim-verdict" style="color: var(--verdict-thin)">thin</div></div>
+      <div class="dim-card"><div class="dim-name">Token completeness</div><div class="dim-verdict" style="color: var(--verdict-adequate)">adequate</div></div>
+      <div class="dim-card"><div class="dim-name">Component coverage</div><div class="dim-verdict" style="color: var(--verdict-broken)">broken</div></div>
+      <div class="dim-card"><div class="dim-name">State coverage</div><div class="dim-verdict" style="color: var(--verdict-thin)">thin</div></div>
+      <div class="dim-card"><div class="dim-name">Visual reference</div><div class="dim-verdict" style="color: var(--verdict-strong)">strong</div></div>
+      <div class="dim-card"><div class="dim-name">Bloat &amp; overspec</div><div class="dim-verdict" style="color: var(--verdict-adequate)">adequate</div></div>
+      <div class="dim-card"><div class="dim-name">Inheritance discipline</div><div class="dim-verdict" style="color: var(--verdict-adequate)">adequate</div></div>
+      <div class="dim-card"><div class="dim-name">Shape fit</div><div class="dim-verdict" style="color: var(--verdict-adequate)">adequate</div></div>
+    </div>
+
+    <section class="dimension"><details open>
+      <summary><h2>1. Flow coverage</h2><span class="verdict-pill verdict-thin">thin</span></summary>
+      <div class="dim-body"><div class="dim-judgment"><p>Đối chiếu 15 US trong <code>docs/prd.md</code> với 4 Key Flow. Có flow: US-0.1, 1.1, 1.2, 1.3, 2.1, 2.3, 3.1, 3.3 (một phần), 4.1 (một phần), 4.3.</p></div></div>
+      <div class="findings-list">
+        <article class="finding"><header><span class="badge badge-sev-high">high</span><h3 class="finding-title">Không có flow cho báo cáo &amp; xử lý; vai trò moderator không có bề mặt nào</h3><span class="finding-location">EXPERIENCE.md § IA · US-3.4</span></header>
+          <div class="finding-note">PRD §2 liệt kê <code>moderator</code> và <code>system_admin</code> là vai trò hệ thống, nhưng IA 16 bề mặt không có bề mặt nào cho họ. Với sản phẩm bán chính tính năng ẩn danh, đây là cơ chế đối trọng duy nhất.</div>
+          <div class="finding-fix"><strong>Fix:</strong> thêm bề mặt "Hàng đợi kiểm duyệt" vào IA và một Key Flow thứ 5 với nhân vật là moderator, đi từ báo cáo tới block/ban và audit log.</div></article>
+        <article class="finding"><header><span class="badge badge-sev-high">high</span><h3 class="finding-title">Không có Key Flow cho nạp coin</h3><span class="finding-location">EXPERIENCE.md § Key Flows · US-4.2</span></header>
+          <div class="finding-note">Chỉ có một dòng trạng thái lỗi. Đây là luồng có tiền thật đi qua cổng thanh toán ngoài.</div>
+          <div class="finding-fix"><strong>Fix:</strong> thêm flow "Trâm nạp coin giữa phiên", cao trào là lúc quay lại từ cổng thanh toán mà chưa rõ đã trừ tiền hay chưa.</div></article>
+        <article class="finding"><header><span class="badge badge-sev-medium">medium</span><h3 class="finding-title">Hạng uy tín theo mùa chỉ tồn tại dạng huy hiệu tĩnh</h3><span class="finding-location">US-3.2</span></header>
+          <div class="finding-note">Không có gì mô tả điểm nỗ lực tăng thế nào, người dùng thấy nó tăng ở đâu, hay chuyện gì xảy ra lúc reset mùa.</div>
+          <div class="finding-fix"><strong>Fix:</strong> một mục trong State Patterns, hoặc thu hẹp phạm vi và ghi rõ là ngoài vòng này.</div></article>
+        <article class="finding"><header><span class="badge badge-sev-low">low</span><h3 class="finding-title">Chat cả phòng không xuất hiện trong flow nào</h3><span class="finding-location">US-1.4</span></header>
+          <div class="finding-note">Chấp nhận được vì nó là nền, không phải đích đến.</div>
+          <div class="finding-fix"><strong>Fix:</strong> không bắt buộc.</div></article>
+      </div>
+    </details></section>
+
+    <section class="dimension"><details>
+      <summary><h2>2. Token completeness</h2><span class="verdict-pill verdict-adequate">adequate</span></summary>
+      <div class="dim-body"><div class="dim-judgment"><p>Mọi tham chiếu <code>{path.to.token}</code> trong cả hai file đều resolve. Màu có đủ hex, có cặp light/dark, và tương phản đã ghi số cho 7 cặp chịu lực.</p></div></div>
+      <div class="findings-list">
+        <article class="finding"><header><span class="badge badge-sev-critical">critical</span><h3 class="finding-title">Không có luật ánh xạ token light → dark</h3><span class="finding-location">DESIGN.md frontmatter.components</span></header>
+          <div class="finding-note">Khối <code>components</code> chỉ trỏ tới token light (<code>background: '{colors.primary}'</code>). Không chỗ nào ghi rằng ở dark mode <code>X</code> đọc thành <code>X-dark</code>. Consumer sinh code sẽ hoặc hardcode light, hoặc tự bịa quy ước.</div>
+          <div class="finding-fix"><strong>Fix:</strong> thêm câu luật ánh xạ ngay đầu mục Colors: mọi token có hậu tố <code>-dark</code> là biến thể dark của token cùng tên; component tự phân giải theo chế độ.</div></article>
+        <article class="finding"><header><span class="badge badge-sev-medium">medium</span><h3 class="finding-title">Không có token chuyển động</h3><span class="finding-location">DESIGN.md frontmatter</span></header>
+          <div class="finding-note">EXPERIENCE.md có luật <code>prefers-reduced-motion</code> và "hoãn 3 giây" cho chip mạng, nhưng không có duration/easing token nào.</div>
+          <div class="finding-fix"><strong>Fix:</strong> thêm nhóm <code>motion</code> với ít nhất <code>duration.fast/base/slow</code> và <code>network-chip-debounce: 3000ms</code>.</div></article>
+        <article class="finding"><header><span class="badge badge-sev-low">low</span><h3 class="finding-title">Token mồ côi: danger, surface-elevated-dark</h3><span class="finding-location">DESIGN.md § Colors</span></header>
+          <div class="finding-note"><code>danger</code> chỉ xuất hiện trong một dòng "Không làm"; <code>surface-elevated-dark</code> không có cặp light.</div>
+          <div class="finding-fix"><strong>Fix:</strong> dùng chúng trong một component, hoặc ghi rõ chúng dành cho trạng thái nào.</div></article>
+        <article class="finding"><header><span class="badge badge-sev-low">low</span><h3 class="finding-title">tile-video / tile-avatar-bg không nằm trong component spec</h3><span class="finding-location">DESIGN.md frontmatter.colors</span></header>
+          <div class="finding-note">Dùng nhiều trong mockup nhưng không được component nào tham chiếu.</div>
+          <div class="finding-fix"><strong>Fix:</strong> đưa vào <code>components.tile-participant</code>.</div></article>
+      </div>
+    </details></section>
+
+    <section class="dimension"><details open>
+      <summary><h2>3. Component coverage</h2><span class="verdict-pill verdict-broken">broken</span></summary>
+      <div class="dim-body"><div class="dim-judgment"><p>Hai file mô tả cùng một tập component nhưng bằng hai hệ tên khác nhau, không có bảng nối.</p></div></div>
+      <div class="findings-list">
+        <article class="finding"><header><span class="badge badge-sev-critical">critical</span><h3 class="finding-title">Tên component không khớp giữa hai spine</h3><span class="finding-location">DESIGN.md.Components ↔ EXPERIENCE.md § Component Patterns</span></header>
+          <div class="finding-note">DESIGN.md dùng kebab-case tiếng Anh (<code>tile-participant</code>, <code>card-coin</code>, <code>countdown-display</code>); EXPERIENCE.md dùng tên tiếng Việt ("Ô người tham gia", "Thẻ xác nhận hỏi riêng", "Đồng hồ phiên"). Consumer không ghép được đặc tả thị giác với đặc tả hành vi.</div>
+          <div class="finding-fix"><strong>Fix:</strong> chọn kebab-case tiếng Anh làm khoá máy đọc ở cả hai file, tên tiếng Việt đi kèm trong ngoặc làm nhãn người đọc.</div></article>
+        <article class="finding"><header><span class="badge badge-sev-high">high</span><h3 class="finding-title">Bốn component có hành vi nhưng không có đặc tả thị giác</h3><span class="finding-location">DESIGN.md.Components</span></header>
+          <div class="finding-note">Thanh điều khiển phòng, bảng chế độ khuôn mặt, thẻ giao dịch, chat cả phòng.</div>
+          <div class="finding-fix"><strong>Fix:</strong> thêm bốn dòng vào <code>DESIGN.md.Components</code>.</div></article>
+        <article class="finding"><header><span class="badge badge-sev-medium">medium</span><h3 class="finding-title">button-secondary và snackbar không có dòng hành vi</h3><span class="finding-location">EXPERIENCE.md § Component Patterns</span></header>
+          <div class="finding-note"><code>snackbar</code> đặc biệt cần, vì spine đã cấm nó ở vùng tiền.</div>
+          <div class="finding-fix"><strong>Fix:</strong> thêm hai dòng vào Component Patterns.</div></article>
+      </div>
+    </details></section>
+
+    <section class="dimension"><details open>
+      <summary><h2>4. State coverage</h2><span class="verdict-pill verdict-thin">thin</span></summary>
+      <div class="dim-body"><div class="dim-judgment"><p>Đi qua 16 bề mặt trong IA. Phủ tốt: Khám phá, phòng live, phiên hỏi riêng, nạp coin (lỗi), hồ sơ, báo cáo, focus. Hai bề mặt đầu luồng lại là hai bề mặt hở.</p></div></div>
+      <div class="findings-list">
+        <article class="finding"><header><span class="badge badge-sev-high">high</span><h3 class="finding-title">Màn Đăng nhập không có state nào, dù AC yêu cầu tường minh</h3><span class="finding-location">EXPERIENCE.md § State Patterns · US-0.1 AC4</span></header>
+          <div class="finding-note">PRD yêu cầu rõ thông báo lỗi thân thiện không lộ chi tiết kỹ thuật. Voice &amp; Tone có một dòng ví dụ nhưng đó không phải đặc tả trạng thái.</div>
+          <div class="finding-fix"><strong>Fix:</strong> thêm hàng cho đăng nhập thất bại, provider từ chối, và phiên hết hạn giữa buổi học.</div></article>
+        <article class="finding"><header><span class="badge badge-sev-high">high</span><h3 class="finding-title">Pre-join thiếu trạng thái trình duyệt chặn camera/mic</h3><span class="finding-location">EXPERIENCE.md § State Patterns</span></header>
+          <div class="finding-note">Đây là màn duy nhất xin quyền thiết bị. Nếu người dùng lỡ bấm "Chặn" thì toàn bộ luồng đứng, không có lối thoát nào được đặc tả.</div>
+          <div class="finding-fix"><strong>Fix:</strong> thêm hàng permission-denied với hướng dẫn mở lại quyền, và cho phép vào phòng ở chế độ chỉ nghe.</div></article>
+        <article class="finding"><header><span class="badge badge-sev-medium">medium</span><h3 class="finding-title">Tạo phòng không có state validation</h3><span class="finding-location">EXPERIENCE.md § State Patterns</span></header>
+          <div class="finding-note">Tên trùng, mô tả rỗng, chọn trần vượt gói.</div>
+          <div class="finding-fix"><strong>Fix:</strong> thêm hàng.</div></article>
+        <article class="finding"><header><span class="badge badge-sev-medium">medium</span><h3 class="finding-title">Ghi hình không có trạng thái sắp hết hạn 30 ngày</h3><span class="finding-location">EXPERIENCE.md § State Patterns · US-4.3</span></header>
+          <div class="finding-note">Retention là cam kết hiển thị với người dùng, nhưng không có gì báo trước khi bản ghi bị xoá.</div>
+          <div class="finding-fix"><strong>Fix:</strong> thêm hàng.</div></article>
+        <article class="finding"><header><span class="badge badge-sev-low">low</span><h3 class="finding-title">Hạ gói khi phòng đang vượt trần mới</h3><span class="finding-location">EXPERIENCE.md § State Patterns · US-4.1</span></header>
+          <div class="finding-note">Không có luật.</div>
+          <div class="finding-fix"><strong>Fix:</strong> thêm hàng hoặc đẩy về PRD.</div></article>
+      </div>
+    </details></section>
+
+    <section class="dimension"><details>
+      <summary><h2>5. Visual reference coverage</h2><span class="verdict-pill verdict-strong">strong</span></summary>
+      <div class="dim-body"><div class="dim-judgment"><p>Bốn mockup trong <code>mockups/</code>, đều được link inline ở đúng mục trong cả hai spine và có mô tả cái gì được minh hoạ. Bốn hướng thiết kế đã loại nằm ở <code>.working/</code>, được nêu tên. Câu "spine thắng khi xung đột" xuất hiện ở cả hai file. <code>imports/</code> rỗng, không có orphan.</p></div></div>
+      <div class="findings-list">
+        <article class="finding"><header><span class="badge badge-sev-low">low</span><h3 class="finding-title">mockups/phong-hoc-live.html trùng lặp với bản trong .working/</h3><span class="finding-location">mockups/ · .working/</span></header>
+          <div class="finding-note">Hai bản sao y hệt sẽ trôi khỏi nhau theo thời gian.</div>
+          <div class="finding-fix"><strong>Fix:</strong> xoá bản trong <code>.working/</code> hoặc ghi rõ bản trong <code>mockups/</code> là bản chuẩn.</div></article>
+      </div>
+    </details></section>
+
+    <section class="dimension"><details>
+      <summary><h2>6. Bloat &amp; overspecification</h2><span class="verdict-pill verdict-adequate">adequate</span></summary>
+      <div class="dim-body"><div class="dim-judgment"><p><code>DESIGN.md</code> mang giọng biên tập, đúng như spec cho phép. <code>EXPERIENCE.md</code> chủ yếu là luật và bảng, không phình.</p></div></div>
+      <div class="findings-list">
+        <article class="finding"><header><span class="badge badge-sev-low">low</span><h3 class="finding-title">Dòng "Điều luồng này phải chứng minh" là lý lẽ, không phải luật</h3><span class="finding-location">EXPERIENCE.md § Key Flows</span></header>
+          <div class="finding-note">Có ích cho người đọc nhưng không có consumer máy nào dùng.</div>
+          <div class="finding-fix"><strong>Fix:</strong> giữ lại, nhưng đừng nhân rộng kiểu này ở mục khác.</div></article>
+        <article class="finding"><header><span class="badge badge-sev-low">low</span><h3 class="finding-title">Bảng IA lặp một phần phạm vi từ PRD</h3><span class="finding-location">EXPERIENCE.md § IA</span></header>
+          <div class="finding-note">Trong ngưỡng chấp nhận vì cột "Vào từ" là thông tin mới.</div>
+          <div class="finding-fix"><strong>Fix:</strong> không bắt buộc.</div></article>
+      </div>
+    </details></section>
+
+    <section class="dimension"><details>
+      <summary><h2>7. Inheritance discipline</h2><span class="verdict-pill verdict-adequate">adequate</span></summary>
+      <div class="dim-body"><div class="dim-judgment"><p><code>sources:</code> trỏ <code>docs/prd.md</code> và <code>docs/brief.md</code>, cả hai đều tồn tại. Từ vựng ("hỏi riêng", "coin", "uy tín", "huy hiệu", "ẩn mặt") nhất quán giữa hai spine và nguồn.</p></div></div>
+      <div class="findings-list">
+        <article class="finding"><header><span class="badge badge-sev-medium">medium</span><h3 class="finding-title">Không có mã US nào xuất hiện trong hai spine</h3><span class="finding-location">cả hai file</span></header>
+          <div class="finding-note"><code>bmad-create-epics-and-stories</code> chạy sau sẽ không nối được story với luật UX tương ứng.</div>
+          <div class="finding-fix"><strong>Fix:</strong> gắn mã US vào cột nguồn của bảng IA và vào tiêu đề mỗi Key Flow.</div></article>
+        <article class="finding"><header><span class="badge badge-sev-low">low</span><h3 class="finding-title">Tên gói không nhất quán</h3><span class="finding-location">brief ↔ EXPERIENCE.md ↔ mockups</span></header>
+          <div class="finding-note">"Study Buddy / Study Circle / Campus" vs "Buddy / Circle / Campus" vs "Study Circle".</div>
+          <div class="finding-fix"><strong>Fix:</strong> chốt một dạng và dùng nguyên văn ở mọi nơi.</div></article>
+      </div>
+    </details></section>
+
+    <section class="dimension"><details>
+      <summary><h2>8. Shape fit</h2><span class="verdict-pill verdict-adequate">adequate</span></summary>
+      <div class="dim-body"><div class="dim-judgment"><p><code>DESIGN.md</code> đủ 8 mục theo đúng thứ tự chuẩn. <code>EXPERIENCE.md</code> có đủ 8 mục mặc định bắt buộc, cộng Responsive &amp; Platform (đúng trigger). Ba mục tự đặt — Thang suy giảm mạng, Luật coin &amp; tiền, Ẩn danh/đồng thuận/báo cáo — đều xứng đáng: mỗi mục gom một nhóm luật mà các mục chuẩn sẽ làm vỡ vụn.</p></div></div>
+      <div class="findings-list">
+        <article class="finding"><header><span class="badge badge-sev-medium">medium</span><h3 class="finding-title">Thiếu mục Inspiration &amp; Anti-patterns dù đã bị kích hoạt</h3><span class="finding-location">EXPERIENCE.md</span></header>
+          <div class="finding-note"><code>.memlog.md</code> ghi bốn hướng thiết kế được cân nhắc và ba bị loại; hội thoại nêu rõ điều cần tránh ("không giống app họp hành").</div>
+          <div class="finding-fix"><strong>Fix:</strong> thêm mục, ghi ba hướng bị loại và lý do — nó ngăn người sau vô tình quay lại hướng đã bỏ.</div></article>
+      </div>
+    </details></section>
+
+    <section class="reviewer-section"><details open>
+      <summary><h2>Accessibility review</h2><span class="reviewer-source">review-a11y.md</span></summary>
+      <div class="dim-body"><div class="dim-judgment">
+        <p>Phần màu sắc là điểm mạnh thật sự: bảy cặp chịu lực đều có tỉ lệ tính sẵn, thấp nhất 4.73:1, và luật "màu không bao giờ là kênh duy nhất" được viết ra kèm đúng lý do. Hiếm khi thấy một spine cam kết đến mức đó.</p>
+        <p>Phần yếu nằm ở <strong>ngữ nghĩa động</strong>: một phòng video 6–100 ô, một đồng hồ đếm ngược từng giây, và một danh sách chat realtime là ba thứ dễ biến trình đọc màn hình thành cực hình. Spine hiện chỉ nói "phát <code>aria-live</code> khi đổi trạng thái quan trọng" — chưa đủ để ngăn thảm hoạ.</p>
+      </div></div>
+      <div class="findings-list">
+        <article class="finding"><header><span class="badge badge-sev-high">high</span><h3 class="finding-title">Đồng hồ đếm ngược có nguy cơ bị đọc lặp mỗi giây</h3><span class="finding-location">EXPERIENCE.md § Accessibility Floor</span></header>
+          <div class="finding-note">Không có câu nào cấm đặt live region lên bản thân đồng hồ. Nếu lập trình viên đặt <code>aria-live="polite"</code> lên <code>countdown-display</code>, trình đọc màn hình sẽ đọc số mỗi giây suốt cả phiên — kể cả át giọng gia sư mà người dùng đang trả tiền để nghe.</div>
+          <div class="finding-fix"><strong>Fix:</strong> luật cứng: <code>countdown-display</code> mang <code>aria-live="off"</code>; thông báo chỉ phát ở các mốc (bắt đầu, còn 2 phút, còn 1 phút, kết thúc) qua một live region riêng.</div></article>
+        <article class="finding"><header><span class="badge badge-sev-high">high</span><h3 class="finding-title">Thứ tự tab trong lưới người tham gia không được đặc tả</h3><span class="finding-location">EXPERIENCE.md § Accessibility Floor</span></header>
+          <div class="finding-note">Với lớp Campus 45–100 người, người dùng bàn phím phải tab qua tối đa 100 ô để tới thanh điều khiển. Giới hạn "không quá 12 ô cùng lúc" là luật thị giác, không phải luật focus.</div>
+          <div class="finding-fix"><strong>Fix:</strong> lưới là composite widget — một điểm dừng tab duy nhất, di chuyển bằng phím mũi tên (mẫu grid WAI-ARIA). Thanh điều khiển đứng trước lưới trong thứ tự tab.</div></article>
+        <article class="finding"><header><span class="badge badge-sev-medium">medium</span><h3 class="finding-title">Nhóm ba chế độ khuôn mặt không có ngữ nghĩa nhóm</h3><span class="finding-location">mockups/pre-join.html</span></header>
+          <div class="finding-note">Trình đọc màn hình sẽ đọc ba nút rời rạc, không biết đây là chọn-một và không biết cái nào đang chọn.</div>
+          <div class="finding-fix"><strong>Fix:</strong> <code>role="radiogroup"</code> với nhãn nhóm, mỗi lựa chọn <code>role="radio"</code> + <code>aria-checked</code>.</div></article>
+        <article class="finding"><header><span class="badge badge-sev-medium">medium</span><h3 class="finding-title">Emoji đang gánh nghĩa trong huy hiệu</h3><span class="finding-location">DESIGN.md.Components.badge-credential</span></header>
+          <div class="finding-note">Có chữ đi kèm nên không vi phạm 1.4.1, nhưng trình đọc màn hình sẽ đọc "biểu tượng mũ tốt nghiệp Thạc sĩ Toán".</div>
+          <div class="finding-fix"><strong>Fix:</strong> bọc ký hiệu trong <code>aria-hidden="true"</code>, đặt nghĩa vào nhãn văn bản.</div></article>
+        <article class="finding"><header><span class="badge badge-sev-medium">medium</span><h3 class="finding-title">Thứ tự đọc của ô người tham gia không được chốt</h3><span class="finding-location">EXPERIENCE.md § Accessibility Floor</span></header>
+          <div class="finding-note">Ô mang bốn lớp thông tin. Đọc sai thứ tự thì thông tin quan trọng nhất (ai đang nói) rơi xuống cuối.</div>
+          <div class="finding-fix"><strong>Fix:</strong> chốt thứ tự: tên → vai trò → đang nói → trạng thái mic → chế độ khuôn mặt → huy hiệu.</div></article>
+        <article class="finding"><header><span class="badge badge-sev-medium">medium</span><h3 class="finding-title">Chat realtime chưa có luật thông báo</h3><span class="finding-location">EXPERIENCE.md § Component Patterns</span></header>
+          <div class="finding-note">Thông báo mọi tin nhắn thì nhấn chìm người dùng; không thông báo gì thì người khiếm thính dùng chat sẽ bỏ lỡ.</div>
+          <div class="finding-fix"><strong>Fix:</strong> live region <code>polite</code> có gom nhóm, cộng công tắc tắt — mặc định bật khi audio của người dùng đang tắt.</div></article>
+        <article class="finding"><header><span class="badge badge-sev-low">low</span><h3 class="finding-title">Thiếu thuộc tính lang cho nội dung song ngữ</h3><span class="finding-location">EXPERIENCE.md § Foundation</span></header>
+          <div class="finding-note">Trình đọc màn hình tiếng Việt sẽ phát âm sai "Study Circle", "Opus", "filter".</div>
+          <div class="finding-fix"><strong>Fix:</strong> <code>lang="en"</code> trên các đoạn tiếng Anh nhúng trong câu tiếng Việt.</div></article>
+        <article class="finding"><header><span class="badge badge-sev-low">low</span><h3 class="finding-title">Tương phản của viền chưa được kiểm (WCAG 1.4.11)</h3><span class="finding-location">DESIGN.md § Colors</span></header>
+          <div class="finding-note"><code>border-hairline</code> #E4DED2 trên #FFFFFF chỉ khoảng 1.3:1, dưới ngưỡng 3:1 cho thành phần giao diện — trong khi ô người tham gia và nút phụ phân biệt bằng viền.</div>
+          <div class="finding-fix"><strong>Fix:</strong> nâng viền cho thành phần tương tác lên đạt 3:1, hoặc bổ sung nền phân biệt và ghi rõ viền chỉ mang tính trang trí.</div></article>
+        <article class="finding"><header><span class="badge badge-sev-low">low</span><h3 class="finding-title">Không có luật cho zoom 200% / reflow (WCAG 1.4.10)</h3><span class="finding-location">EXPERIENCE.md § Responsive &amp; Platform</span></header>
+          <div class="finding-note">Breakpoint đã có, nhưng zoom trên desktop không đổi viewport width theo cùng cách.</div>
+          <div class="finding-fix"><strong>Fix:</strong> một câu: bố cục phải reflow được ở tương đương 320px CSS width, không cuộn ngang.</div></article>
+      </div>
+    </details></section>
+
+    <div class="mechanical">
+      <h3>Mechanical notes</h3>
+      <ul>
+        <li>Cả hai file vẫn ở <code>status: draft</code> — cần chuyển <code>final</code> sau khi xử lý findings.</li>
+        <li><code>EXPERIENCE.md</code> dùng chuỗi giữ chỗ <code>{gói}</code> trong bảng State Patterns; trông giống cú pháp tham chiếu token nhưng không phải. Đổi dạng để tránh nhầm khi parse.</li>
+        <li><code>DESIGN.md</code> frontmatter: <code>font-family-base</code> nằm trong <code>typography</code> nhưng là chuỗi phẳng, lệch hình dạng với các key anh em (object có <code>fontFamily</code>).</li>
+        <li>Không có Mermaid trong hai file; không có cross-ref gãy.</li>
+        <li><code>sources</code> là repo-relative (<code>docs/prd.md</code>) trong khi <code>planning_artifacts</code> cấu hình là <code>_bmad-output/planning-artifacts</code>. Đúng thực tế nhưng nên ghi chú vì skill sau sẽ tìm ở <code>planning_artifacts</code> trước.</li>
+      </ul>
+    </div>
+
+    <footer class="report-footer">
+      <div class="meta">
+        <span>Rubric: review-rubric.md</span>
+        <span>Accessibility: review-a11y.md</span>
+        <span>Generated: 2026-08-19</span>
+      </div>
+    </footer>
+  </div>
+</body>
+</html>

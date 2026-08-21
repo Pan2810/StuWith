@@ -1,0 +1,138 @@
+<!doctype html><html lang="vi"><head><meta charset="utf-8"><title>StuWith · Xác nhận hỏi riêng — Cắm trại</title>
+<style>
+/* Mockup 1:1 — card-ask-confirm → countdown-display → tổng kết → nạp coin giữa phiên.
+   Hệ "Cắm trại". Vùng giọng CHÍNH XÁC: không emoji, không câu chữ nhí nhảnh. */
+*{box-sizing:border-box;margin:0;padding:0}
+body{font:15px/1.55 "Be Vietnam Pro",Roboto,"Segoe UI",system-ui,sans-serif;background:#3B3358;padding:28px;color:#EDE9FF}
+.wrap{max-width:1060px;margin:0 auto}
+.cap{font-size:12px;letter-spacing:.1em;text-transform:uppercase;font-weight:800;color:#C9BEFB;margin:0 0 10px}
+.app{--base:#F3F0FF;--raised:#FFFFFF;--sunken:#E7E1FB;--ink:#211A3D;--ink2:#5A5375;--bink:#211A3D;--bdec:#DCD5F5;
+  --primary:#6C4CF0;--onp:#FFFFFF;--ok:#0C6B46;--okc:#DFF7EC;--warn:#97301A;--warnc:#FFE8E2;
+  --coin:#7E5200;--coinc:#FFF3D6;--coinf:#F5A623;--tvid:#A895F5;--tav:#FFF3D6;
+  background:var(--base);color:var(--ink);border-radius:22px;overflow:hidden;border:2px solid #211A3D;margin-bottom:26px;position:relative;padding:28px}
+.app.dark{--base:#121020;--raised:#1C1833;--sunken:#0B0917;--ink:#EDE9FF;--ink2:#A9A2C9;--bink:#7268B5;--bdec:#332C57;
+  --primary:#A78BFA;--onp:#14092E;--ok:#4FDDA6;--okc:#102E22;--warn:#FF9878;--warnc:#331A14;
+  --coin:#FFC85C;--coinc:#33290F;--coinf:#FFC85C;--tvid:#3A2E6B;--tav:#33290F}
+.bgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.tile{aspect-ratio:4/3;border-radius:22px;border:2px solid var(--bink);background:var(--tvid)}
+.tile.av{background:var(--raised);display:flex;align-items:center;justify-content:center}
+.tile.av span{width:50px;height:50px;border-radius:20px;background:var(--tav);border:2px solid var(--bink);display:flex;align-items:center;justify-content:center;font-weight:800;color:var(--ink);transform:rotate(-3deg)}
+.scrim{position:absolute;inset:0;background:#211A3DB3}
+.app.dark .scrim{background:#0B0917CC}
+.dlg{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(480px,calc(100% - 48px));
+  background:var(--raised);border:2px solid var(--bink);border-radius:28px;padding:24px;box-shadow:6px 6px 0 var(--bink)}
+.dlg h1{font-size:22px;font-weight:800;line-height:1.25;margin-bottom:4px}
+.dlg .lead{font-size:12.5px;font-weight:600;color:var(--ink2);margin-bottom:18px}
+.who{display:flex;gap:12px;align-items:center;padding-bottom:16px;border-bottom:2px solid var(--bdec)}
+.wav{width:48px;height:48px;border-radius:16px;background:var(--tvid);border:2px solid var(--bink);flex:none}
+.wname{font-size:17px;font-weight:800}
+.badges{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.badge{font-size:12px;font-weight:800;padding:4px 10px;border-radius:9999px;background:var(--raised);border:2px solid var(--bink);color:var(--ink)}
+.money{background:var(--coinc);border:2px solid var(--bink);border-radius:20px;padding:16px;margin:16px 0;box-shadow:4px 4px 0 var(--bink)}
+.mrow{display:flex;justify-content:space-between;align-items:baseline;font-size:13px;color:var(--ink2);font-weight:600;padding:7px 0;border-bottom:2px solid var(--bdec)}
+.mrow:last-of-type{border:0;padding-bottom:0}
+.mrow b{font-size:15px;font-weight:800;color:var(--ink);font-variant-numeric:tabular-nums}
+.rule{display:flex;gap:10px;border:2px solid var(--bink);background:var(--warnc);color:var(--warn);
+  border-radius:16px;padding:12px 14px;font-size:13px;font-weight:700;line-height:1.5}
+.acts{display:flex;gap:10px;margin-top:18px}
+.btn{flex:1;min-height:48px;border-radius:9999px;border:2px solid var(--bink);background:var(--raised);
+  color:var(--ink);font:800 14px/1.55 inherit;padding:13px 18px}
+.btn.pri{background:var(--primary);color:var(--onp);box-shadow:3px 3px 0 var(--bink)}
+.session{display:grid;grid-template-columns:1fr 340px;gap:24px}
+.sesscard{background:var(--coinc);border:2px solid var(--bink);border-radius:20px;padding:20px;box-shadow:4px 4px 0 var(--bink)}
+.sesscard h2{font-size:16px;font-weight:800;margin-bottom:2px}
+.sesscard .lead{font-size:12.5px;font-weight:600;color:var(--ink2)}
+.count{font-size:44px;font-weight:800;line-height:1;letter-spacing:-.02em;color:var(--ink);margin:12px 0 6px;font-variant-numeric:tabular-nums}
+.explain{font-size:12.5px;font-weight:600;color:var(--ink2);line-height:1.5}
+.bar{height:12px;border-radius:9999px;background:var(--raised);border:2px solid var(--bink);overflow:hidden;margin-top:14px}
+.bar i{display:block;height:100%;background:var(--coinf)}
+.warnline{display:flex;gap:8px;margin-top:12px;border:2px solid var(--bink);background:var(--warnc);color:var(--warn);border-radius:16px;padding:10px 12px;font-size:13px;font-weight:800}
+.stopbtn{margin-top:14px;width:100%;min-height:48px;border-radius:9999px;border:2px solid var(--bink);background:var(--raised);color:var(--ink);font:800 14px/1.55 inherit}
+.stopbtn.pri{background:var(--primary);color:var(--onp);box-shadow:3px 3px 0 var(--bink)}
+.summary{background:var(--raised);border:2px solid var(--bink);border-radius:20px;padding:18px;margin-top:16px}
+.summary h3{font-size:15px;font-weight:800;margin-bottom:10px}
+.srow{display:flex;justify-content:space-between;font-size:13px;color:var(--ink2);font-weight:600;padding:7px 0;border-bottom:2px solid var(--bdec)}
+.srow:last-child{border:0}
+.srow b{color:var(--ink);font-weight:800;font-variant-numeric:tabular-nums}
+.states{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.st{background:var(--raised);border:2px solid var(--bink);border-radius:20px;padding:16px}
+.st .h{font-size:11px;letter-spacing:.1em;text-transform:uppercase;font-weight:800;margin-bottom:8px}
+.st.okk .h{color:var(--ok)}.st.pend .h{color:var(--coin)}.st.fail .h{color:var(--warn)}
+.st p{font-size:13.5px;font-weight:700;line-height:1.5;color:var(--ink)}
+.st small{display:block;margin-top:8px;font-size:12px;font-weight:600;color:var(--ink2);font-variant-numeric:tabular-nums}
+</style></head><body><div class="wrap">
+
+<p class="cap">Bước 1 · card-ask-confirm — trước khi đồng hồ chạy · Light</p>
+<div class="app" style="min-height:520px">
+  <div class="bgrid">
+    <div class="tile"></div><div class="tile"></div><div class="tile av"><span>HK</span></div>
+    <div class="tile"></div><div class="tile av"><span>NL</span></div><div class="tile av"><span>TR</span></div>
+  </div>
+  <div class="scrim"></div>
+  <div class="dlg">
+    <h1>Bắt đầu phiên hỏi riêng?</h1>
+    <p class="lead">Kênh 1-1 tách biệt. Người khác trong phòng không nghe được.</p>
+    <div class="who"><div class="wav"></div>
+      <div><div class="wname">Minh Anh</div>
+        <div class="badges"><span class="badge"><span aria-hidden="true">🎓</span> Thạc sĩ Toán</span><span class="badge"><span aria-hidden="true">▲</span> Hạng Vàng · mùa 3</span><span class="badge"><span aria-hidden="true">●</span> Giải tích</span></div></div></div>
+    <div class="money">
+      <div class="mrow"><span>Đơn giá</span><b>120 coin/phút</b></div>
+      <div class="mrow"><span>Tính theo block</span><b>1 phút</b></div>
+      <div class="mrow"><span>Số dư của bạn</span><b>1.000.000 coin</b></div>
+      <div class="mrow"><span>Với số dư này, bạn có khoảng</span><b>8.333 phút</b></div>
+    </div>
+    <div class="rule"><span aria-hidden="true">⚠</span><span>Nếu mạng yếu, video sẽ tắt nhưng phiên <b>vẫn tính coin</b> vì tiếng vẫn thông. Phiên chỉ dừng khi mất hẳn kết nối.</span></div>
+    <div class="acts"><button class="btn">Huỷ</button><button class="btn pri">Bắt đầu · 120 coin/phút</button></div>
+  </div>
+</div>
+
+<p class="cap">Bước 2 · countdown-display, ngưỡng cảnh báo, thẻ tổng kết · Dark</p>
+<div class="app dark">
+  <div class="session">
+    <div class="bgrid" style="grid-template-columns:repeat(2,1fr)">
+      <div class="tile"></div><div class="tile av"><span>TR</span></div>
+    </div>
+    <div>
+      <div class="sesscard">
+        <h2>Đang hỏi riêng · Minh Anh</h2>
+        <p class="lead">120 coin/phút · block 1 phút</p>
+        <div class="count">08:20</div>
+        <p class="explain">Thời gian còn lại với số dư hiện tại, ở giá 120 coin/phút.</p>
+        <div class="bar"><i style="width:68%"></i></div>
+        <button class="stopbtn">Dừng phiên</button>
+      </div>
+      <div class="sesscard" style="margin-top:16px">
+        <h2>Sắp hết coin</h2>
+        <div class="count" style="color:var(--warn)">01:40</div>
+        <p class="explain">Còn 1 phút 40 giây ở giá hiện tại.</p>
+        <div class="bar"><i style="width:12%"></i></div>
+        <div class="warnline"><span aria-hidden="true">⚠</span><span>Còn dưới 2 phút. Phiên sẽ tự dừng khi hết coin.</span></div>
+        <button class="stopbtn pri">Nạp thêm coin</button>
+      </div>
+      <div class="summary">
+        <h3>Phiên đã kết thúc</h3>
+        <div class="srow"><span>Dừng lúc</span><b>23:14</b></div>
+        <div class="srow"><span>Thời lượng</span><b>4 phút</b></div>
+        <div class="srow"><span>Đã trừ</span><b>−480 coin</b></div>
+        <div class="srow"><span>Số dư còn lại</span><b>999.520 coin</b></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<p class="cap">Bước 3 · quay lại từ cổng thanh toán — ba trạng thái, mỗi cái nói rõ tiền đang ở đâu</p>
+<div class="app">
+  <div class="states">
+    <div class="st okk"><div class="h">Thành công</div>
+      <p>Đã nhận 500.000 coin lúc 21:37.</p>
+      <small>Số dư: 512.400 coin · Biên nhận đã lưu trong Ví coin</small></div>
+    <div class="st pend"><div class="h">Đang xử lý</div>
+      <p>Giao dịch đang được xác nhận. Chưa trừ coin nào của bạn.</p>
+      <small>Mã tham chiếu: SW-2026-0819-4471 · Kết quả sẽ hiện trong Ví coin</small></div>
+    <div class="st fail"><div class="h">Không hoàn tất</div>
+      <p>Chưa trừ tiền của bạn. Giao dịch không hoàn tất lúc 21:37.</p>
+      <small>Bấm lại không bị cấp coin trùng (idempotency key)</small></div>
+  </div>
+  <p style="margin-top:16px;font-size:13px;font-weight:700;color:var(--ink2)">Không trạng thái nào để trống hay quay vòng vô định. Phiên hỏi riêng vẫn chạy suốt quá trình này; nếu coin về kịp, đồng hồ tự cộng thời gian mà không cần bấm gì.</p>
+</div>
+</div></body></html>

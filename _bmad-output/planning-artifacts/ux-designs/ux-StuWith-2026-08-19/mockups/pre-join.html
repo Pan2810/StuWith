@@ -1,0 +1,167 @@
+<!doctype html><html lang="vi"><head><meta charset="utf-8"><title>StuWith · Pre-join — Cắm trại</title>
+<style>
+/* Mockup 1:1 — PRE-JOIN. Hệ "Cắm trại". Token nguyên từ DESIGN.md.
+   Gồm cả trạng thái trình duyệt chặn camera/mic (permission-denied). */
+*{box-sizing:border-box;margin:0;padding:0}
+body{font:15px/1.55 "Be Vietnam Pro",Roboto,"Segoe UI",system-ui,sans-serif;background:#3B3358;padding:28px;color:#EDE9FF}
+.wrap{max-width:1060px;margin:0 auto}
+.cap{font-size:12px;letter-spacing:.1em;text-transform:uppercase;font-weight:800;color:#C9BEFB;margin:0 0 10px}
+.app{--base:#F3F0FF;--raised:#FFFFFF;--sunken:#E7E1FB;--ink:#211A3D;--ink2:#5A5375;--bink:#211A3D;--bdec:#DCD5F5;
+  --primary:#6C4CF0;--onp:#FFFFFF;--ok:#0C6B46;--okc:#DFF7EC;--warn:#97301A;--warnc:#FFE8E2;
+  --coin:#7E5200;--coinc:#FFF3D6;--coinf:#F5A623;--tvid:#A895F5;--tav:#FFF3D6;
+  background:var(--base);color:var(--ink);border-radius:22px;overflow:hidden;border:2px solid #211A3D;margin-bottom:26px}
+.app.dark{--base:#121020;--raised:#1C1833;--sunken:#0B0917;--ink:#EDE9FF;--ink2:#A9A2C9;--bink:#7268B5;--bdec:#332C57;
+  --primary:#A78BFA;--onp:#14092E;--ok:#4FDDA6;--okc:#102E22;--warn:#FF9878;--warnc:#331A14;
+  --coin:#FFC85C;--coinc:#33290F;--coinf:#FFC85C;--tvid:#3A2E6B;--tav:#33290F}
+.hdr{padding:16px 28px;border-bottom:2px solid var(--bink);background:var(--raised);display:flex;justify-content:space-between;align-items:center}
+.logo{font-weight:800;font-size:19px;letter-spacing:-.02em}
+.logo span{color:var(--primary)}
+.main{display:grid;grid-template-columns:1.25fr 1fr;gap:32px;padding:32px}
+h1{font-size:22px;font-weight:800;line-height:1.25;margin-bottom:6px}
+.sub{color:var(--ink2);font-size:12.5px;font-weight:600;margin-bottom:20px}
+.preview{aspect-ratio:4/3;border-radius:22px;border:2px solid var(--bink);background:var(--raised);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;position:relative;overflow:hidden}
+.avatar{width:110px;height:110px;border-radius:28px;background:var(--tav);border:2px solid var(--bink);display:flex;align-items:center;justify-content:center;font-size:32px;font-weight:800;color:var(--ink);transform:rotate(-3deg)}
+.pvlabel{position:absolute;top:14px;left:14px;font-size:12.5px;font-weight:800;padding:7px 14px;border-radius:9999px;background:var(--raised);border:2px solid var(--bink);color:var(--ink)}
+.pvnote{font-size:12.5px;font-weight:600;color:var(--ink2)}
+.modes{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:16px}
+.mode{border:2px solid var(--bink);border-radius:14px;background:var(--raised);padding:14px 10px;text-align:center;min-height:48px}
+.mode .ic{font-size:24px;display:block;margin-bottom:6px}
+.mode .nm{font-size:13px;font-weight:800}
+.mode.on{border-color:var(--primary);border-width:3px;padding:13px 9px;box-shadow:3px 3px 0 var(--bink)}
+.mode.on .nm{color:var(--primary)}
+.side{display:flex;flex-direction:column;gap:16px}
+.card{border:2px solid var(--bink);border-radius:20px;background:var(--raised);padding:18px}
+.card h2{font-size:17px;font-weight:800;line-height:1.3;margin-bottom:8px}
+.host{display:flex;gap:10px;align-items:center;margin:12px 0}
+.hav{width:42px;height:42px;border-radius:14px;background:var(--tvid);border:2px solid var(--bink);flex:none}
+.hname{font-size:15px;font-weight:800}
+.badges{display:flex;gap:6px;flex-wrap:wrap;margin-top:5px}
+.badge{font-size:12px;font-weight:800;padding:4px 10px;border-radius:9999px;background:var(--raised);border:2px solid var(--bink);color:var(--ink)}
+.rowline{display:flex;justify-content:space-between;font-size:13px;padding:8px 0;border-bottom:2px solid var(--bdec);color:var(--ink2);font-weight:600}
+.rowline b{color:var(--ink);font-weight:800;font-variant-numeric:tabular-nums}
+.desc{font-size:13px;color:var(--ink2);margin-top:10px;font-weight:600}
+.mic{display:flex;align-items:center;gap:12px}
+.lvl{flex:1;height:12px;border-radius:9999px;background:var(--raised);border:2px solid var(--bink);overflow:hidden}
+.lvl i{display:block;height:100%;width:46%;background:var(--primary)}
+.chip{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600;padding:7px 13px;border-radius:9999px;border:2px solid var(--bink);background:var(--okc);color:var(--ok)}
+.notice{border:2px solid var(--bink);background:var(--okc);color:var(--ok);border-radius:16px;padding:12px 14px;font-size:13px;font-weight:800}
+.notice.warn{background:var(--warnc);color:var(--warn)}
+.btn{min-height:48px;border-radius:9999px;border:2px solid var(--bink);background:var(--raised);color:var(--ink);font:800 15px/1.55 inherit;padding:13px 22px;width:100%}
+.btn.pri{background:var(--primary);color:var(--onp);box-shadow:3px 3px 0 var(--bink)}
+.foot{display:flex;gap:10px}
+.foot .btn{width:auto;flex:1}
+.perm{border:2px solid var(--bink);background:var(--warnc);border-radius:22px;padding:24px;box-shadow:4px 4px 0 var(--bink)}
+.perm h3{font-size:19px;font-weight:800;color:var(--warn);margin-bottom:8px}
+.perm p{font-size:14px;font-weight:600;color:var(--ink);margin-bottom:8px}
+.perm ol{margin:12px 0 16px 20px;font-size:13.5px;font-weight:600;color:var(--ink)}
+.perm li{margin-bottom:5px}
+</style></head><body><div class="wrap">
+
+<p class="cap">Pre-join · Light · chế độ Ẩn mặt đang bật</p>
+<div class="app">
+  <div class="hdr"><div class="logo">Stu<span>With</span></div><span class="chip">● Mạng tốt</span></div>
+  <div class="main">
+    <div>
+      <h1>Trước khi vào, bạn muốn hiện thế nào?</h1>
+      <p class="sub">Chỉ mình bạn thấy khung hình này. Đổi lại bất cứ lúc nào khi đã vào phòng.</p>
+      <div class="preview">
+        <span class="pvlabel">🙈 Đang ẩn mặt</span>
+        <div class="avatar">TR</div>
+        <p class="pvnote">Người khác sẽ thấy avatar này thay cho khuôn mặt bạn.</p>
+      </div>
+      <div class="modes" role="radiogroup" aria-label="Chế độ khuôn mặt">
+        <div class="mode" role="radio" aria-checked="false"><span class="ic" aria-hidden="true">🙂</span><span class="nm">Để nguyên</span></div>
+        <div class="mode on" role="radio" aria-checked="true"><span class="ic" aria-hidden="true">🙈</span><span class="nm">Ẩn mặt</span></div>
+        <div class="mode" role="radio" aria-checked="false"><span class="ic" aria-hidden="true">🐱</span><span class="nm">Filter</span></div>
+      </div>
+    </div>
+    <div class="side">
+      <div class="card">
+        <h2>Ôn Giải tích 1 — Tích phân từng phần</h2>
+        <div class="host"><div class="hav"></div>
+          <div><div class="hname">Minh Anh · Host</div>
+            <div class="badges"><span class="badge"><span aria-hidden="true">🎓</span> Thạc sĩ Toán</span><span class="badge"><span aria-hidden="true">▲</span> Hạng Vàng</span></div></div></div>
+        <div class="rowline"><span>Gói</span><b>Study Circle</b></div>
+        <div class="rowline"><span>Đang có mặt</span><b>6 / 25</b></div>
+        <div class="rowline" style="border:0"><span>Buổi học</span><b>Không ghi lại</b></div>
+        <p class="desc">Ôn kỹ thuật đặt u, dv. Mang theo đề cương chương 4. Ai kẹt câu nào cứ giơ tay.</p>
+      </div>
+      <div class="card">
+        <h2 style="font-size:15px;margin-bottom:12px">Thử mic</h2>
+        <div class="mic"><span style="font-size:20px" aria-hidden="true">🎤</span><div class="lvl"><i></i></div><span style="font-size:12.5px;font-weight:800;color:var(--ink2)">Nghe rõ</span></div>
+      </div>
+      <div class="notice">Bạn đang ẩn mặt. Không ai trong phòng thấy khuôn mặt bạn, kể cả host.</div>
+      <div class="foot"><button class="btn">Quay lại</button><button class="btn pri">Vào phòng</button></div>
+    </div>
+  </div>
+</div>
+
+<p class="cap">Pre-join · Dark · chế độ Để nguyên</p>
+<div class="app dark">
+  <div class="hdr"><div class="logo">Stu<span>With</span></div><span class="chip">● Mạng tốt</span></div>
+  <div class="main">
+    <div>
+      <h1>Trước khi vào, bạn muốn hiện thế nào?</h1>
+      <p class="sub">Chỉ mình bạn thấy khung hình này. Đổi lại bất cứ lúc nào khi đã vào phòng.</p>
+      <div class="preview" style="background:var(--tvid);border-color:var(--bink)">
+        <span class="pvlabel">🙂 Để nguyên</span>
+        <p class="pvnote" style="color:#EDE9FF">Người khác sẽ thấy khuôn mặt thật của bạn.</p>
+      </div>
+      <div class="modes" role="radiogroup" aria-label="Chế độ khuôn mặt">
+        <div class="mode on" role="radio" aria-checked="true"><span class="ic" aria-hidden="true">🙂</span><span class="nm">Để nguyên</span></div>
+        <div class="mode" role="radio" aria-checked="false"><span class="ic" aria-hidden="true">🙈</span><span class="nm">Ẩn mặt</span></div>
+        <div class="mode" role="radio" aria-checked="false"><span class="ic" aria-hidden="true">🐱</span><span class="nm">Filter</span></div>
+      </div>
+    </div>
+    <div class="side">
+      <div class="card">
+        <h2>Ôn Giải tích 1 — Tích phân từng phần</h2>
+        <div class="host"><div class="hav"></div>
+          <div><div class="hname">Minh Anh · Host</div>
+            <div class="badges"><span class="badge"><span aria-hidden="true">🎓</span> Thạc sĩ Toán</span><span class="badge"><span aria-hidden="true">▲</span> Hạng Vàng</span></div></div></div>
+        <div class="rowline"><span>Gói</span><b>Study Circle</b></div>
+        <div class="rowline"><span>Đang có mặt</span><b>6 / 25</b></div>
+        <div class="rowline" style="border:0"><span>Buổi học</span><b>Không ghi lại</b></div>
+      </div>
+      <div class="card">
+        <h2 style="font-size:15px;margin-bottom:12px">Thử mic</h2>
+        <div class="mic"><span style="font-size:20px" aria-hidden="true">🎤</span><div class="lvl"><i></i></div><span style="font-size:12.5px;font-weight:800;color:var(--ink2)">Nghe rõ</span></div>
+      </div>
+      <div class="notice warn">Khuôn mặt bạn sẽ hiện với mọi người trong phòng.</div>
+      <div class="foot"><button class="btn">Quay lại</button><button class="btn pri">Vào phòng</button></div>
+    </div>
+  </div>
+</div>
+
+<p class="cap">Pre-join · trạng thái trình duyệt chặn camera/mic — luôn có lối thoát</p>
+<div class="app">
+  <div class="hdr"><div class="logo">Stu<span>With</span></div><span class="chip">● Mạng tốt</span></div>
+  <div class="main">
+    <div>
+      <h1>Trước khi vào, bạn muốn hiện thế nào?</h1>
+      <p class="sub">Chỉ mình bạn thấy khung hình này. Đổi lại bất cứ lúc nào khi đã vào phòng.</p>
+      <div class="perm">
+        <h3>Trình duyệt đang chặn camera và micro</h3>
+        <p>Bạn không cần camera để học. Nhưng nếu muốn bật, làm theo ba bước sau:</p>
+        <ol>
+          <li>Bấm biểu tượng ổ khoá ở thanh địa chỉ trình duyệt</li>
+          <li>Chọn “Cho phép” ở mục Camera và Micro</li>
+          <li>Tải lại trang này</li>
+        </ol>
+        <div class="foot"><button class="btn">Thử lại quyền</button><button class="btn pri">Vào phòng chỉ để nghe</button></div>
+      </div>
+    </div>
+    <div class="side">
+      <div class="card">
+        <h2>Ôn Giải tích 1 — Tích phân từng phần</h2>
+        <div class="host"><div class="hav"></div>
+          <div><div class="hname">Minh Anh · Host</div>
+            <div class="badges"><span class="badge"><span aria-hidden="true">🎓</span> Thạc sĩ Toán</span></div></div></div>
+        <div class="rowline"><span>Đang có mặt</span><b>6 / 25</b></div>
+        <div class="rowline" style="border:0"><span>Buổi học</span><b>Không ghi lại</b></div>
+      </div>
+      <div class="notice">Vào chỉ để nghe vẫn dùng được chat cả phòng và hỏi riêng bằng chữ.</div>
+    </div>
+  </div>
+</div>
+</div></body></html>
