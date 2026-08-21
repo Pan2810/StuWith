@@ -1,7 +1,9 @@
 ---
 title: 'Quyết định nền tảng test và CI cho StuWith'
-status: 'proposed'
+status: 'accepted'
 date: '2026-08-21'
+accepted-date: '2026-08-21'
+repo: 'https://github.com/Pan2810/StuWith'
 author: 'Murat (Master Test Architect) — phiên với IPan'
 closes-action-item: 'sprint-status.yaml → epic 1 → "Chốt nền tảng CI + framework test"'
 consumed-by: 'Story 1.1 — Dựng khung monorepo, hai process và bốn cổng CI'
@@ -126,7 +128,7 @@ Thứ AD-13 thật sự cần — *"thêm trường tuỳ chọn là tương th�
 
 ⚠️ **Ràng buộc bảo mật bắt buộc** (theo `ci-burn-in.md`): mọi giá trị từ context không tin được (`github.event.*`, `inputs.*`) phải đi qua biến `env:` trung gian, **không bao giờ nội suy thẳng vào khối `run:`**. Đây là đường tiêm script trực tiếp — và cổng số 1 là quét credential, nên để lộ chính token của CI thì mỉa mai quá.
 
-**Nếu IPan muốn khác:** quyết định này là thứ dễ đổi nhất trong tài liệu. Bốn cổng mới là bất biến; công cụ chạy chúng thì không.
+**✅ Đã xác nhận 21/08/2026:** repo nằm ở `https://github.com/Pan2810/StuWith` (nhánh `main`). GitHub Actions là lựa chọn tự nhiên, không còn là suy luận.
 
 ---
 

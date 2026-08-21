@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 08-21-2026 21:27
-last_updated: 08-21-2026 21:27
+last_updated: 08-21-2026 22:05
 project: StuWith
 project_key: NOKEY
 tracking_system: file-system
@@ -89,7 +89,7 @@ action_items:
   - epic: 1
     action: "Chốt nền tảng CI + framework test — Story 1.1 dựng bốn cổng chất lượng (AD-20) nên phải chọn trước khi build story đầu tiên"
     owner: "IPan"
-    status: open
+    status: done
   - epic: 2
     action: "Chốt SDK face-filter client-side cho Story 2.7 — PRD §6 hẹn quyết ở Architecture nhưng bảng Stack không có dòng nào; ràng buộc đã đủ (client-side, >=20 FPS trên máy 4 nhân/8GB/không GPU rời, 3 chế độ, tự hạ bậc)"
     owner: "IPan"
