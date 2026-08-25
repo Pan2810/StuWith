@@ -2,7 +2,7 @@
 title: 'Story 1.1 — Dựng khung monorepo, hai process và bốn cổng CI'
 type: 'feature'
 created: '2026-08-21'
-status: 'in-review'
+status: 'done'
 baseline_commit: '5cf16eb72376460087662b93acd490d07c0d04a2'
 review_loop_iteration: 0
 context:
