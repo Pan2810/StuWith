@@ -1,0 +1,34 @@
+packages:
+  - 'apps/*'
+  - 'packages/*'
+
+# TD-3, dual-TypeScript policy — the mechanical half.
+#
+# `nest build` loads whatever `typescript` resolves from @nestjs/cli, and the CLI
+# pins typescript@5.9.3 as a direct dependency. NestJS still needs the programmatic
+# compiler API (Swagger/GraphQL plugins) that TS 7.0 removed, so the supported
+# compiler for `nest build` is @typescript/typescript6@6.0.2. This override is what
+# makes `pnpm --filter api build` actually run on 6.0.2 rather than on whatever the
+# CLI happened to ship. Root `typecheck` still runs on typescript@7.0.2.
+overrides:
+  '@nestjs/cli>typescript': 'npm:@typescript/typescript6@6.0.2'
+
+# pnpm 11 refuses to run a dependency's install scripts unless it is listed here.
+# All three are optional native/codegen accelerations pulled in transitively by
+# `testcontainers`; the library works without them, and a package that compiles
+# arbitrary C at install time is exactly what CI gate #1 exists to be nervous about.
+allowBuilds:
+  cpu-features: false
+  protobufjs: false
+  ssh2: false
+
+# CI gate #2, secondary layer — dependency-cruiser needs the programmatic
+# TypeScript compiler API (it declares support for `>=2 <7`). Under TS 7.0.2 it
+# silently degrades to "0 modules cruised" and the gate turns green while checking
+# nothing, which is the worst possible failure mode for an architecture gate.
+# Injecting the 6.0.2 compiler as a real dependency of the tool — rather than
+# relying on whatever `typescript` happens to hoist — keeps the gate honest.
+packageExtensions:
+  dependency-cruiser:
+    dependencies:
+      typescript: 'npm:@typescript/typescript6@6.0.2'

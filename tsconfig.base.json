@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "_comment": [
+    "AD-1 PRIMARY GATE LIVES IN THE REFERENCE GRAPH, NOT HERE.",
+    "Never add a `paths` mapping to this file. A repo-wide path alias would let",
+    "packages/domain resolve packages/db and every infra SDK again, which silently",
+    "deletes the only enforcement layer that `// eslint-disable` cannot switch off.",
+    "Cross-package resolution happens through pnpm workspace symlinks +",
+    "package.json `types`, gated by each package's own `dependencies`."
+  ],
+  "compilerOptions": {
+    "target": "es2023",
+    "lib": ["es2023"],
+    "module": "node16",
+    "moduleResolution": "node16",
+
+    "composite": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "incremental": true,
+
+    "strict": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noPropertyAccessFromIndexSignature": false,
+
+    "isolatedModules": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+
+    "types": ["node"]
+  }
+}

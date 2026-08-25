@@ -1,0 +1,18 @@
+{
+  "_comment": [
+    "AD-1 PRIMARY GATE. `references` lists ONLY packages/contracts.",
+    "packages/db, apps/*, and every infrastructure SDK are absent by design, so an",
+    "`import { Pool } from 'pg'` here does not resolve and `tsc` fails on the exact",
+    "offending line. Adding an entry to `references` or a `paths` mapping below is",
+    "the one edit that quietly repeals the rule — do not."
+  ],
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "./src",
+    "outDir": "./dist",
+    "tsBuildInfoFile": "./dist/.tsbuildinfo"
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["src/**/*.test.ts"],
+  "references": [{ "path": "../contracts" }]
+}

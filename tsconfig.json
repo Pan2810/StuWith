@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "_comment": [
+    "Solution-style root. `files` is intentionally empty: this config only owns the",
+    "project graph. `tsc -b` walks it in dependency order.",
+    "apps/web is NOT in this graph on purpose — Next.js owns apps/web/tsconfig.json",
+    "and rewrites `noEmit: true` into it, which is incompatible with `composite`.",
+    "It is typechecked separately by the root `typecheck` script, still with TS 7.0.2."
+  ],
+  "files": [],
+  "references": [
+    { "path": "./packages/contracts" },
+    { "path": "./packages/domain" },
+    { "path": "./packages/config" },
+    { "path": "./packages/db" },
+    { "path": "./apps/api" },
+    { "path": "./apps/realtime-gateway" }
+  ]
+}

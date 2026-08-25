@@ -1,0 +1,14 @@
+{
+  "_comment": "The tsc6 (6.0.2) view used by `nest build`. Owns ./dist.",
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "composite": false,
+    "incremental": false,
+    "declaration": false,
+    "declarationMap": false,
+    "outDir": "./dist",
+    "tsBuildInfoFile": null
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["src/**/*.test.ts", "dist", "node_modules"]
+}

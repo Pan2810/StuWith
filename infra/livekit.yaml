@@ -1,0 +1,36 @@
+# LiveKit 1.13.5 — media plane only (AD-2).
+#
+# No API key lives in this file: keys come from the LIVEKIT_KEYS environment
+# variable that infra/docker-compose.yml injects, so this file is safe to commit
+# and CI gate #1 (gitleaks) has nothing to find here.
+port: 7880
+
+rtc:
+  tcp_port: 7881
+  port_range_start: 50000
+  port_range_end: 50019
+  # Local development runs on a private network; on the VPS this stays false and
+  # the public address is discovered through the TURN/external-ip configuration.
+  use_external_ip: false
+
+# Shared state for a multi-node deployment, and the presence store LiveKit uses
+# for room routing. Valkey, per the spine's Stack table.
+redis:
+  address: valkey:6379
+
+# Rooms are created explicitly by the process that owns the admission decision
+# (AD-9): apps/api for classrooms, apps/realtime-gateway for private sessions.
+# Auto-creation would let a client with any valid token invent a room.
+room:
+  auto_create: false
+  empty_timeout: 300
+  departure_timeout: 20
+
+turn:
+  # TURN is served by the dedicated coturn container, not by LiveKit's embedded
+  # one — coturn is mandatory in this stack, not an optional extra.
+  enabled: false
+
+logging:
+  level: info
+  json: true
