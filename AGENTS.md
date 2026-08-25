@@ -184,12 +184,15 @@ required check is a silent pass.
   the peer resolves inside that package instead of at the root.
   Tracking: typescript-eslint#10940. The dependency-direction rules that actually
   matter are already enforced by stronger mechanisms (section 2).
-- **The `production` GitHub Environment must be created by hand.** Repo settings →
-  Environments → `production` → *Required reviewers*.
-  `.github/workflows/deploy.yml` references it, but an environment that does not
-  exist imposes no wait, so H5 is **not** satisfied until someone with admin rights
-  configures it. The four CI jobs must also be marked as required status checks on
-  `main`.
+- **The deploy environment is named `StuWithEnv`** — configured 2026-08-25 with
+  *Required reviewers*, which is what satisfies H5.
+
+  **The name in `deploy.yml` must match it exactly, and nothing will tell you when
+  it does not.** A referenced environment that does not exist is not an error:
+  GitHub creates it on the fly, with **no protection rules**, and the job deploys
+  unattended. This already happened once — the workflow said `production` while the
+  configured environment was `StuWithEnv`, so the reviewers were attached to an
+  environment no workflow pointed at. If you rename either side, rename both.
 - **The VPS rollout step is a deliberate `exit 1`**, so a green "deploy" job can
   never be mistaken for a deploy that actually happened.
 - **`packages/config` redacts PII with a deny-list.** The spine mandates a

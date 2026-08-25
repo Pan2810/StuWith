@@ -7,7 +7,7 @@
 # deploy credentials by then.
 #
 # ⚠️ MANUAL SETUP REQUIRED (repo configuration, not a file — see AGENTS.md):
-#   Settings → Environments → `production` → Required reviewers.
+#   Settings → Environments → `StuWithEnv` → Required reviewers.
 #   Without it this workflow deploys unattended and H5 is not satisfied.
 name: Deploy
 
@@ -31,7 +31,7 @@ jobs:
     name: 'Deploy to VPS (requires manual approval)'
     runs-on: ubuntu-24.04
     environment:
-      name: production
+      name: StuWithEnv
       url: ${{ vars.PRODUCTION_URL }}
 
     steps:
