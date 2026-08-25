@@ -1,3 +1,4 @@
+import type { Pool } from 'pg';
 import { PgHeartbeatAdapter } from './pg/heartbeat-adapter';
 import { createPool } from './pool';
 import { runHeartbeatPortContract } from './test-kit';
@@ -32,6 +33,7 @@ runHeartbeatPortContract({
       started.connectionStringFor('stuwith_api', TEST_ROLE_PASSWORDS.DB_ROLE_API_PASSWORD),
     );
     const adminUrl = started.connectionString;
+    const faultingPools: Pool[] = [];
 
     return {
       port: new PgHeartbeatAdapter(pool),
@@ -43,10 +45,51 @@ runHeartbeatPortContract({
           client.query('TRUNCATE TABLE service_heartbeats'),
         );
       },
+
+      /**
+       * A pool pointed at a port nothing is listening on — a genuine connection
+       * fault rather than a stub. Proves the adapter lets it propagate instead of
+       * converting it into `{ ok: false, reason: 'StaleObservation' }`.
+       */
+      createFaultingPort: async () => {
+        const deadPool = createPool('postgres://nobody:nobody@127.0.0.1:1/nowhere', {
+          connectionTimeoutMillis: 2_000,
+        });
+        // A pg Pool emits 'error' on background connection failures, and an
+        // unhandled 'error' event takes the whole worker down.
+        deadPool.on('error', () => {});
+        faultingPools.push(deadPool);
+        return new PgHeartbeatAdapter(deadPool);
+      },
+
+      /**
+       * Every step runs even if an earlier one rejects. Previously `pool.end()`
+       * came first and unguarded, so a pool that failed to drain meant
+       * `container.stop()` was never reached and a Postgres container leaked on
+       * the CI runner for the rest of the job.
+       */
       teardown: async () => {
-        await pool.end();
-        await started?.stop();
+        const failures: unknown[] = [];
+        const attempt = async (label: string, fn: () => Promise<unknown>): Promise<void> => {
+          try {
+            await fn();
+          } catch (error) {
+            failures.push(new Error(`${label} failed: ${String(error)}`));
+          }
+        };
+
+        for (const deadPool of faultingPools) {
+          await attempt('faulting pool end', () => deadPool.end());
+        }
+        await attempt('pool end', () => pool.end());
+        await attempt('container stop', async () => {
+          await started?.stop();
+        });
         started = undefined;
+
+        if (failures.length > 0) {
+          throw new AggregateError(failures, 'teardown did not complete cleanly');
+        }
       },
     };
   },

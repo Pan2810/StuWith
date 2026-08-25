@@ -3,14 +3,23 @@
     "AD-1 PRIMARY GATE. `references` lists ONLY packages/contracts.",
     "packages/db, apps/*, and every infrastructure SDK are absent by design, so an",
     "`import { Pool } from 'pg'` here does not resolve and `tsc` fails on the exact",
-    "offending line. Adding an entry to `references` or a `paths` mapping below is",
-    "the one edit that quietly repeals the rule — do not."
+    "offending line. Adding an entry to `references` or a `paths` mapping is one of",
+    "the two edits that quietly repeal the rule — do not.",
+    "",
+    "`types: []` is the other half, and it is not tidiness. tsconfig.base.json sets",
+    "`types: [\"node\"]` for the whole repo, which put @types/node in scope HERE too:",
+    "`import { readFileSync } from 'node:fs'` typechecked with exit 0 inside the",
+    "package that is supposed to run with no filesystem and no network (TD-1).",
+    "Emptying the list closes that hole. dependency-cruiser's",
+    "`ad1-domain-no-node-builtins` rule is the backstop, not the primary control."
   ],
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "rootDir": "./src",
     "outDir": "./dist",
-    "tsBuildInfoFile": "./dist/.tsbuildinfo"
+    "tsBuildInfoFile": "./dist/.tsbuildinfo",
+
+    "types": []
   },
   "include": ["src/**/*.ts"],
   "exclude": ["src/**/*.test.ts"],

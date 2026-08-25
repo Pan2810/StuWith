@@ -1,4 +1,4 @@
-import { loggerBaseOptions } from '@stuwith/config';
+import { loggerBaseOptions, resolveRequestId } from '@stuwith/config';
 import type { ApiEnv } from '@stuwith/config';
 import type { Params } from 'nestjs-pino';
 import { randomUUID } from 'node:crypto';
@@ -20,9 +20,13 @@ export function buildLoggerParams(config: ApiEnv): Params {
       level: base.level,
       base: { service: base.base.service, version: base.base.version },
       redact: { paths: [...base.redactPaths], remove: true },
+      // An inbound request id is only reused when it already looks like an id
+      // (see resolveRequestId in packages/config): otherwise a caller could inject
+      // newlines into every log line this request produces, or hand us a
+      // megabyte-long correlation id and have it repeated on each one. The value
+      // echoed back in the response header is always the sanitised one.
       genReqId: (req, res) => {
-        const incoming = req.headers[base.requestIdHeader];
-        const requestId = typeof incoming === 'string' && incoming.length > 0 ? incoming : randomUUID();
+        const requestId = resolveRequestId(req.headers[base.requestIdHeader], randomUUID);
         res.setHeader(base.requestIdHeader, requestId);
         return requestId;
       },

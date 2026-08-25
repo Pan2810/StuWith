@@ -2,7 +2,7 @@
   "name": "stuwith",
   "version": "0.1.0",
   "private": true,
-  "description": "StuWith monorepo â€” modular monolith, hexagonal core, two processes.",
+  "description": "StuWith monorepo — modular monolith, hexagonal core, two processes.",
   "packageManager": "pnpm@11.22.0",
   "engines": {
     "node": ">=24.14.1"
@@ -12,16 +12,16 @@
     "build": "pnpm run build:packages && pnpm run build:apps",
     "build:packages": "tsc -b tsconfig.json",
     "build:apps": "pnpm --filter api build && pnpm --filter realtime-gateway build && pnpm --filter web build",
-    "test": "pnpm run build:packages && vitest run",
+    "test": "pnpm run build:packages && pnpm --filter api build && vitest run",
     "test:e2e": "playwright test",
     "check": "pnpm run dep-check && pnpm run typecheck",
     "dep-check": "depcruise --config .dependency-cruiser.cjs packages apps",
     "migrate": "pnpm --filter @stuwith/db migrate",
     "clean": "tsc -b tsconfig.json --clean",
-    "test:unit": "vitest run --project domain --project contracts --project config",
+    "test:unit": "vitest run --project domain --project contracts --project config --project api",
     "test:contract": "vitest run --project db heartbeat-contract",
-    "test:gates": "pnpm run build:packages && vitest run --project gates",
-    "test:migrations": "vitest run --project db migrations"
+    "test:gates": "pnpm run build:packages && pnpm --filter api build && vitest run --project gates",
+    "test:migrations": "vitest run --project db migration"
   },
   "devDependencies": {
     "@playwright/test": "1.62.1",

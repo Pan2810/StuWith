@@ -66,6 +66,17 @@ module.exports = {
       to: { path: '^apps/(api|realtime-gateway)/', pathNot: '^apps/$1/' },
     },
     {
+      name: 'ad1-adapter-and-config-stay-below-the-shells',
+      severity: 'error',
+      comment:
+        'AD-1 is a direction, not a single forbidden pair. packages/db and packages/config sit ' +
+        'BELOW apps/*: an adapter or a config module that reaches up into a process shell ' +
+        'inverts the arrow, and drags NestJS wiring into a package the other process also loads. ' +
+        'Nothing forbade this before — an adapter importing apps/api satisfied every other rule.',
+      from: { path: '^packages/(db|config)/' },
+      to: { path: '^apps/' },
+    },
+    {
       name: 'ad1-web-touches-contracts-only',
       severity: 'error',
       comment:
@@ -109,9 +120,21 @@ module.exports = {
   ],
 
   options: {
+    // `doNotFollow` records a dependency on an installed package but does not
+    // cruise INTO it. That distinction is load-bearing: `node_modules` must NOT
+    // appear in `exclude` below, because `exclude` drops those modules from the
+    // graph entirely — and a rule whose `to.path` names `node_modules/pg` can
+    // never match a target that is not in the graph at all.
+    //
+    // That was the state of this file until it was measured. With `pg` made
+    // resolvable from packages/domain, `ad1-domain-no-infra-sdk` produced NO
+    // error: the rule read as enforcement, but the only thing failing an infra
+    // import was `no-unresolvable` — i.e. pnpm's isolated node_modules, not this
+    // config. Add `pg` to packages/domain/package.json and both AD-1 layers would
+    // have gone green together, in exactly the scenario the rule exists for.
     doNotFollow: { path: 'node_modules' },
     exclude: {
-      path: '(^|/)(dist|\\.next|\\.tsbuild|node_modules|coverage|migrations|seeds)(/|$)',
+      path: '(^|/)(dist|\\.next|\\.tsbuild|coverage|migrations|seeds)(/|$)',
     },
     // Required to see `import type` and type-only re-exports — the exact routes a
     // reference graph alone would let through.

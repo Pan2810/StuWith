@@ -56,6 +56,24 @@ export default defineConfig({
           // Pulling and booting a Postgres 18 image is slow the first time.
           testTimeout: 180_000,
           hookTimeout: 300_000,
+          // Each file in this project boots its OWN Postgres 18 container. Run in
+          // parallel that is two containers, two image pulls on a cold runner and
+          // two sets of port bindings competing for the same CI box — the usual
+          // shape of a flaky, occasionally-OOM gate. Sequential is slower and
+          // survives a small runner, which is the trade a required check wants.
+          fileParallelism: false,
+        },
+      },
+      {
+        test: {
+          // TD-1 puts both processes under Vitest too. Today it carries the
+          // logging policy tests: AD-15 redaction had no test anywhere, so
+          // deleting `req.headers.cookie` from the list left every gate green.
+          name: 'api',
+          root: './apps/api',
+          environment: 'node',
+          include: ['src/**/*.test.ts'],
+          setupFiles: [],
         },
       },
       {

@@ -21,15 +21,21 @@ const composePath = fileURLToPath(new URL('../../infra/docker-compose.yml', impo
 const compose = readFileSync(composePath, 'utf8');
 
 /**
- * The compose file with comment lines removed, lowercased — i.e. what compose
- * actually acts on. Assertions about what the stack *contains* run against this;
- * prose in a comment is not a declaration.
+ * The two things AD-29 is actually a rule about: which services exist, and which
+ * images they run.
+ *
+ * Scanning the whole declaration block for a substring was the earlier approach,
+ * and it is the wrong shape of check. `s3` turns up inside plenty of innocent
+ * strings — an endpoint hostname, an env var name, a comment explaining why there
+ * is no bucket — so the gate would eventually go red for a reason that has nothing
+ * to do with an object store. At that point someone deletes the token from the
+ * list to get their build through, and the rule quietly stops covering the real
+ * case. A check that can fail for the wrong reason does not survive contact with a
+ * deadline.
  */
-const declarations = compose
-  .split(/\r?\n/)
-  .filter((line) => !/^\s*#/.test(line))
-  .join('\n')
-  .toLowerCase();
+function serviceImages(source: string): string[] {
+  return [...source.matchAll(/^\s*image:\s*(\S+)/gm)].map((m) => (m[1] ?? '').toLowerCase());
+}
 
 /**
  * Collect the two-space-indented keys of one top-level block, stopping at the
@@ -83,23 +89,44 @@ describe('AD-29 / story 1.1 — the local stack is exactly four services', () =>
     }
   });
 
-  it('declares no object store — AD-29, including "just for dev" ones', () => {
+  const FORBIDDEN = ['minio', 's3', 'ceph', 'garage', 'seaweedfs', 'localstack'];
+
+  it.each(FORBIDDEN)('declares no %s service — AD-29, "just for dev" included', (forbidden) => {
     // The MVP writes no binaries. An object store in the dev stack is how that
     // rule gets quietly relaxed: something starts writing to it locally, and the
     // constraint is only discovered at deploy.
-    //
-    // Scanned against `declarations`, not the raw file: the compose file *names*
-    // MinIO and Caddy in comments to say they are absent, and a check that cannot
-    // tell "no MinIO here" from a MinIO service is not checking anything.
-    for (const forbidden of ['minio', 's3', 'ceph', 'garage', 'seaweedfs', 'localstack']) {
-      expect(declarations, `${forbidden} must not be declared in the local stack`).not.toContain(
-        forbidden,
-      );
+    for (const service of services) {
+      expect(
+        service.toLowerCase(),
+        `service "${service}" looks like an object store`,
+      ).not.toContain(forbidden);
+    }
+    for (const image of serviceImages(compose)) {
+      expect(image, `image "${image}" looks like an object store`).not.toContain(forbidden);
     }
   });
 
   it('declares no Caddy — TLS terminates at the VPS edge, not on a dev machine', () => {
-    expect(declarations).not.toContain('caddy');
+    for (const service of services) {
+      expect(service.toLowerCase()).not.toContain('caddy');
+    }
+    for (const image of serviceImages(compose)) {
+      expect(image).not.toContain('caddy');
+    }
+  });
+
+  it('would still notice a forbidden service if one were added', () => {
+    // Proves the two checks above look in the right place. The compose file names
+    // MinIO and Caddy in comments precisely to say they are absent, so a check
+    // that cannot tell a comment from a declaration is checking nothing — and one
+    // that cannot see a real declaration is worth even less.
+    const eol = compose.includes('\r\n') ? '\r\n' : '\n';
+    const tampered = compose.replace(
+      /^services:\r?\n/m,
+      ['services:', '  minio:', '    image: minio/minio:RELEASE.2026-01-01', ''].join(eol),
+    );
+    expect(blockKeys(tampered, 'services')).toContain('minio');
+    expect(serviceImages(tampered).some((image) => image.includes('minio'))).toBe(true);
   });
 
   it('gives every service a healthcheck, so `up --wait` means something', () => {
