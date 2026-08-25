@@ -60,27 +60,49 @@ repo, usually in a way that first shows up as an unrelated test failure:
 `packages/domain` must not import `apps/*`, `packages/db`, or any infrastructure SDK
 (`pg`, a Valkey client, LiveKit, an HTTP client) — nor a Node builtin.
 
-Three layers enforce it, and the first two are the gates:
+Three layers enforce it. They do **not** all catch the same things, and the table
+below is the accurate division of labour — an earlier version of this section
+claimed the reference graph caught everything, which was measurably false for Node
+builtins.
+
+| Kind of violation | Caught by the type layer? | Caught by dependency-cruiser? |
+| --- | --- | --- |
+| `import { Pool } from 'pg'` (not a dependency of domain) | yes — does not resolve | yes, as `no-unresolvable` |
+| `import ... from '@stuwith/db'` | yes — does not resolve | yes |
+| Deep relative reach, `../../db/src/...` | yes — outside `rootDir` | yes, `ad1-domain-no-app-or-adapter` |
+| `import { readFileSync } from 'node:fs'` | yes — **only because** domain sets `types: []` | yes, `ad1-domain-no-node-builtins` |
+| `import type { Pool } from 'pg'` | **no** — erased before emit | yes |
+| `await import('pg')` | **no** — never in the type graph | yes |
+| `pg` after someone adds it to domain's `package.json` | **no** — it resolves fine | yes, `ad1-domain-no-infra-sdk` |
 
 1. **Primary — TypeScript project references.** `packages/domain/tsconfig.json`
-   references *only* `packages/contracts`. A forbidden import does not resolve and
-   `tsc` fails on the exact line. No comment switches this off.
-2. **Secondary — `dependency-cruiser`** (`.dependency-cruiser.cjs`), which catches
-   what a type graph cannot see: dynamic `import()` and `import type` used as a
-   smuggling route.
+   references *only* `packages/contracts`, so a package import has nowhere to
+   resolve to and `tsc` fails on the exact line. No comment switches this off.
+   Node builtins are a separate mechanism: `tsconfig.base.json` puts
+   `types: ["node"]` in scope for every project, so `packages/domain/tsconfig.json`
+   overrides it with `"types": []`. Remove that line and `node:fs` typechecks
+   cleanly inside the domain again.
+2. **Secondary — `dependency-cruiser`** (`.dependency-cruiser.cjs`). It is the only
+   layer that covers the bottom three rows of the table. Note the `exclude` option
+   there must never list `node_modules`: excluded modules leave the graph entirely,
+   and a rule whose target is `node_modules/pg` cannot match a node that does not
+   exist. `doNotFollow` is the setting that keeps installed packages cheap.
 3. **Free — pnpm's isolated `node_modules`.** `packages/domain` cannot resolve `pg`
    just because `packages/db` installed it. Never set `node-linker=hoisted` or
-   `shamefully-hoist=true` in `.npmrc`.
+   `shamefully-hoist=true` in `.npmrc`. This layer disappears the moment someone
+   adds the dependency deliberately, which is why layer 2 exists.
 
-**Two edits silently repeal all of the above. Do not make them:**
+**Three edits silently repeal most of the above. Do not make them:**
 
-- adding a `paths` mapping to `tsconfig.base.json`, or
-- adding an entry to `packages/domain/tsconfig.json`'s `references`.
+- adding a `paths` mapping to `tsconfig.base.json`,
+- adding an entry to `packages/domain/tsconfig.json`'s `references`, or
+- removing `"types": []` from `packages/domain/tsconfig.json`.
 
-`tests/gates/ad-1-dependency-direction.test.ts` proves the gate is red for a
-violating import. If you change the enforcement mechanism, that test must still
-pass — it is the only thing standing between "we have a gate" and "we believe we
-have a gate".
+`tests/gates/ad-1-dependency-direction.test.ts` proves each rule is red for a
+violation *by name* — not merely that the output mentions the offending file,
+which `no-unresolvable` alone would satisfy. If you change the enforcement
+mechanism, that test must still pass: it is the only thing standing between "we
+have a gate" and "we believe we have a gate".
 
 ESLint is deliberately **not** the primary layer: `// eslint-disable-next-line`
 defeats it, and the acceptance criterion says there must be no way to bypass the
@@ -115,11 +137,29 @@ product code.
   `stuwith_api` and `stuwith_realtime`. New tables inherit `SELECT` only via
   `ALTER DEFAULT PRIVILEGES`, so a migration that adds a table and forgets to think
   about ownership fails closed. A story that needs a write grants it explicitly, to
-  exactly one role.
+  exactly one role. Three details in that migration are load-bearing:
+  - `ALTER DEFAULT PRIVILEGES **FOR ROLE**`, named rather than implied. The bare
+    form silently means `FOR ROLE current_user`, so a migration later run by a
+    different role would create tables inheriting nothing.
+  - default privileges on **SEQUENCES** as well as TABLES. An identity or `serial`
+    column owns a sequence, and a granted INSERT still fails with "permission
+    denied for sequence" without it.
+  - `REVOKE CREATE ON SCHEMA public` from both app roles, which is what makes
+    "only migrations create tables here" true rather than assumed.
 - **AD-14 — no default value for any secret.** `packages/config` validates the
   environment once and exits non-zero, naming the exact missing variable, *before a
   port is opened*. Every variable is listed in `.env.example`. `.env` is git-ignored.
+  "Before a port is opened" is a property of the process, not of the function, so
+  `tests/gates/config-fail-fast.test.ts` spawns the real built `apps/api` with a
+  variable removed and asserts the port never accepts a connection. Moving
+  `loadApiConfig()` below `app.listen()` fails there and nowhere else.
 - **AD-12 — the audit trail is append-only.** No role holds `DELETE`. Do not add one.
+- **AD-15 — an inbound `x-request-id` is never trusted verbatim.** It is stamped on
+  every log line for the request and echoed in a response header, so a raw value
+  gives the caller log injection (newlines) and unbounded log growth (length).
+  `resolveRequestId` in `packages/config` accepts it only if it already looks like
+  an id, and mints a fresh one otherwise. Both processes go through that one
+  function; do not re-implement it per app.
 - **AD-13 — contract types live in `packages/contracts`, never in `apps/*`.** Adding
   an optional field is compatible. Renaming, retyping, removing, or tightening a
   constraint is breaking and goes to `/v2`.
@@ -144,18 +184,19 @@ product code.
 | `pnpm typecheck` | `tsc -b` over the reference graph, then `apps/web`. TS 7.0.2. |
 | `pnpm build` | Packages (TS 7), then both Nest apps (tsc6), then Next. |
 | `pnpm test` | Every Vitest project. Needs Docker for the Postgres passes. |
-| `pnpm test:unit` | domain + contracts + config. No Docker, no network. |
+| `pnpm test:unit` | domain + contracts + config + api. No Docker, no network. |
 | `pnpm test:contract` | CI gate 3 — the adapter suite against in-memory and PG18. |
 | `pnpm test:migrations` | CI gate 4 — migrations on a seeded PG18. |
-| `pnpm test:gates` | Proves the AD-1 gate rejects a violating import. |
+| `pnpm test:gates` | Proves each gate rejects what it claims to. Builds `apps/api` first — one gate spawns the real process. |
 | `pnpm test:e2e` | Playwright smoke test: `/healthz` on both processes. |
 | `pnpm dep-check` | CI gate 2, secondary layer. |
 | `pnpm --filter @stuwith/db migrate` | Forward migrations. Needs `MIGRATION_DATABASE_URL`. |
 | `docker compose --env-file .env -f infra/docker-compose.yml up -d --wait` | The four-service local stack. `--env-file` is required: Compose otherwise looks for `.env` next to the compose file, not at the repo root. |
 
 `STUWITH_SKIP_TESTCONTAINERS=1` skips the Docker-backed suites on a machine with no
-daemon. **Never set it in CI** — gates 3 and 4 are required checks, and a skipped
-required check is a silent pass.
+daemon. It cannot be used in CI: gates 3 and 4 are required checks and a skipped
+required check is a silent pass, so both the workflow and
+`packages/db/src/__testing__/postgres.ts` refuse to honour it when `CI` is set.
 
 ---
 
@@ -197,7 +238,11 @@ required check is a silent pass.
   never be mistaken for a deploy that actually happened.
 - **`packages/config` redacts PII with a deny-list.** The spine mandates a
   *whitelist* serializer; that is Story 1.7's job. What is here is the floor, not the
-  finished control.
+  finished control — but the floor is now pinned: `packages/config/src/logging.test.ts`
+  asserts the required paths exist, and `apps/api/src/logging.test.ts` runs a real
+  pino logger and asserts no cookie, authorization header, email, date of birth,
+  access token or provider id reaches an output line. Deleting a path, flipping
+  `remove: true`, or dropping the serializers block now fails a test.
 - **`ClockPort` and `HeartbeatPort` are scaffolding.** They exist so the hexagon and
   the shared contract test-kit are exercised by something real. The money ports
   (`debit()` and `InsufficientFunds`) arrive in Epic 3 and follow the same shape: a

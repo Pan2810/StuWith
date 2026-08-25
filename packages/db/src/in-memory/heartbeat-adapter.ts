@@ -1,9 +1,5 @@
-import type {
-  Heartbeat,
-  HeartbeatPort,
-  RecordHeartbeatResult,
-} from '@stuwith/domain';
-import { supersedes } from '@stuwith/domain';
+import type { Heartbeat, HeartbeatPort, RecordHeartbeatResult } from '@stuwith/domain';
+import { assertValidHeartbeatInput, assertValidServiceKey, supersedes } from '@stuwith/domain';
 
 /**
  * Lives in packages/db, not in packages/domain: an in-memory store is still an
@@ -14,6 +10,11 @@ export class InMemoryHeartbeatAdapter implements HeartbeatPort {
   private readonly rows = new Map<string, Date>();
 
   async record(serviceKey: string, observedAt: Date): Promise<RecordHeartbeatResult> {
+    // Same guard as the Postgres adapter, for the same reason: an in-memory Map
+    // will happily store an `Invalid Date` that Postgres would have rejected, and
+    // the two adapters must not disagree about what is a legal call.
+    assertValidHeartbeatInput(serviceKey, observedAt);
+
     const stored = this.rows.get(serviceKey) ?? null;
     if (!supersedes(observedAt, stored)) {
       return { ok: false, reason: 'StaleObservation' };
@@ -23,6 +24,8 @@ export class InMemoryHeartbeatAdapter implements HeartbeatPort {
   }
 
   async latest(serviceKey: string): Promise<Heartbeat | null> {
+    assertValidServiceKey(serviceKey);
+
     const observedAt = this.rows.get(serviceKey);
     return observedAt === undefined
       ? null

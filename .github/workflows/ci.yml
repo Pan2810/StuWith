@@ -27,12 +27,19 @@ env:
   NODE_VERSION: '24.14.1'
   PNPM_VERSION: '11.22.0'
   GITLEAKS_VERSION: '8.30.1'
+  # SHA256 of gitleaks_8.30.1_linux_x64.tar.gz, from the release's published
+  # checksums.txt. Bump both together, never just the version.
+  GITLEAKS_SHA256: '551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb'
 
 jobs:
   # ── Gate 1 ─────────────────────────────────────────────────────────────────
   credential-scan:
     name: 'Gate 1 · credential scan (full PR history)'
     runs-on: ubuntu-24.04
+    # Every job carries a timeout. The GitHub default is six hours, so a hung
+    # image pull or a wedged container burns most of a day of runner minutes and
+    # blocks the merge queue behind a job nobody is watching.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
         with:
@@ -41,12 +48,19 @@ jobs:
           # still in the history and therefore still burned.
           fetch-depth: 0
 
-      - name: Install gitleaks (pinned)
+      - name: Install gitleaks (pinned and verified)
         run: |
           set -euo pipefail
-          curl -sSfL \
-            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
-            -o /tmp/gitleaks.tar.gz
+          url="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -sSfL --proto '=https' --tlsv1.2 "$url" -o /tmp/gitleaks.tar.gz
+
+          # The credential-scanning gate must not itself install an unverified
+          # binary. `curl -L` follows redirects wherever they lead, and this
+          # archive is then unpacked and run as root over the entire repository —
+          # a supply-chain swap here would compromise the one job whose whole
+          # purpose is catching compromise. The digest is pinned above.
+          echo "${GITLEAKS_SHA256}  /tmp/gitleaks.tar.gz" | sha256sum --check --strict
+
           tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
           sudo install -m 0755 /tmp/gitleaks /usr/local/bin/gitleaks
           gitleaks version
@@ -61,43 +75,70 @@ jobs:
   dependency-direction:
     name: 'Gate 2 · AD-1 dependency direction'
     runs-on: ubuntu-24.04
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
 
       # PRIMARY layer: the TypeScript project-reference graph. packages/domain
-      # references only packages/contracts, so an infrastructure import does not
-      # resolve and this step fails on the offending line.
+      # references only packages/contracts and sets `types: []`, so neither an
+      # infrastructure import nor a Node builtin resolves, and this step fails on
+      # the offending line.
       - name: Typecheck with TypeScript 7.0.2 (tsc -b)
         run: pnpm run typecheck
 
-      # SECONDARY layer: catches dynamic imports and `import type` smuggling.
+      # SECONDARY layer: catches dynamic imports, `import type` smuggling, and the
+      # case pnpm's isolation does not cover — an infra SDK that IS resolvable
+      # because someone added it to packages/domain/package.json.
       - name: dependency-cruiser
         run: pnpm run dep-check
 
-      # Proves the gate is actually red for a violation (TD-4). Without this, the
-      # two steps above are a belief rather than a control.
-      - name: Prove the gate rejects a violating import
-        run: pnpm run test:gates
-
       - name: Build both TypeScript branches in one repo (TD-3)
+        # Runs BEFORE the gate suite: the AD-14 fail-fast gate spawns the real
+        # built `apps/api/dist/main.js`, and it fails loudly rather than skipping
+        # when that file is missing.
         run: |
           pnpm --filter api build
           pnpm --filter realtime-gateway build
           pnpm --filter web build
 
+      # Proves the gates are actually red for a violation (TD-4). Without this,
+      # every step above is a belief rather than a control.
+      - name: Prove the gates reject what they claim to reject
+        run: pnpm exec vitest run --project gates
+
   # ── Gate 3 ─────────────────────────────────────────────────────────────────
   adapter-contract:
     name: 'Gate 3 · adapter contract suite (in-memory + PG18)'
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
 
+      - name: Refuse to run with Testcontainers disabled
+        # STUWITH_SKIP_TESTCONTAINERS turns the Docker-backed suites into
+        # `describe.skip`. That is a developer convenience for a machine with no
+        # daemon — in CI it would turn a REQUIRED check green having executed
+        # nothing. It can arrive here without anyone intending it: a repo variable,
+        # an org-level secret exported into the environment, or a `env:` block
+        # added to this file later. So it is checked rather than assumed.
+        run: |
+          set -euo pipefail
+          # Read the real process environment, not a GitHub expression indirection: that
+          # only sees this file's own `env:` blocks, whereas the variable can also
+          # arrive from the runner environment or from a job-level export. What
+          # matters is what the test step will actually see.
+          if [ -n "${STUWITH_SKIP_TESTCONTAINERS:-}" ]; then
+            echo "STUWITH_SKIP_TESTCONTAINERS is set in CI. Gates 3 and 4 would report" >&2
+            echo "success without running. Remove it from the workflow environment." >&2
+            exit 1
+          fi
+
       - name: Build workspace packages
         run: pnpm run build:packages
 
-      - name: Domain, contracts and config unit tests
+      - name: Domain, contracts, config and api unit tests
         run: pnpm run test:unit
 
       # AD-6: one suite, two adapters. An adapter that drops a condition passes
@@ -109,9 +150,23 @@ jobs:
   migration-on-seeded-db:
     name: 'Gate 4 · migrations on a seeded database copy'
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
+
+      - name: Refuse to run with Testcontainers disabled
+        run: |
+          set -euo pipefail
+          # Read the real process environment, not a GitHub expression indirection: that
+          # only sees this file's own `env:` blocks, whereas the variable can also
+          # arrive from the runner environment or from a job-level export. What
+          # matters is what the test step will actually see.
+          if [ -n "${STUWITH_SKIP_TESTCONTAINERS:-}" ]; then
+            echo "STUWITH_SKIP_TESTCONTAINERS is set in CI. Gate 4 would report success" >&2
+            echo "without running a single migration. Remove it from the environment." >&2
+            exit 1
+          fi
 
       - name: Build workspace packages
         run: pnpm run build:packages
@@ -126,6 +181,7 @@ jobs:
   health-smoke:
     name: 'Smoke · both processes answer /healthz'
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup

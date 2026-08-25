@@ -35,3 +35,8 @@ Thumbs.db
 *.log
 npm-debug.log*
 pnpm-debug.log*
+
+# Scratch files written by tests/gates/ad-1-dependency-direction.test.ts. They are
+# deliberately placed where their presence BREAKS the build, so a crashed run must
+# never be able to leave one committable.
+**/__ad1_violation__.ts

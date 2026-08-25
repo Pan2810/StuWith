@@ -2,7 +2,7 @@
 title: 'Story 1.1 — Dựng khung monorepo, hai process và bốn cổng CI'
 type: 'feature'
 created: '2026-08-21'
-status: 'in-progress'
+status: 'in-review'
 baseline_commit: '5cf16eb72376460087662b93acd490d07c0d04a2'
 review_loop_iteration: 0
 context:
@@ -98,6 +98,29 @@ Repo là **greenfield** — không có code để đọc. Bản đồ dưới đ
 - Given TypeScript kép, when chạy `pnpm typecheck` (TS 7.0.2) rồi `pnpm --filter api build` (`tsc6` 6.0.2), then **cả hai đều xanh trong cùng một repo**.
 - Given `docker compose up`, when stack lên, then đủ 4 service healthy, hai DB role tồn tại, và `docker compose config` **không** liệt kê service object store nào.
 - Given một pull request, when CI chạy, then bốn job đều bắt buộc xanh mới merge được; job deploy dừng chờ duyệt thủ công.
+
+## Spec Change Log
+
+### 2026-08-25 — vòng review 1: hạ cấp một finding `bad_spec` xuống `patch`
+
+**Finding kích hoạt:** task `packages/contracts/` của spec yêu cầu shape dòng audit phải "kiểm lúc chạy, **sinh được OpenAPI**". Cài đặt không đạt cả hai: `occurred_at` dùng `z.date()` — không phải kiểu wire JSON nên vừa từ chối mọi payload parse từ JSON vừa không emit được JSON Schema; và `openapi.ts` chỉ đăng ký `ErrorEnvelope` + `HealthResponse`, trong khi `contracts.test.ts` assert đúng hai schema đó nên khoá luôn thiếu sót lại.
+
+**Phân loại theo luật:** đây là lệch trực tiếp khỏi spec, tức `bad_spec`, tức loopback — revert code rồi dựng lại từ step-03.
+
+**Đã amend thành gì:** không amend spec. Con người quyết định hạ xuống `patch` và sửa tại chỗ.
+
+**Lý do hạ cấp:** code đã merge vào `main` qua PR #1, CI xanh 5/5 trên runner thật, và cấu hình GitHub (environment `StuWithEnv` + required reviewers + branch protection) đã dựng quanh nó. "Revert code changes" ở trạng thái này nghĩa là revert 86 file khỏi nhánh chính rồi sinh lại toàn bộ — cho một khiếm khuyết ~10 dòng trong schema mà hiện chưa có gì tiêu thụ. Luật loopback được viết cho code chưa commit; áp máy móc vào code đã merge sẽ phá nhiều hơn sửa.
+
+**Trạng thái xấu đã tránh:** không revert `main`; không mất commit sửa `production` → `StuWithEnv` vốn là thứ duy nhất làm H5 có hiệu lực.
+
+**KEEP — phải sống sót qua mọi lần dựng lại sau này:**
+- Cơ chế TS kép ba tầng: alias `typescript` trong từng app Nest, `overrides['@nestjs/cli>typescript']`, và `packageExtensions` tiêm compiler 6.0.2 cho `dependency-cruiser`. Tầng thứ ba là thứ chặn lỗi "cruise 0 module nhưng exit 0" — cổng xanh mà không kiểm gì.
+- `--no-verbose` trên lệnh migrate: verbose in cả `CREATE ROLE ... PASSWORD` vào log CI.
+- Volume Postgres 18 phải mount **trên một cấp** so với `/var/lib/postgresql/data`.
+- `packages/domain` chạy Vitest environment `node` **không setup file nào** — đó là cách AD-1 được kiểm chứng chứ không chỉ tuyên bố.
+- Test chứng minh cổng AD-1 thật sự đỏ, và test canh số module của `dependency-cruiser`.
+
+**Ghi chú cho người đọc sau:** mục "environment production tồn tại" trong phần Verification bên dưới đã lỗi thời — environment thật tên `StuWithEnv`. Xem `AGENTS.md` §6.
 
 ## Design Notes
 
