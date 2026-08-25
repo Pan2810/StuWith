@@ -1,0 +1,27 @@
+name: 'Setup Node and pnpm'
+description: 'Pinned Node + corepack-activated pnpm + a warm store, shared by every CI job.'
+
+runs:
+  using: composite
+  steps:
+    - name: Enable corepack and activate the pinned pnpm
+      shell: bash
+      # `packageManager` in package.json is the single source of truth for the
+      # pnpm version, so nothing here can drift away from what developers run.
+      run: |
+        set -euo pipefail
+        corepack enable
+        corepack prepare --activate
+        pnpm --version
+
+    - uses: actions/setup-node@v7
+      with:
+        node-version-file: .nvmrc
+        cache: pnpm
+
+    - name: Install dependencies
+      shell: bash
+      # `--frozen-lockfile` is what makes the pinned stack real: a PR that edits a
+      # package.json without regenerating the lockfile fails here rather than
+      # resolving to a version nobody reviewed.
+      run: pnpm install --frozen-lockfile

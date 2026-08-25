@@ -1,0 +1,121 @@
+# StuWith local + VPS stack. Same file both places — only the env file differs
+# (spine, "Deployment & environments").
+#
+# FOUR services, and exactly four:
+#   AD-29 / PRD A-1 — there is NO object store here, not even MinIO "just for dev".
+#     The MVP stores no binaries; a convenience bucket in dev is how a PII store
+#     nobody decided to create comes into existence.
+#   Caddy is NOT here — TLS terminates at the VPS edge, not on a developer laptop.
+#   The two application processes are not here either: they run from the host during
+#     development so a code change does not need an image rebuild.
+name: stuwith
+
+services:
+  postgres:
+    # Postgres 18 and pgvector 0.8.6 in one image (spine Stack table).
+    image: pgvector/pgvector:0.8.6-pg18-trixie
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
+      # Deterministic collation so an index built on a dev laptop and one built on
+      # the VPS sort identically.
+      POSTGRES_INITDB_ARGS: '--locale-provider=builtin --builtin-locale=C.UTF-8'
+    ports:
+      - '${POSTGRES_PORT:-5432}:5432'
+    volumes:
+      # PostgreSQL 18 images want the mount one level up, at /var/lib/postgresql:
+      # the data directory is version-named underneath so `pg_upgrade --link` can
+      # work across a mount boundary. Mounting .../data directly makes 18 refuse
+      # to start.
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+  valkey:
+    # Valkey, not Redis (BSD-3). The spine's context diagram still says "Redis";
+    # the Stack table is the authority and it says Valkey 9.0.4.
+    image: valkey/valkey:9.0.4-alpine
+    restart: unless-stopped
+    command:
+      - valkey-server
+      - --save
+      - '60'
+      - '1'
+      - --appendonly
+      - 'no'
+    ports:
+      - '${VALKEY_PORT:-6379}:6379'
+    volumes:
+      - valkey-data:/data
+    healthcheck:
+      test: ['CMD', 'valkey-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  livekit:
+    image: livekit/livekit-server:v1.13.5
+    restart: unless-stopped
+    command: ['--config', '/etc/livekit.yaml']
+    environment:
+      # LiveKit reads its API key pair from this variable, formatted "key: secret".
+      # It stays out of livekit.yaml so the committed config file holds no secret
+      # (AD-14) and CI gate #1 has nothing to find.
+      LIVEKIT_KEYS: '${LIVEKIT_API_KEY:?LIVEKIT_API_KEY is required}: ${LIVEKIT_API_SECRET:?LIVEKIT_API_SECRET is required}'
+      LIVEKIT_REDIS_ADDRESS: 'valkey:6379'
+    ports:
+      - '${LIVEKIT_PORT:-7880}:7880'          # signaling / HTTP
+      - '${LIVEKIT_RTC_TCP_PORT:-7881}:7881'  # RTC over TCP fallback
+      # WebRTC media. UDP, and therefore outside any reverse proxy.
+      - '${LIVEKIT_UDP_PORT_START:-50000}-${LIVEKIT_UDP_PORT_END:-50019}:50000-50019/udp'
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml:ro
+    depends_on:
+      valkey:
+        condition: service_healthy
+    healthcheck:
+      # The image is distroless-ish: no curl, no wget. `nc` from busybox is the
+      # dependency-free way to prove the signaling port is actually accepting.
+      test: ['CMD-SHELL', 'nc -z 127.0.0.1 7880 || exit 1']
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  coturn:
+    # Mandatory, not optional: real-world WebRTC across the public internet needs
+    # TURN. The spine guessed "upstream 4.13.1"; 4.17.2 is the current release.
+    image: coturn/coturn:4.17.2-alpine
+    restart: unless-stopped
+    # coturn does not interpolate environment variables inside its config file, so
+    # the realm/secret/external-ip arrive as flags that Compose substitutes from the
+    # env file. The committed turnserver.conf therefore contains no credential.
+    command:
+      - -c
+      - /etc/coturn/turnserver.conf
+      - --realm=${TURN_REALM:?TURN_REALM is required}
+      - --static-auth-secret=${TURN_SECRET:?TURN_SECRET is required}
+      - --external-ip=${TURN_EXTERNAL_IP:?TURN_EXTERNAL_IP is required (use 127.0.0.1 locally)}
+    ports:
+      - '${TURN_PORT:-3478}:3478'
+      - '${TURN_PORT:-3478}:3478/udp'
+      - '${TURN_RELAY_PORT_START:-50100}-${TURN_RELAY_PORT_END:-50119}:50100-50119/udp'
+    volumes:
+      - ./coturn/turnserver.conf:/etc/coturn/turnserver.conf:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pidof turnserver > /dev/null || exit 1']
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+
+volumes:
+  postgres-data:
+  valkey-data:

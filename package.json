@@ -1,0 +1,35 @@
+{
+  "name": "stuwith",
+  "version": "0.1.0",
+  "private": true,
+  "description": "StuWith monorepo â€” modular monolith, hexagonal core, two processes.",
+  "packageManager": "pnpm@11.22.0",
+  "engines": {
+    "node": ">=24.14.1"
+  },
+  "scripts": {
+    "typecheck": "tsc -b tsconfig.json && tsc -p apps/web/tsconfig.json --noEmit",
+    "build": "pnpm run build:packages && pnpm run build:apps",
+    "build:packages": "tsc -b tsconfig.json",
+    "build:apps": "pnpm --filter api build && pnpm --filter realtime-gateway build && pnpm --filter web build",
+    "test": "pnpm run build:packages && vitest run",
+    "test:e2e": "playwright test",
+    "check": "pnpm run dep-check && pnpm run typecheck",
+    "dep-check": "depcruise --config .dependency-cruiser.cjs packages apps",
+    "migrate": "pnpm --filter @stuwith/db migrate",
+    "clean": "tsc -b tsconfig.json --clean",
+    "test:unit": "vitest run --project domain --project contracts --project config",
+    "test:contract": "vitest run --project db heartbeat-contract",
+    "test:gates": "pnpm run build:packages && vitest run --project gates",
+    "test:migrations": "vitest run --project db migrations"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.1",
+    "@types/node": "26.2.0",
+    "@typescript/typescript6": "6.0.2",
+    "dependency-cruiser": "18.2.0",
+    "testcontainers": "12.1.0",
+    "typescript": "7.0.2",
+    "vitest": "4.1.11"
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "name": "@stuwith/domain",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean"
+  },
+  "_dependencies_note": "AD-1: this list must never gain an infrastructure SDK (pg, livekit-server-sdk, a Valkey client, an HTTP client). packages/db and apps/* must never appear here either. pnpm's isolated node_modules turns this list into a hard resolution boundary.",
+  "dependencies": {
+    "@stuwith/contracts": "workspace:*"
+  }
+}

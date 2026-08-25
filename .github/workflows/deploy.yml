@@ -1,0 +1,76 @@
+# H5 — deploying to the VPS requires a human approval step.
+#
+# The approval is NOT implemented in this file. It comes from the GitHub
+# Environment named below: `environment:` makes the job wait for the reviewers
+# configured in repo settings before a single step runs. A confirmation prompt
+# inside a `run:` block would be theatre — the job would already be holding the
+# deploy credentials by then.
+#
+# ⚠️ MANUAL SETUP REQUIRED (repo configuration, not a file — see AGENTS.md):
+#   Settings → Environments → `production` → Required reviewers.
+#   Without it this workflow deploys unattended and H5 is not satisfied.
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Git ref to deploy (defaults to the default branch)'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: 'Deploy to VPS (requires manual approval)'
+    runs-on: ubuntu-24.04
+    environment:
+      name: production
+      url: ${{ vars.PRODUCTION_URL }}
+
+    steps:
+      # `inputs.ref` is attacker-influenced text. It is bound to an env var and
+      # only ever read as "$DEPLOY_REF" — never interpolated into a run block,
+      # where `$(...)` inside it would execute.
+      - name: Resolve the ref to deploy
+        id: resolve
+        env:
+          DEPLOY_REF: ${{ inputs.ref }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          REF="${DEPLOY_REF:-$DEFAULT_BRANCH}"
+          case "$REF" in
+            *[!A-Za-z0-9._/-]*)
+              echo "Refusing to deploy a ref containing unexpected characters." >&2
+              exit 1
+              ;;
+          esac
+          printf 'ref=%s\n' "$REF" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.resolve.outputs.ref }}
+
+      - uses: ./.github/actions/setup
+
+      - name: Build
+        run: |
+          pnpm run build:packages
+          pnpm --filter api build
+          pnpm --filter realtime-gateway build
+          pnpm --filter web build
+
+      # The VPS rollout itself lands with the deployment story. It is deliberately
+      # left as an explicit failure rather than a no-op success, so nobody reads a
+      # green "deploy" job as evidence that a deploy happened.
+      - name: Ship to the VPS
+        run: |
+          echo "VPS rollout is not implemented yet (Story 1.1 wires the approval gate only)." >&2
+          exit 1

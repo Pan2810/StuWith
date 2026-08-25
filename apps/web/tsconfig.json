@@ -1,0 +1,25 @@
+{
+  "_comment": [
+    "Owned by Next.js — `next build` rewrites this file (it forces noEmit: true),",
+    "which is why apps/web is NOT a composite project in the root `tsc -b` graph.",
+    "It is still typechecked by TS 7.0.2 via the root `typecheck` script.",
+    "The AD-1 direction still holds here: web depends on contracts only."
+  ],
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": false,
+    "incremental": true,
+    "declaration": false,
+    "declarationMap": false,
+    "noEmit": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "lib": ["dom", "dom.iterable", "es2023"],
+    "jsx": "preserve",
+    "allowJs": true,
+    "types": ["node", "react", "react-dom"],
+    "plugins": [{ "name": "next" }]
+  },
+  "include": ["next-env.d.ts", "next.config.ts", "src/**/*.ts", "src/**/*.tsx", ".next/types/**/*.ts"],
+  "exclude": ["node_modules", ".next"]
+}

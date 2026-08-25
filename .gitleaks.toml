@@ -1,0 +1,44 @@
+# CI gate 1 (AD-20) — gitleaks configuration.
+#
+# `useDefault = true` keeps the full upstream ruleset; this file only narrows WHERE
+# it looks. Every entry below is a directory of tooling or build output, never
+# product source: the scan must stay noisy about apps/, packages/ and infra/,
+# because that is where a real credential would land.
+#
+# Do NOT add a path here to silence a finding in product code. If a value is not a
+# secret, prove it in the code (build it at runtime, or name it `placeholder`); if
+# it is a secret, it is already burned and needs rotating, not allowlisting.
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = """
+BMAD planning and agent tooling committed alongside the repo.
+`_bmad/_config/files-manifest.csv` stores content hashes, and `.claude/skills/**`
+ships testing-pattern documentation whose example strings (`expiredToken = ...`)
+trip the generic-api-key heuristic. Neither is product code and neither is
+reachable at runtime.
+"""
+paths = [
+  '''^_bmad/''',
+  '''^_bmad-output/''',
+  '''^[.]claude/''',
+]
+
+[[allowlists]]
+description = """
+Build output and installed dependencies. These are git-ignored, so a clean CI
+checkout never contains them — the entries exist so that a developer running
+`gitleaks dir .` against a working tree gets the same answer CI does. Next.js in
+particular writes a fresh prerender signing key into .next/ on every build.
+"""
+paths = [
+  '''(^|/)node_modules/''',
+  '''(^|/)[.]next/''',
+  '''(^|/)dist/''',
+  '''(^|/)[.]tsbuild/''',
+  '''(^|/)playwright-report/''',
+  '''(^|/)test-results/''',
+  '''(^|/)coverage/''',
+]

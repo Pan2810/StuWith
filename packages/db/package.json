@@ -1,0 +1,47 @@
+{
+  "name": "@stuwith/db",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./test-kit": {
+      "types": "./dist/test-kit.d.ts",
+      "default": "./dist/test-kit.js"
+    }
+  },
+  "files": [
+    "dist",
+    "migrations"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean",
+    "migrate": "node-pg-migrate -m ./migrations -d MIGRATION_DATABASE_URL --no-verbose up",
+    "migrate:create": "node-pg-migrate -m ./migrations -j js create"
+  },
+  "dependencies": {
+    "@stuwith/contracts": "workspace:*",
+    "@stuwith/domain": "workspace:*",
+    "pg": "8.23.0"
+  },
+  "devDependencies": {
+    "@types/pg": "8.23.1",
+    "node-pg-migrate": "9.0.0",
+    "testcontainers": "12.1.0",
+    "vitest": "4.1.11"
+  },
+  "peerDependencies": {
+    "vitest": "4.1.11"
+  },
+  "peerDependenciesMeta": {
+    "vitest": {
+      "optional": true
+    }
+  }
+}

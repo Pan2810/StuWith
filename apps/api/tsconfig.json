@@ -1,0 +1,24 @@
+{
+  "_comment": [
+    "TS 7.0.2 view of this app — used by the repo-wide `tsc -b` typecheck only.",
+    "It emits into ../../.tsbuild/api (a scratch dir) so it never fights `nest build`,",
+    "which owns ./dist and compiles with tsc6 (6.0.2). See AGENTS.md."
+  ],
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "./src",
+    "outDir": "../../.tsbuild/api",
+    "tsBuildInfoFile": "../../.tsbuild/api/.tsbuildinfo",
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "strictPropertyInitialization": false
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["src/**/*.test.ts"],
+  "references": [
+    { "path": "../../packages/contracts" },
+    { "path": "../../packages/domain" },
+    { "path": "../../packages/config" },
+    { "path": "../../packages/db" }
+  ]
+}
