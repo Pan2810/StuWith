@@ -2,6 +2,7 @@
 
 import {
   AUTH_DATE_OF_BIRTH_PATH,
+  AUTH_ME_PATH,
   DATE_OF_BIRTH_FIELD,
   parseCurrentUser,
 } from '@stuwith/contracts';
@@ -60,7 +61,8 @@ export default function KhaiNgaySinhPage() {
 
   const load = useCallback(async () => {
     try {
-      const response = await authorizedFetch(`${apiBaseUrl}/v1/auth/me`);
+      const response = await authorizedFetch(`${apiBaseUrl}${AUTH_ME_PATH}`);
+      const retryAfter = response.headers.get('retry-after');
       if (response.status !== 200) {
         // `status !== 200` rather than `!response.ok`: the only shape this page
         // can read is the `CurrentUser` body a 200 carries, and a 204 would be
@@ -68,7 +70,12 @@ export default function KhaiNgaySinhPage() {
         // `profileLoadStateFor`'s decision, not this file's — a 429 is not a
         // signed-out visitor, and telling one they need to log in sends them to a
         // page where every click makes the wait longer.
-        setState(profileLoadStateFor(response.status, null));
+        //
+        // The `Retry-After` header travels with it. This branch used to pass
+        // nothing at all, so the one screen that knew a rate limit is not a login
+        // problem still could not say how long it would last, and its retry button
+        // called straight back into the limit.
+        setState(profileLoadStateFor(response.status, null, retryAfter));
         return;
       }
       // Parsed, never cast. The whole argument this story rests on is that
@@ -76,11 +83,12 @@ export default function KhaiNgaySinhPage() {
       // publish itself; casting a 200 body on the way in would trust exactly what
       // that parse refuses to. A body that is not a `CurrentUser` is not a profile
       // this screen can act on, so it lands on `unavailable` — never on a guess.
-      setState(profileLoadStateFor(200, parseCurrentUser(await response.json())));
+      setState(profileLoadStateFor(200, parseCurrentUser(await response.json()), retryAfter));
     } catch {
       // Nothing came back at all, so there is no status to interpret. `0` is the
-      // convention this page and its tests share for that.
-      setState(profileLoadStateFor(0, null));
+      // convention this page and its tests share for that, and there is no header
+      // to read either.
+      setState(profileLoadStateFor(0, null, null));
     }
   }, [authorizedFetch, apiBaseUrl]);
 
@@ -135,7 +143,7 @@ export default function KhaiNgaySinhPage() {
           response.status,
           response.headers.get('retry-after'),
         );
-        if (outcome.kind === 'declared') {
+        if (outcome.kind === 'written') {
           setNotice(null);
           /**
            * The 200 carries the updated projection, and the endpoint's own
@@ -146,16 +154,35 @@ export default function KhaiNgaySinhPage() {
            * twice. It is still the server's answer, parsed through the same
            * schema; nothing is inferred here.
            *
-           * A 409 has no body worth reading (it names no value, deliberately), and
-           * a body that will not parse means this screen does not know the new
-           * flags — both fall back to re-reading, which is the old path.
+           * A body that will not parse means this screen does not know the new
+           * flags, so it falls back to re-reading — the old path, now reached only
+           * by the case that actually needs it.
            */
           const declared = parseCurrentUser(await response.json().catch(() => null));
-          if (declared !== null) {
-            setState(screenStateFor(declared));
+          if (declared === null) {
+            await load();
             return;
           }
-          await load();
+          setState(screenStateFor(declared));
+          return;
+        }
+        if (outcome.kind === 'already-declared') {
+          /**
+           * A 409 goes STRAIGHT to the terminal state, and does not re-read.
+           *
+           * It used to share a branch with the 200, find no profile in the body (a
+           * 409 names no value, deliberately) and fall back to `load()`. That works
+           * for the ordinary case — a second tab got there first — and loops for
+           * ever in the one that matters: a profile whose stored value this product
+           * no longer accepts reads as "not declared", so `load()` put the form
+           * back, the submit was refused with another 409, and round it went.
+           *
+           * The status is the whole answer. The profile HAS a date of birth, this
+           * screen's job is over either way, and the sentence it then shows says so
+           * without claiming to know what was stored.
+           */
+          setNotice(null);
+          setState({ kind: 'declared' });
           return;
         }
         setNotice(outcome.notice);
@@ -184,10 +211,11 @@ export default function KhaiNgaySinhPage() {
         state={state}
         notice={notice}
         submitting={submitting}
-        // The picker's upper bound and nothing else — no verdict in this package
-        // reads it. See `dateOfBirthSubmission`.
-        today={new Date()}
         onRetry={() => void load()}
+        // The rate-limit wait is over: drop it so the retry button works again.
+        // REQUIRED on the panel, so a branch that renders a disabled button cannot
+        // lose the one thing that re-enables it.
+        onWaitFinished={() => setState({ kind: 'unavailable', retryAfterSeconds: null })}
         onSubmit={(event) => void submit(event)}
       />
     </main>

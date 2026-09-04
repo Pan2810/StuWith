@@ -197,6 +197,16 @@ export const SIGN_IN_PATHNAME = '/dang-nhap';
 export const AUTH_REFRESH_PATH = '/v1/auth/refresh';
 
 /**
+ * `GET /v1/auth/me`, spelled once.
+ *
+ * Here for the same reason {@link AUTH_REFRESH_PATH} is, and it was the last `/v1`
+ * route in this family still written as a literal: two screens in `apps/web`, the
+ * OpenAPI document and the contract suite each carried their own copy, so renaming
+ * the route meant finding four strings that nothing connects.
+ */
+export const AUTH_ME_PATH = '/v1/auth/me';
+
+/**
  * The route the date-of-birth declaration lives at, in `apps/web`.
  *
  * Here for the same reason {@link SIGN_IN_PATHNAME} is: it crosses the process
@@ -349,12 +359,47 @@ export const DATE_OF_BIRTH_INVALID_MESSAGE =
 /**
  * The sentence somebody reads when the profile already carries a date of birth.
  *
- * It names no value — not the stored one, not the submitted one — and points at
- * the support route, because there is deliberately no self-service way to change
- * it (that flow is not part of this epic).
+ * It names no value — not the stored one, not the submitted one.
+ *
+ * It also no longer says "liên hệ hỗ trợ". There IS no support channel: no inbox,
+ * no operator tool, no role that can write the column a second time — the flow that
+ * sentence pointed at is recorded in `deferred-work.md` as belonging to nobody yet.
+ * A message that sends somebody to a queue which does not exist is worse than one
+ * that simply states the fact, because it costs them the effort of looking for it.
+ * The sentence says what is true today and promises nothing else; when the support
+ * flow exists, this is the one string that has to change.
  */
 export const DATE_OF_BIRTH_ALREADY_SET_MESSAGE =
-  'Hồ sơ đã có ngày sinh. Hãy liên hệ hỗ trợ nếu cần thay đổi.';
+  'Hồ sơ đã có ngày sinh, và ngày sinh không tự đổi lại được.';
+
+/**
+ * The words a user-facing message about the declaration must never contain,
+ * declared ONCE for both processes.
+ *
+ * It was duplicated: `packages/contracts/src/auth.test.ts` had nine words and
+ * `apps/web`'s form test had seven — the web copy was missing `'dưới 18'` and
+ * `'trưởng thành'`, so a screen could have said either of them and stayed green
+ * while the contract suite claimed the whole vocabulary was covered. Two lists
+ * about one rule are two lists that drift, which is the class of defect this story
+ * is otherwise entirely about.
+ *
+ * The rule it serves: the threshold is not the visitor's business. Telling somebody
+ * which side of it they fell on is free calibration for anybody who wants to be on
+ * the other side. `'18'` and `'tuổi'` alone were both too narrow — "trên 18", "đủ
+ * tuổi" and "vị thành niên" all passed — so the check is over vocabulary rather
+ * than over two substrings.
+ */
+export const AGE_VOCABULARY = [
+  '18',
+  'tuổi',
+  'đủ tuổi',
+  'trên 18',
+  'dưới 18',
+  'vị thành niên',
+  'người lớn',
+  'trẻ em',
+  'trưởng thành',
+] as const;
 
 /**
  * How the last sign-in attempt ended, in the vocabulary the login page is allowed

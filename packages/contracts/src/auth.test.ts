@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  AGE_VOCABULARY,
   AUTH_DATE_OF_BIRTH_PATH,
+  AUTH_ME_PATH,
+  AUTH_REFRESH_PATH,
   DATE_OF_BIRTH_ALREADY_SET_MESSAGE,
   DATE_OF_BIRTH_INVALID_MESSAGE,
   DATE_OF_BIRTH_PATHNAME,
@@ -505,6 +508,18 @@ describe('the two Story 1.4 paths are distinct and go to different places', () =
     expect(DATE_OF_BIRTH_PATHNAME).not.toBe(SIGN_IN_PATHNAME);
   });
 
+  it('names every /v1/auth route this product calls, so none is left as a literal', () => {
+    // `AUTH_ME_PATH` was the last one written out by hand — in two screens, in
+    // `openapi.ts` and in the contract suite — so renaming the route meant finding
+    // four strings that nothing connects. The three are distinct, and each is a
+    // `/v1` path rather than a page.
+    const routes = [AUTH_ME_PATH, AUTH_REFRESH_PATH, AUTH_DATE_OF_BIRTH_PATH];
+    expect(new Set(routes).size).toBe(routes.length);
+    for (const route of routes) {
+      expect(route.startsWith('/v1/auth/')).toBe(true);
+    }
+  });
+
   /**
    * The threshold is not the visitor's business, and a sentence carrying it tells
    * somebody who was refused exactly which year to type instead.
@@ -514,18 +529,18 @@ describe('the two Story 1.4 paths are distinct and go to different places', () =
    * passed — and, wherever the same check was applied to a whole response body
    * rather than to a constant, too wide: an id or a date containing those two
    * digits went red for no reason.
+   *
+   * The list is EXPORTED from `auth.ts` rather than written here. It was written
+   * twice — nine words here, seven in `apps/web`'s form test, with `'dưới 18'` and
+   * `'trưởng thành'` missing from the web copy — so a screen could have said either
+   * of them while this suite claimed the whole vocabulary was covered. Two lists
+   * about one rule are two lists that drift.
    */
-  const AGE_VOCABULARY = [
-    '18',
-    'tuổi',
-    'đủ tuổi',
-    'trên 18',
-    'dưới 18',
-    'vị thành niên',
-    'người lớn',
-    'trẻ em',
-    'trưởng thành',
-  ];
+  it('is a shared list, so no screen can be checked against a shorter one', () => {
+    expect(AGE_VOCABULARY.length).toBeGreaterThanOrEqual(9);
+    expect(AGE_VOCABULARY).toContain('dưới 18');
+    expect(AGE_VOCABULARY).toContain('trưởng thành');
+  });
 
   it.each(AGE_VOCABULARY)('says nothing about "%s" in either message', (word) => {
     for (const message of [DATE_OF_BIRTH_INVALID_MESSAGE, DATE_OF_BIRTH_ALREADY_SET_MESSAGE]) {

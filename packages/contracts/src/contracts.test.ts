@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { auditEventSchema, toAuditWireTimestamp } from './audit';
 import {
   AUTH_DATE_OF_BIRTH_PATH,
+  AUTH_ME_PATH,
+  AUTH_REFRESH_PATH,
   DATE_OF_BIRTH_FIELD,
   DATE_OF_BIRTH_PATHNAME,
   MAX_SIGN_IN_RETRY_AFTER_SECONDS,
@@ -286,12 +288,42 @@ describe('OpenAPI emission (AD-13)', () => {
    * they never give.
    */
   describe('a rate-limited answer is documented wherever it can happen', () => {
-    it.each([['/v1/auth/refresh'], ['/v1/auth/me'], [AUTH_DATE_OF_BIRTH_PATH]])(
+    // The CONSTANTS, not copies of their values. Two of these were still written
+    // out here while `AUTH_REFRESH_PATH` already existed and `AUTH_ME_PATH` was the
+    // last `/v1/auth` route with no constant at all — so a rename would have left
+    // this suite asserting the documentation of a path the document no longer has,
+    // which is a green `it.each` over nothing rather than a failure.
+    it.each([[AUTH_REFRESH_PATH], [AUTH_ME_PATH], [AUTH_DATE_OF_BIRTH_PATH]])(
       '%s documents 429',
       (path) => {
         const operations = doc.paths[path] as Record<string, { responses: Record<string, unknown> }>;
+        // A path that is not in the document at all would make the loop below run
+        // zero times and pass. This is what says the route is documented before the
+        // assertion about HOW it is documented.
+        expect(Object.keys(operations ?? {}).length).toBeGreaterThan(0);
         for (const operation of Object.values(operations)) {
           expect(Object.keys(operation.responses)).toContain('429');
+        }
+      },
+    );
+
+    /**
+     * A prose sentence is for a person; a `headers` block is for a code generator.
+     *
+     * The description said `Retry-After` exists and nothing machine-readable did, so
+     * a generated client saw a `429` with no header on it — which leaves it in
+     * exactly the position the whole 429 documentation exists to fix.
+     */
+    it.each([[AUTH_REFRESH_PATH], [AUTH_ME_PATH], [AUTH_DATE_OF_BIRTH_PATH]])(
+      '%s declares Retry-After as a header, not only in prose',
+      (path) => {
+        const operations = doc.paths[path] as Record<
+          string,
+          { responses: Record<string, { headers?: Record<string, unknown> }> }
+        >;
+        for (const operation of Object.values(operations)) {
+          const headers = operation.responses['429']?.headers;
+          expect(Object.keys(headers ?? {})).toContain('Retry-After');
         }
       },
     );
@@ -304,6 +336,30 @@ describe('OpenAPI emission (AD-13)', () => {
       expect(Object.keys(start.responses)).toContain('303');
       expect(Object.keys(start.responses)).not.toContain('429');
     });
+
+    /**
+     * BOTH callback legs, which the previous version of this suite never read.
+     *
+     * `/callback` carries `@RateLimited('auth_callback')` on the same browser channel
+     * as `/start`, so its refusal is the same `303` — and the document said nothing
+     * about that on either the `get` or the `post`. An integrator reading only the
+     * callback had no way to learn the limit applies there at all, and the gap was
+     * invisible because the only assertion in this block read `/start`.
+     */
+    it.each([['get'], ['post']])(
+      'documents the callback %s as redirecting when it is refused, on both methods',
+      (method) => {
+        const leg = (doc.paths['/v1/auth/{provider}/callback'] as Record<string, {
+          responses: Record<string, { description?: string }>;
+        }>)[method];
+
+        expect(Object.keys(leg.responses)).toContain('303');
+        expect(Object.keys(leg.responses)).not.toContain('429');
+        // And the 303 says the rate limit is one of the ways it happens, or the
+        // status alone reads as "the login failed" and nothing more.
+        expect(leg.responses['303']?.description?.toLowerCase()).toContain('rate-limited');
+      },
+    );
 
     it('leaves logout alone, because logout is not limited', () => {
       // Limiting sign-out keeps somebody inside a session they are trying to leave.

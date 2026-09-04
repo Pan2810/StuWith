@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { FixedClock } from '../ports/clock-port';
-import { ADULT_AGE_YEARS, isAdult, isAtLeastYearsOld, isProfileComplete } from './date-of-birth';
+import {
+  ADULT_AGE_YEARS,
+  fixedAt,
+  isAdult,
+  isAtLeastYearsOld,
+  isProfileComplete,
+  readStoredDateOfBirth,
+} from './date-of-birth';
 
 /**
  * The age rule, executed. No database, no clock of its own — the whole point of
@@ -17,15 +24,67 @@ const at = (instant: string): FixedClock => new FixedClock(new Date(instant));
 /** Midday, so nothing here can accidentally depend on the time of day. */
 const TODAY = at('2026-09-04T12:00:00.000Z');
 
-describe('isProfileComplete — NULL is the only "not declared yet"', () => {
+describe('readStoredDateOfBirth — ONE rule, three named outcomes', () => {
+  /**
+   * The rule the whole file now hangs off. Every other function here is a
+   * projection of it, which is what stops the two questions this policy answers
+   * from being decided by two different readings of one column again.
+   */
+  it('reads a usable day as declared, and hands back the value', () => {
+    expect(readStoredDateOfBirth({ dateOfBirth: '1999-04-02' }, TODAY)).toEqual({
+      kind: 'declared',
+      value: '1999-04-02',
+    });
+  });
+
+  it.each([
+    ['NULL', null],
+    ['an absent value', undefined],
+    ['an empty string', ''],
+    ['a day that does not exist', '2026-02-30'],
+    ['an ISO instant', '1999-04-02T00:00:00.000Z'],
+    ['an unpadded date', '1999-4-2'],
+    ['a number', 19_990_402],
+    ['a Date object', new Date('1999-04-02T00:00:00.000Z')],
+  ])('reads %s as not-declared', (_label, stored) => {
+    expect(readStoredDateOfBirth({ dateOfBirth: stored as string | null }, TODAY).kind).toBe(
+      'not-declared',
+    );
+  });
+
+  /**
+   * The state that had no name, and the reason this rule was rewritten.
+   *
+   * Both of these ARE calendar days — `isCalendarDate` says yes — and neither is a
+   * value this product would ever have accepted at the door. Under the old
+   * two-rule reading they came back as complete AND under-18, permanently and
+   * invisibly. Now the outcome has a name a caller can act on.
+   */
+  it.each([
+    ['a year below the plausibility floor', '1899-12-31'],
+    ['a day after today', '2026-09-05'],
+  ])('reads %s as unusable — stored, but not a value this product accepts', (_label, stored) => {
+    expect(readStoredDateOfBirth({ dateOfBirth: stored }, TODAY).kind).toBe('unusable');
+  });
+
+  it('reads a stored day through a BROKEN clock as unusable, never as declared', () => {
+    // A process whose clock has gone wrong must not start answering questions about
+    // ages. `parseDateOfBirth` refuses an unusable `today`, so this lands on the
+    // outcome that concludes nothing.
+    const broken = { now: () => new Date('not-a-date') };
+    expect(readStoredDateOfBirth({ dateOfBirth: '1980-01-01' }, broken).kind).toBe('unusable');
+  });
+});
+
+describe('isProfileComplete — a USABLE date of birth, and nothing else', () => {
   it('says a profile with no date of birth is incomplete', () => {
-    expect(isProfileComplete({ dateOfBirth: null })).toBe(false);
+    expect(isProfileComplete({ dateOfBirth: null }, TODAY)).toBe(false);
   });
 
   it('says a profile with one is complete, whatever the age', () => {
     // Completeness is not adulthood. A fourteen-year-old has finished the step.
-    expect(isProfileComplete({ dateOfBirth: '2012-01-01' })).toBe(true);
-    expect(isProfileComplete({ dateOfBirth: '1999-04-02' })).toBe(true);
+    expect(isProfileComplete({ dateOfBirth: '2012-01-01' }, TODAY)).toBe(true);
+    expect(isProfileComplete({ dateOfBirth: '1999-04-02' }, TODAY)).toBe(true);
   });
 
   /**
@@ -51,7 +110,68 @@ describe('isProfileComplete — NULL is the only "not declared yet"', () => {
     ['a number', 19_990_402],
     ['a Date object', new Date('1999-04-02T00:00:00.000Z')],
   ])('reads %s as NOT declared, which is the fail-closed direction', (_label, stored) => {
-    expect(isProfileComplete({ dateOfBirth: stored as string | null })).toBe(false);
+    expect(isProfileComplete({ dateOfBirth: stored as string | null }, TODAY)).toBe(false);
+  });
+});
+
+/**
+ * The PAIR, asserted together rather than one flag at a time.
+ *
+ * This is the shape of the defect that got past two review rounds: each flag was
+ * defensible on its own, and the combination "complete, and we cannot say how old"
+ * — which is what a value below the plausibility floor produced — was a state
+ * nothing tested and nobody could leave. Checking the two flags in separate
+ * examples can never see it; only the tuple can.
+ */
+describe('the two published facts come from ONE reading and cannot disagree', () => {
+  const flags = (dateOfBirth: string | null) => ({
+    complete: isProfileComplete({ dateOfBirth }, TODAY),
+    over18: isAdult({ dateOfBirth }, TODAY),
+  });
+
+  it.each([
+    ['nothing declared', null, { complete: false, over18: false }],
+    ['a usable adult date', '1999-04-02', { complete: true, over18: true }],
+    ['a usable child date', '2015-06-01', { complete: true, over18: false }],
+    ['the eighteenth birthday itself', '2008-09-04', { complete: true, over18: true }],
+    ['one day short of eighteen', '2008-09-05', { complete: true, over18: false }],
+    // The two rows that used to answer "complete, not an adult" with no way out.
+    ['a year below the plausibility floor', '1899-12-31', { complete: false, over18: false }],
+    ['a day after today', '2026-09-05', { complete: false, over18: false }],
+    ['a string that is not a calendar day', '2026-02-30', { complete: false, over18: false }],
+  ])('%s reads the same way on both flags at once', (_label, stored, expected) => {
+    expect(flags(stored)).toEqual(expected);
+  });
+
+  it('never reports a complete profile whose age it cannot answer', () => {
+    // The invariant behind every row above, stated as a rule rather than as a list.
+    // "Complete" means "the stored value is one this product accepts", so a complete
+    // profile always has a value the age rule can read. `over18` may be either — a
+    // fifteen-year-old is complete and not an adult — but "complete, with a value
+    // nothing can read" must not be expressible.
+    for (const stored of [null, '', '1899-12-31', '2026-09-05', '2026-02-30', '1999-04-02']) {
+      const read = readStoredDateOfBirth({ dateOfBirth: stored }, TODAY);
+      expect(isProfileComplete({ dateOfBirth: stored }, TODAY)).toBe(read.kind === 'declared');
+    }
+  });
+});
+
+describe('fixedAt — one instant, however many times it is asked', () => {
+  /**
+   * The boundary that keeps "one request, one instant" true without taking the
+   * `ClockPort` out of the rules. `AuthService` reads its port once and wraps the
+   * result; every question the projection asks then lands on the same millisecond.
+   */
+  it('answers every call with the same instant', () => {
+    const clock = fixedAt(new Date('2026-09-04T12:00:00.000Z'));
+    expect(clock.now().toISOString()).toBe('2026-09-04T12:00:00.000Z');
+    expect(clock.now().getTime()).toBe(clock.now().getTime());
+  });
+
+  it('hands back a copy, so one caller cannot mutate the instant everybody shares', () => {
+    const clock = fixedAt(new Date('2026-09-04T12:00:00.000Z'));
+    clock.now().setUTCFullYear(1999);
+    expect(clock.now().toISOString()).toBe('2026-09-04T12:00:00.000Z');
   });
 });
 

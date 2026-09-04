@@ -11,7 +11,14 @@ import {
   type CurrentUser,
 } from '@stuwith/contracts';
 import type { FormEvent } from 'react';
+import { SignInCountdown } from '../dang-nhap/countdown';
 import { countdownLabel } from '../dang-nhap/countdown-text';
+import {
+  PROFILE_RETRY_LABEL,
+  profileLoadOutcome,
+  unavailableMessage,
+  type ProfileLoadOutcome,
+} from '../profile-load';
 
 /**
  * Everything the date-of-birth screen DECIDES, kept out of `page.tsx`.
@@ -59,11 +66,19 @@ export type DateOfBirthScreenState =
    * the same defect Story 1.3 fixed on `/dang-nhap`, arriving through a different
    * screen.
    */
-  | { readonly kind: 'unavailable' }
+  | { readonly kind: 'unavailable'; readonly retryAfterSeconds: number | null }
   /** Signed in, nothing declared: the one state where the form is offered. */
   | { readonly kind: 'needs-declaration'; readonly user: CurrentUser }
-  /** Already declared. The form must NOT be offered — there is no way to change it. */
-  | { readonly kind: 'declared'; readonly user: CurrentUser };
+  /**
+   * Already declared. The form must NOT be offered — there is no way to change it.
+   *
+   * It carries no `user`, and that is deliberate rather than an omission: the
+   * branch renders a heading and one sentence, neither of which says anything about
+   * the person. Carrying a profile the markup never reads is what forced the page
+   * to go and fetch one before it could show this screen — which is how a `409`
+   * turned into a re-read that answered "not declared" and put the form back up.
+   */
+  | { readonly kind: 'declared' };
 
 /**
  * Which state a PROFILE puts this screen in, once one has been read.
@@ -74,31 +89,43 @@ export type DateOfBirthScreenState =
  * instead of one per caller.
  */
 export function screenStateFor(user: CurrentUser): DateOfBirthScreenState {
-  return isProfileCompleted(user)
-    ? { kind: 'declared', user }
-    : { kind: 'needs-declaration', user };
+  return isProfileCompleted(user) ? { kind: 'declared' } : { kind: 'needs-declaration', user };
 }
 
 /**
- * Which state a `/v1/auth/me` ANSWER puts this screen in — status included.
+ * Which state a `/v1/auth/me` ANSWER puts this screen in.
  *
- * Only a `401` means "signed out". Everything else that is not a usable 200 is
- * `unavailable`, and the distinction is not pedantry: `/v1/auth/me` is rate
- * limited, so a `429` is a real answer this screen receives, and treating it as
- * signed-out would show "you need to log in first" to somebody who already is —
- * then send them to a login page where every click costs another attempt.
+ * The reading itself is `profileLoadOutcome` in `../profile-load`, shared with
+ * `/dang-nhap` — the two screens used to decide this separately and disagreed about
+ * the one case that matters. What is left here is the mapping from that outcome onto
+ * THIS screen's states, which is the part that really is local.
  *
- * Status `0` is the convention for "nothing came back at all", which the page
- * passes from its `catch`. It lands on `unavailable`, which is the honest answer.
+ * `retryAfterHeader` has no default, and that is the point of it: the wait is the
+ * only actionable thing in a `429`, and while the parameter did not exist at all
+ * this branch silently dropped it — the one screen that knew a rate limit is not a
+ * login problem still could not say how long, and its retry button called straight
+ * back into the limit.
  */
 export function profileLoadStateFor(
   status: number,
   user: CurrentUser | null,
+  retryAfterHeader: string | null,
 ): DateOfBirthScreenState {
-  if (status === 200 && user !== null) {
-    return screenStateFor(user);
+  return screenStateFromOutcome(profileLoadOutcome(status, user, retryAfterHeader));
+}
+
+/** The mapping, exported so the shared outcome and this screen's states are both testable. */
+export function screenStateFromOutcome(outcome: ProfileLoadOutcome): DateOfBirthScreenState {
+  switch (outcome.kind) {
+    case 'profile':
+      return screenStateFor(outcome.user);
+    case 'signed-out':
+      return { kind: 'signed-out' };
+    case 'unavailable':
+      return { kind: 'unavailable', retryAfterSeconds: outcome.retryAfterSeconds };
+    default:
+      return exhausted(outcome);
   }
-  return status === 401 ? { kind: 'signed-out' } : { kind: 'unavailable' };
 }
 
 /**
@@ -151,25 +178,34 @@ export function dateOfBirthSubmission(raw: unknown): DateOfBirthSubmission {
 }
 
 /**
- * What the date picker offers, which is a convenience and never a control.
+ * What the date picker offers: a floor, and deliberately no ceiling.
  *
- * `min` comes from the contract's own plausibility floor and needs no clock.
- * `max` is today as the browser sees it — good enough to stop the picker offering
- * tomorrow, and deliberately not load-bearing: the value is judged by
- * {@link dateOfBirthSubmission} and then again by `apps/api`. An unusable clock
- * simply produces no `max` rather than a bound nobody can satisfy.
+ * ## Why there is no `max` any more
+ *
+ * There was one, built from the browser's own `new Date()`, with a comment calling
+ * it "a convenience and never a control". That comment was not true of HTML. `max`
+ * on an `<input type="date">` is enforced by the BROWSER through constraint
+ * validation, before any script of ours runs: a machine whose clock is wrong — a
+ * dead CMOS battery, a phone that has not synced, a deliberately shifted date —
+ * refuses the submit itself, with the browser's own message, and nothing in this
+ * product ever sees the attempt.
+ *
+ * That is exactly the failure {@link NO_FUTURE_CHECK} exists to prevent: this
+ * screen deliberately does NOT ask "is this in the future", because the browser's
+ * clock is not one this product controls, and the answer belongs to the `ClockPort`
+ * in `apps/api`. Keeping a `max` derived from the same untrusted clock put the
+ * check back in the one place it cannot be argued with.
+ *
+ * The trade, stated rather than hidden: a native picker will now happily offer
+ * tomorrow. Somebody who chooses it gets one round trip and the same sentence they
+ * would have got anyway, from a clock this product does control — which is a worse
+ * five hundred milliseconds and a better answer.
+ *
+ * `min` stays. It comes from the contract's own plausibility floor, needs no clock,
+ * and the browser enforcing it can only ever agree with what `apps/api` would say.
  */
-export function dateOfBirthInputBounds(today: Date): {
-  readonly min: string;
-  readonly max: string | undefined;
-} {
-  const min = `${String(MIN_DATE_OF_BIRTH_YEAR).padStart(4, '0')}-01-01`;
-  if (!(today instanceof Date) || Number.isNaN(today.getTime())) {
-    return { min, max: undefined };
-  }
-  const month = String(today.getUTCMonth() + 1).padStart(2, '0');
-  const day = String(today.getUTCDate()).padStart(2, '0');
-  return { min, max: `${String(today.getUTCFullYear()).padStart(4, '0')}-${month}-${day}` };
+export function dateOfBirthInputBounds(): { readonly min: string } {
+  return { min: `${String(MIN_DATE_OF_BIRTH_YEAR).padStart(4, '0')}-01-01` };
 }
 
 /** The request body, built in one place so the field name cannot be typed twice. */
@@ -206,32 +242,69 @@ export interface DeclarationNotice {
 }
 
 export type DeclarationOutcome =
-  | { readonly kind: 'declared' }
+  /** `200`: this request did the write, and its body carries the new profile. */
+  | { readonly kind: 'written' }
+  /**
+   * `409`: the profile already had one — another tab, a double tap, an earlier
+   * visit, or a value that predates this screen.
+   *
+   * It is a SEPARATE kind from `written`, and folding the two together was a real
+   * defect rather than tidiness. The page reads the new profile out of the `200`
+   * body; a `409` has no such body (it names no value, deliberately), so the page
+   * fell back to re-reading `/v1/auth/me`. That re-read answers "not declared" for
+   * exactly the profile whose stored value this product no longer accepts — so the
+   * form came back, the submit was refused again, and the person went round for
+   * ever. Named apart, the page can put this screen straight into its terminal
+   * state without asking anybody anything.
+   */
+  | { readonly kind: 'already-declared' }
   | { readonly kind: 'message'; readonly notice: DeclarationNotice };
 
-const notice = (message: string, retryAfterSeconds: number | null = null): DeclarationOutcome => ({
+const notice = (message: string, retryAfterSeconds: number | null): DeclarationOutcome => ({
   kind: 'message',
   notice: { message, retryAfterSeconds },
 });
 
+/**
+ * `retryAfterHeader` is REQUIRED, and the missing default is the whole point.
+ *
+ * It used to be `= null`. Dropping the argument at the call site therefore
+ * typechecked, every example here passed one so nothing went red, and the screen
+ * shipped a rate-limit message with no number in it — the exact defect Story 1.3
+ * fixed on `/dang-nhap`, re-entered through a parameter default. `onSubmit` and
+ * `onRetry` on the panel below are required for the same reason; this is the same
+ * rule applied to a function.
+ */
 export function declarationOutcomeFor(
   status: number,
-  retryAfterHeader: string | null = null,
+  retryAfterHeader: string | null,
 ): DeclarationOutcome {
   switch (status) {
     case 200:
-      return { kind: 'declared' };
+      return { kind: 'written' };
     case 409:
-      // Already set — by another tab, by a double submit, or by an earlier visit.
-      // The goal state, reached by somebody else's request.
-      return { kind: 'declared' };
+      return { kind: 'already-declared' };
     case 400:
-      return notice(DATE_OF_BIRTH_INVALID_MESSAGE);
+      return notice(DATE_OF_BIRTH_INVALID_MESSAGE, null);
+    case 413:
+    case 415:
+      /**
+       * Fastify answers these before any parser or handler of ours is asked, and
+       * they are PERMANENT: the same request will be refused the same way for ever.
+       * They fell into `default`, which says "hãy thử lại sau ít phút" — the one
+       * thing that is certainly false about them, and an invitation to keep tapping
+       * a button that cannot work.
+       *
+       * A reload is the honest suggestion: the only way this happens is a client
+       * that no longer matches the server, so fetching the page again is the one
+       * action that could change the outcome.
+       */
+      return notice(REQUEST_NOT_SENT_MESSAGE, null);
     case 401:
       // The session died between loading this page and submitting it. The seam
       // has already tried a refresh and raised the dialog; this sentence is what
       // is left on the screen underneath it.
-      return notice(SESSION_LOST_MESSAGE);
+      return notice(SESSION_LOST_MESSAGE, null);
     case 429:
       /**
        * The route carries `@RateLimited('auth_date_of_birth')` on a `json`
@@ -247,7 +320,7 @@ export function declarationOutcomeFor(
        */
       return notice(RATE_LIMITED_MESSAGE, parseSignInRetryAfterSeconds(retryAfterHeader));
     default:
-      return notice(TRY_AGAIN_MESSAGE);
+      return notice(TRY_AGAIN_MESSAGE, null);
   }
 }
 
@@ -272,22 +345,10 @@ export const SESSION_LOST_MESSAGE = 'Phiên đăng nhập đã kết thúc. Hãy
 export const TRY_AGAIN_MESSAGE = 'Chưa lưu được. Hãy thử lại sau ít phút.';
 
 /**
- * What `unavailable` says. It does NOT say "log in": the person may well be
- * signed in, and sending them to the login page is what turns a rate limit into a
- * longer one.
+ * What a PERMANENT refusal says — and it deliberately does not say "in a few
+ * minutes", because waiting changes nothing about it.
  */
-export const PROFILE_UNAVAILABLE_MESSAGE =
-  'Chưa đọc được hồ sơ của bạn. Hãy thử lại sau ít phút.';
-
-/**
- * The way OUT of `unavailable`, which used to be a dead end.
- *
- * The branch rendered one `<p role="status">` and nothing else, so the only way
- * forward was for the person to work out that a page reload might help. A button
- * that re-reads `/v1/auth/me` is the whole of what was missing, and it is the same
- * call the page already makes on mount.
- */
-export const PROFILE_RETRY_LABEL = 'Thử lại';
+export const REQUEST_NOT_SENT_MESSAGE = 'Không gửi được yêu cầu này. Hãy tải lại trang rồi thử lại.';
 
 /** The ids that wire the field to its hint and its error, for a screen reader. */
 export const DATE_OF_BIRTH_INPUT_ID = 'ngay-sinh';
@@ -307,11 +368,23 @@ export function dateOfBirthDescribedBy(hasNotice: boolean): string {
     : DATE_OF_BIRTH_HINT_ID;
 }
 
-/** The label and helper text, in one place so the two cannot drift apart. */
+/**
+ * The label and helper text, in one place so the two cannot drift apart.
+ *
+ * The hint no longer says "liên hệ hỗ trợ", for the reason
+ * `DATE_OF_BIRTH_ALREADY_SET_MESSAGE` gives about itself: there is no support
+ * channel, no operator tool and no role that can write this column twice, so
+ * naming one before the field is even filled in promises a queue that does not
+ * exist. It states the consequence instead, which is the part that is true and the
+ * part somebody needs before they type.
+ */
 export const DATE_OF_BIRTH_LABEL = 'Ngày sinh của bạn';
-export const DATE_OF_BIRTH_HINT = 'Chỉ khai một lần. Muốn đổi thì cần liên hệ hỗ trợ.';
+export const DATE_OF_BIRTH_HINT = 'Chỉ khai một lần, và sau đó không tự đổi lại được.';
 export const DATE_OF_BIRTH_SUBMIT = 'Lưu ngày sinh';
 export const DECLARED_HEADING = 'Bạn đã khai ngày sinh';
+
+/** Where the terminal branch sends somebody who has nothing left to do here. */
+export const BACK_TO_ACCOUNT_LINK = 'Về trang tài khoản';
 
 /**
  * The whole screen below the heading, as ONE effect-free component.
@@ -329,8 +402,8 @@ export function DateOfBirthPanel({
   state,
   notice: current,
   submitting,
-  today,
   onRetry,
+  onWaitFinished,
   onSubmit,
 }: {
   readonly state: DateOfBirthScreenState;
@@ -338,24 +411,25 @@ export function DateOfBirthPanel({
   readonly notice: DeclarationNotice | null;
   readonly submitting: boolean;
   /**
-   * Today, for the picker's `max` only — never for a verdict.
-   *
-   * Injected rather than read here for the reason `SignInCountdown` takes a
-   * clock: a component that reads the wall clock cannot be rendered at a chosen
-   * instant, so its output cannot be asserted in a project with no DOM.
-   */
-  readonly today: Date;
-  /**
    * Re-read the profile. REQUIRED, because the `unavailable` branch renders the
    * button and a branch that renders a button with no handler is the dead end
    * this parameter exists to remove.
    */
   readonly onRetry: () => void;
   /**
+   * Told when a rate-limit wait ends, so the retry button becomes usable again.
+   *
+   * REQUIRED for the same reason `SignInPanel.onCountdownFinished` is: while it was
+   * optional, forgetting it typechecked and shipped a screen whose countdown
+   * reached zero and left the only button on it disabled for ever — the person is
+   * told to wait, waits, and is then given nothing to press.
+   */
+  readonly onWaitFinished: () => void;
+  /**
    * REQUIRED, even though `renderToStaticMarkup` never calls it.
    *
    * The `<form>` is rendered HERE rather than in `page.tsx`, because whether
-   * there is a form at all is one of this component's four decisions — and a page
+   * there is a form at all is one of this component's five decisions — and a page
    * that wrapped the panel in its own form would nest one inside another in the
    * "already declared" and "signed out" branches, which is invalid HTML and which
    * nothing in a DOM-less project would notice. Making the handler required is
@@ -364,7 +438,7 @@ export function DateOfBirthPanel({
   readonly onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
   const waitLabel = declarationWaitLabel(current);
-  const bounds = dateOfBirthInputBounds(today);
+  const bounds = dateOfBirthInputBounds();
 
   switch (state.kind) {
     case 'loading':
@@ -378,12 +452,25 @@ export function DateOfBirthPanel({
       // nothing here is urgent enough to interrupt a screen reader mid-sentence.
       return (
         <>
-          <p role="status">{PROFILE_UNAVAILABLE_MESSAGE}</p>
+          <p role="status">{unavailableMessage(state.retryAfterSeconds)}</p>
           {/*
-            The way forward, which this branch used to lack entirely. Without it
-            the only move left is a page reload the person has to think of.
+            The wait, when the server told us one. Without it this branch said "thử
+            lại sau ít phút" and offered a button that called straight back into the
+            limit — every press making the wait longer, which is the loop the whole
+            `unavailable` state exists to break.
+
+            The LIVE countdown rather than a static label, because the button beside
+            it is disabled until the clock runs out: a number that never moves next
+            to a control that never re-enables is a dead end with a decoration on it.
           */}
-          <button type="button" onClick={onRetry}>
+          {state.retryAfterSeconds === null ? null : (
+            <SignInCountdown seconds={state.retryAfterSeconds} onFinished={onWaitFinished} />
+          )}
+          <button
+            type="button"
+            disabled={state.retryAfterSeconds !== null}
+            onClick={onRetry}
+          >
             {PROFILE_RETRY_LABEL}
           </button>
         </>
@@ -412,6 +499,17 @@ export function DateOfBirthPanel({
             to redo it, because there is no endpoint that would accept one.
           */}
           <p>{DATE_OF_BIRTH_ALREADY_SET_MESSAGE}</p>
+          {/*
+            And a way ONWARD, which this branch used to lack entirely.
+
+            It was the only terminal state on the screen with nothing to click: no
+            link, no sign-out, nothing but a sentence — so somebody who arrived here
+            (including anybody sent here by a 409) had to invent their own next move.
+            The account view is `/dang-nhap`, which renders the signed-in panel with
+            the sign-out button in it, and the route comes from `packages/contracts`
+            for the same reason every other route on this screen does.
+          */}
+          <a href={SIGN_IN_PATHNAME}>{BACK_TO_ACCOUNT_LINK}</a>
         </section>
       );
 
@@ -426,9 +524,11 @@ export function DateOfBirthPanel({
             `dateOfBirthSubmission` judges whatever comes out, because a
             `type="date"` input is a text field to anything that is not a browser.
 
-            `required`, `min` and `max` are the same kind of help: they stop a
-            picker offering tomorrow or the year 1200, and they prove nothing —
-            three layers behind this one refuse those anyway.
+            `required` and `min` are the same kind of help: they stop a picker
+            offering the year 1200, and they prove nothing — three layers behind
+            this one refuse that anyway. There is deliberately no `max`; see
+            `dateOfBirthInputBounds` for why a ceiling built from the browser's
+            clock is a control rather than a convenience.
 
             `name` is `DATE_OF_BIRTH_FIELD` directly, not a prop. It used to be
             passed in by `page.tsx`, which then read the submitted form back with
@@ -442,7 +542,6 @@ export function DateOfBirthPanel({
             type="date"
             required
             min={bounds.min}
-            max={bounds.max}
             aria-describedby={dateOfBirthDescribedBy(current !== null)}
             // Only while a message is on screen, and it is the field's own state:
             // "unavailable" and "signed out" never render this input at all.
@@ -474,6 +573,14 @@ export function DateOfBirthPanel({
   }
 }
 
-function exhausted(state: never): never {
-  throw new Error(`unhandled date-of-birth screen state: ${JSON.stringify(state)}`);
+/**
+ * The compiler's way of insisting that a new case gets a branch, used by both
+ * switches in this file.
+ *
+ * The message names no particular union, because it serves two: a state this screen
+ * renders and an outcome the shared reader can produce. What matters at runtime is
+ * the value, which is printed.
+ */
+function exhausted(value: never): never {
+  throw new Error(`unhandled date-of-birth case: ${JSON.stringify(value)}`);
 }

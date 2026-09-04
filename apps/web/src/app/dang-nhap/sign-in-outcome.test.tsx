@@ -19,6 +19,11 @@ import {
   type CountdownClock,
 } from './countdown-text';
 import {
+  PROFILE_RETRY_LABEL,
+  PROFILE_UNAVAILABLE_MESSAGE,
+  profileLoadOutcome,
+} from '../profile-load';
+import {
   DECLARE_DATE_OF_BIRTH_LINK,
   DECLARE_DATE_OF_BIRTH_PROMPT,
   MAX_OPTIONS_HIDDEN_SECONDS,
@@ -28,7 +33,6 @@ import {
   nextLocationAfterOutcome,
   signedInNextStep,
   resolveSignInOutcome,
-  signInNoticeFromMe,
   signInOptionsVisible,
   type SignInNotice,
 } from './sign-in-outcome';
@@ -49,10 +53,11 @@ function renderPanel(notice: SignInNotice | null, canSignIn = true): string {
   return renderToStaticMarkup(
     <SignInPanel
       notice={notice}
-      canSignIn={canSignIn}
-      loading={false}
+      status={canSignIn ? 'signed-out' : 'signed-in'}
+      retryAfterSeconds={null}
       apiBaseUrl=""
       onCountdownFinished={() => undefined}
+      onRetry={() => undefined}
     />,
   );
 }
@@ -696,43 +701,42 @@ describe('a lock hides the login links for as long as the lock can really last',
 });
 
 /**
- * A 429 from `/v1/auth/me` used to reach the page as "signed out".
+ * A 429 from `/v1/auth/me` is not "signed out", and the decision that says so no
+ * longer lives here.
  *
- * `!response.ok` covered both, so a rate-limited visitor got an ordinary login page
- * with four links and no notice — and the first click spent an `auth_start` and
- * bounced them back with a longer wait. That is the loop the panel exists to break,
- * arriving through the one entry point it could not see.
+ * It was `signInNoticeFromMe`, a reading of a `/v1/auth/me` status belonging to this
+ * screen alone — while `/khai-ngay-sinh` read the same answer with a different
+ * function and reached a different verdict. Two readings of one answer, in the two
+ * screens that read it, which is the class of defect this whole story is about.
+ *
+ * `profileLoadOutcome` is that reading now, for both screens, and its examples live
+ * in `../profile-load.test.ts`. What is still asserted HERE is the part that is
+ * about this screen: what the panel does with the result.
  */
 describe('a rate-limited /v1/auth/me is not "signed out"', () => {
-  it('becomes the locked notice, with the wait the server sent', () => {
-    expect(signInNoticeFromMe(429, '45')).toEqual({
-      outcome: 'bi-khoa',
+  it('reaches this page as "unavailable", carrying the wait', () => {
+    expect(profileLoadOutcome(429, null, '45')).toEqual({
+      kind: 'unavailable',
       retryAfterSeconds: 45,
     });
   });
 
-  it('shows the message with no clock when the header is missing or nonsense', () => {
-    // The same parser the URL parameter goes through, so a header this product did
-    // not write cannot put a nonsense number on the screen either.
-    for (const header of [null, '', 'soon', '-5', '99999999', '0', 'Wed, 21 Oct 2015 07:28:00 GMT']) {
-      expect(signInNoticeFromMe(429, header)).toEqual({
-        outcome: 'bi-khoa',
-        retryAfterSeconds: null,
-      });
-    }
-  });
+  it('never offers the login links while that is on screen', () => {
+    const outcome = profileLoadOutcome(429, null, '45');
 
-  it.each([200, 204, 401, 403, 500, 502])('is nothing for status %s', (status) => {
-    // Only 429. A 401 is an ordinary signed-out visitor and must still be offered
-    // the login links.
-    expect(signInNoticeFromMe(status, '45')).toBeNull();
-  });
-
-  it('hides the login links once that notice is showing', () => {
-    const notice = signInNoticeFromMe(429, '45');
-
-    expect(notice).not.toBeNull();
-    expect(renderPanel(notice, true)).not.toContain('<nav>');
+    expect(outcome.kind).toBe('unavailable');
+    expect(
+      renderToStaticMarkup(
+        <SignInPanel
+          notice={null}
+          status="unavailable"
+          retryAfterSeconds={outcome.kind === 'unavailable' ? outcome.retryAfterSeconds : null}
+          apiBaseUrl=""
+          onCountdownFinished={() => undefined}
+          onRetry={() => undefined}
+        />,
+      ),
+    ).not.toContain('<nav>');
   });
 });
 
@@ -763,10 +767,11 @@ describe('the panel is one decision, not two', () => {
     const html = renderToStaticMarkup(
       <SignInPanel
         notice={null}
-        canSignIn
-        loading={false}
+        status="signed-out"
+        retryAfterSeconds={null}
         apiBaseUrl="https://api.example"
         onCountdownFinished={() => undefined}
+        onRetry={() => undefined}
       />,
     );
 
@@ -777,14 +782,76 @@ describe('the panel is one decision, not two', () => {
     const html = renderToStaticMarkup(
       <SignInPanel
         notice={null}
-        canSignIn={false}
-        loading
+        status="loading"
+        retryAfterSeconds={null}
         apiBaseUrl=""
         onCountdownFinished={() => undefined}
+        onRetry={() => undefined}
       />,
     );
 
     expect(html).toContain('Đang kiểm tra phiên');
+  });
+});
+
+/**
+ * M3 — `/dang-nhap` had no way to say "the profile could not be read".
+ *
+ * A `200` from `/v1/auth/me` carrying a body that will not parse used to be mapped
+ * to `signed-out`, so somebody who WAS signed in was shown four login links — and
+ * signing in again could not help, because the body still would not parse. A loop
+ * with no exit, produced by exactly the collapse `/khai-ngay-sinh` had already
+ * rejected in writing, for the same answer from the same endpoint.
+ *
+ * Both screens now read that answer through `profileLoadOutcome`, and this is the
+ * branch that renders it here.
+ */
+describe('the login page can say "we could not read your profile"', () => {
+  const renderUnavailable = (retryAfterSeconds: number | null): string =>
+    renderToStaticMarkup(
+      <SignInPanel
+        notice={null}
+        status="unavailable"
+        retryAfterSeconds={retryAfterSeconds}
+        apiBaseUrl=""
+        onCountdownFinished={() => undefined}
+        onRetry={() => undefined}
+      />,
+    );
+
+  it('says so, and does not offer a login that cannot help', () => {
+    const html = renderUnavailable(null);
+
+    expect(html).toContain(PROFILE_UNAVAILABLE_MESSAGE);
+    expect(html).toContain(PROFILE_RETRY_LABEL);
+    // The four links are the loop: signing in again cannot fix a body that will not
+    // parse, and each click spends an attempt.
+    expect(html).not.toContain('<nav>');
+    expect(html).not.toContain('/v1/auth/google/start');
+  });
+
+  it('says how long when a rate limit told us, and waits before letting anyone retry', () => {
+    const html = renderUnavailable(45);
+
+    expect(html).toContain(RATE_LIMITED_MESSAGE);
+    expect(html).toContain(countdownLabel(45));
+    expect(html).toContain('disabled');
+    expect(html).not.toContain('<nav>');
+  });
+
+  it('leaves the retry usable when there is no wait', () => {
+    // Otherwise "disabled" above would be satisfied by a branch that always
+    // disables — which is the dead end rather than the fix for it.
+    expect(renderUnavailable(null)).not.toContain('disabled');
+  });
+
+  it('says none of it to a visitor who is simply signed out', () => {
+    // The positive counterpart: this branch must not leak into the ordinary case,
+    // where four login links are exactly the right answer.
+    const html = renderPanel(null, true);
+
+    expect(html).not.toContain(PROFILE_UNAVAILABLE_MESSAGE);
+    expect(html).toContain('<nav>');
   });
 });
 

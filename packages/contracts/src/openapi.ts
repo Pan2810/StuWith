@@ -2,6 +2,8 @@ import { z } from 'zod';
 import { auditEventSchema } from './audit';
 import {
   AUTH_DATE_OF_BIRTH_PATH,
+  AUTH_ME_PATH,
+  AUTH_REFRESH_PATH,
   DATE_OF_BIRTH_FIELD,
   DATE_OF_BIRTH_PATHNAME,
   MAX_SIGN_IN_RETURN_PATH_LENGTH,
@@ -79,6 +81,24 @@ const rateLimited = {
   description:
     'Too many attempts. The `Retry-After` header carries how many seconds to ' +
     'wait; the message says nothing about which limit was reached.',
+  /**
+   * DECLARED, not merely described in prose.
+   *
+   * The sentence above said the header exists and nothing machine-readable said
+   * so, which means a generated client never sees it: the whole reason this story
+   * documents `429` at all is that a client with no reason to read `Retry-After`
+   * retries immediately, and that is the loop the limit exists to break. A
+   * description is for a person; a `headers` block is for the code generator.
+   */
+  headers: {
+    'Retry-After': {
+      description:
+        'Whole seconds to wait before trying again. Always a delay in seconds, ' +
+        'never an HTTP date.',
+      required: true,
+      schema: { type: 'integer', minimum: 0 },
+    },
+  },
   content: {
     'application/json': { schema: { $ref: '#/components/schemas/ErrorEnvelope' } },
   },
@@ -124,8 +144,17 @@ function callbackPath(): Record<string, unknown> {
     // unambiguously downgraded to GET after Apple's form POST. There is no body:
     // the outcome rides in the Location header's query string, which is why it is
     // documented as a header rather than as content.
+    // The rate-limited answer is HERE, folded into the outcome redirect, and not
+    // as a `429` beside it. `/callback` carries `@RateLimited('auth_callback')` on
+    // the BROWSER channel exactly as `/start` does, so a refusal travels as this
+    // same 303 back to the login page — a `429` with an envelope would describe an
+    // answer this route never gives, and leaving it undocumented left an
+    // integrator reading `get:`/`post:` with no idea the limit applies here at all.
     '303': {
-      description: 'The attempt ended without a session; redirect back to the login page',
+      description:
+        'The attempt ended without a session; redirect back to the login page. ' +
+        'A rate-limited attempt ends the same way and is not distinguishable ' +
+        'from any other refusal by the browser.',
       headers: {
         Location: {
           description:
@@ -233,7 +262,7 @@ function authPaths(): Record<string, unknown> {
       },
     },
     '/v1/auth/{provider}/callback': callbackPath(),
-    '/v1/auth/refresh': {
+    [AUTH_REFRESH_PATH]: {
       post: {
         summary: 'Rotate the refresh token and re-issue both session cookies',
         responses: {
@@ -249,7 +278,7 @@ function authPaths(): Record<string, unknown> {
         responses: { '204': { description: 'Cookies cleared' } },
       },
     },
-    '/v1/auth/me': {
+    [AUTH_ME_PATH]: {
       get: {
         summary: 'The signed-in profile — no email, no provider id, no date of birth',
         description:

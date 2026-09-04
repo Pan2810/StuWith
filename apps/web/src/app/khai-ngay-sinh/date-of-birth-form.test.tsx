@@ -1,4 +1,5 @@
 import {
+  AGE_VOCABULARY,
   DATE_OF_BIRTH_ALREADY_SET_MESSAGE,
   DATE_OF_BIRTH_FIELD,
   DATE_OF_BIRTH_INVALID_MESSAGE,
@@ -8,9 +9,11 @@ import {
   type CurrentUser,
 } from '@stuwith/contracts';
 import { countdownLabel } from '../dang-nhap/countdown-text';
+import { PROFILE_RETRY_LABEL, PROFILE_UNAVAILABLE_MESSAGE } from '../profile-load';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import {
+  BACK_TO_ACCOUNT_LINK,
   DATE_OF_BIRTH_ERROR_ID,
   DATE_OF_BIRTH_HINT,
   DATE_OF_BIRTH_HINT_ID,
@@ -18,8 +21,7 @@ import {
   DATE_OF_BIRTH_SUBMIT,
   DECLARED_HEADING,
   DateOfBirthPanel,
-  PROFILE_RETRY_LABEL,
-  PROFILE_UNAVAILABLE_MESSAGE,
+  REQUEST_NOT_SENT_MESSAGE,
   SESSION_LOST_MESSAGE,
   TRY_AGAIN_MESSAGE,
   dateOfBirthDescribedBy,
@@ -42,8 +44,6 @@ import {
  * INVOKES the page's effect at all. Everything the effect decides is in a
  * function below.
  */
-const TODAY = new Date('2026-09-04T09:00:00.000Z');
-
 function user(overrides: Partial<CurrentUser> = {}): CurrentUser {
   return {
     id: '019200f0-0000-7000-8000-000000000001',
@@ -55,12 +55,10 @@ function user(overrides: Partial<CurrentUser> = {}): CurrentUser {
 }
 
 /**
- * The panel at a chosen instant, with a message or without one.
+ * The panel, with a message or without one.
  *
- * `today` is injected rather than read inside the component for the reason
- * `SignInCountdown` takes a clock: output that depends on the wall clock cannot be
- * asserted. It reaches only the picker's `max` — no verdict in this package reads
- * it.
+ * There is no clock to inject any more: the picker's `max` is gone, so nothing this
+ * component renders depends on what day it is. See `dateOfBirthInputBounds`.
  */
 function render(state: DateOfBirthScreenState, message: string | null = null): string {
   return renderToStaticMarkup(
@@ -68,29 +66,15 @@ function render(state: DateOfBirthScreenState, message: string | null = null): s
       state={state}
       notice={message === null ? null : { message, retryAfterSeconds: null }}
       submitting={false}
-      today={TODAY}
       onRetry={() => undefined}
+      onWaitFinished={() => undefined}
       onSubmit={() => undefined}
     />,
   );
 }
 
-/**
- * Age vocabulary, rather than the two raw substrings this used to check.
- *
- * `not.toContain('18')` is both too narrow and too wide: it says nothing about
- * "trên 18", "đủ tuổi" or "vị thành niên", and it goes red for any id or date that
- * happens to contain those two digits. The rule is about what the screen SAYS.
- */
-const AGE_VOCABULARY = [
-  '18',
-  'tuổi',
-  'đủ tuổi',
-  'trên 18',
-  'vị thành niên',
-  'người lớn',
-  'trẻ em',
-];
+/** `unavailable` with no wait, which is what every branch except a 429 produces. */
+const unreadable = { kind: 'unavailable', retryAfterSeconds: null } as const;
 
 describe('screenStateFor — what a profile means once one has been read', () => {
   it('offers the form to a profile that has not declared', () => {
@@ -120,14 +104,14 @@ describe('screenStateFor — what a profile means once one has been read', () =>
 
 describe('profileLoadStateFor — only a 401 means "signed out"', () => {
   it('reads a 200 with a profile as that profile', () => {
-    expect(profileLoadStateFor(200, user({ profile_completed: true })).kind).toBe('declared');
-    expect(profileLoadStateFor(200, user({ profile_completed: false })).kind).toBe(
+    expect(profileLoadStateFor(200, user({ profile_completed: true }), null).kind).toBe('declared');
+    expect(profileLoadStateFor(200, user({ profile_completed: false }), null).kind).toBe(
       'needs-declaration',
     );
   });
 
   it('reads a 401 as signed out', () => {
-    expect(profileLoadStateFor(401, null).kind).toBe('signed-out');
+    expect(profileLoadStateFor(401, null, null).kind).toBe('signed-out');
   });
 
   it.each([[429], [500], [502], [503], [0]])(
@@ -137,12 +121,50 @@ describe('profileLoadStateFor — only a 401 means "signed out"', () => {
       // Calling it "signed out" sends somebody who IS signed in to a login page
       // where every click spends another attempt and lengthens the wait — the
       // same defect Story 1.3 fixed on /dang-nhap, arriving through another door.
-      expect(profileLoadStateFor(status, null).kind).toBe('unavailable');
+      expect(profileLoadStateFor(status, null, null).kind).toBe('unavailable');
     },
   );
 
   it('does not trust a 200 that carried no profile', () => {
-    expect(profileLoadStateFor(200, null).kind).toBe('unavailable');
+    expect(profileLoadStateFor(200, null, null).kind).toBe('unavailable');
+  });
+
+  /**
+   * M4 — the load branch used to throw the `Retry-After` header away.
+   *
+   * The submit branch read it and the load branch did not, so the one answer
+   * `unavailable` was invented for — a rate-limited `/v1/auth/me` — reached a screen
+   * that could not say how long, above a retry button that called straight back into
+   * the limit and made the wait longer.
+   */
+  it('carries the wait through on a 429, which is the answer this state exists for', () => {
+    expect(profileLoadStateFor(429, null, '45')).toEqual({
+      kind: 'unavailable',
+      retryAfterSeconds: 45,
+    });
+  });
+
+  it('shows no clock when the header is missing or nonsense', () => {
+    // The same parser the sign-in page runs a URL parameter through, so a header
+    // this product did not write cannot put a number on the screen either.
+    for (const header of [null, '', 'soon', '-5', '0', '99999999', ' 30 ']) {
+      expect(profileLoadStateFor(429, null, header)).toEqual({
+        kind: 'unavailable',
+        retryAfterSeconds: null,
+      });
+    }
+  });
+
+  it('reads a wait only from a 429, never from any other refusal', () => {
+    // A `Retry-After` on a 503 is a server hint about itself, not a rate-limit
+    // budget this product understands; showing it as "bạn đã thử quá nhiều lần"
+    // would be an accusation nobody earned.
+    for (const status of [0, 500, 502, 503]) {
+      expect(profileLoadStateFor(status, null, '45')).toEqual({
+        kind: 'unavailable',
+        retryAfterSeconds: null,
+      });
+    }
   });
 });
 
@@ -165,7 +187,12 @@ describe('dateOfBirthSubmission — nothing unusable is ever sent', () => {
     ['the wrong shape', '02/04/1999'],
     ['an ISO instant', '1999-04-02T00:00:00.000Z'],
     ['an implausible year', '0001-01-01'],
-    ['a File, which is what FormData.get returns for a file input', new Blob()],
+    // `Blob`, and the label says `Blob`. It used to say "a File, which is what
+    // FormData.get returns for a file input" over a `new Blob()` — which is not a
+    // `File`, so the label described a case the example did not cover. What both
+    // have in common is the only thing this assertion is about: `FormData.get` can
+    // return something that is not a string, and the parser is total over `unknown`.
+    ['a Blob, which is the shape FormData.get returns for a file input', new Blob()],
     ['null, which is what FormData.get returns for a missing field', null],
   ])('refuses %s with the same sentence the server would have sent', (_label, raw) => {
     const submission = dateOfBirthSubmission(raw);
@@ -202,29 +229,36 @@ describe('dateOfBirthSubmission — nothing unusable is ever sent', () => {
   });
 });
 
-describe('dateOfBirthInputBounds — the picker is bounded, and it is only a picker', () => {
-  it('offers nothing after today and nothing before the contract floor', () => {
-    expect(dateOfBirthInputBounds(TODAY)).toEqual({ min: '1900-01-01', max: '2026-09-04' });
-    expect(dateOfBirthInputBounds(TODAY).min.startsWith(String(MIN_DATE_OF_BIRTH_YEAR))).toBe(true);
+describe('dateOfBirthInputBounds — a floor the server agrees with, and no ceiling', () => {
+  it('offers nothing before the contract floor', () => {
+    expect(dateOfBirthInputBounds()).toEqual({ min: '1900-01-01' });
+    expect(dateOfBirthInputBounds().min.startsWith(String(MIN_DATE_OF_BIRTH_YEAR))).toBe(true);
   });
 
-  it('reads the bound on the UTC calendar, like every other date in this product', () => {
-    // 23:00 UTC on the 4th is already the 5th in UTC+7. The picker follows UTC, the
-    // same calendar the age rule and the parser use, so the screen and the server
-    // cannot disagree about which day "today" is.
-    expect(dateOfBirthInputBounds(new Date('2026-09-04T23:00:00.000Z')).max).toBe('2026-09-04');
-  });
-
-  it('drops the upper bound rather than inventing one when the clock is unusable', () => {
-    // A bound nobody can satisfy would lock the picker; the value is judged twice
-    // more after this anyway.
-    expect(dateOfBirthInputBounds(new Date('not-a-date')).max).toBeUndefined();
-  });
-
-  it('puts both bounds on the rendered input', () => {
+  /**
+   * M1 — the `max` is gone, and the reason is that the comment beside it was false.
+   *
+   * It called itself "a convenience and never a control" while being built from the
+   * BROWSER's `new Date()`. `max` on an `<input type="date">` is enforced by the
+   * browser through constraint validation, before any script of ours runs — so a
+   * machine with a wrong clock refused the submit itself, with the browser's own
+   * message, and the request never reached the `ClockPort` that is authoritative.
+   *
+   * That is precisely the failure `NO_FUTURE_CHECK` exists to prevent, re-entered
+   * through an HTML attribute. The two now agree: this screen does not answer "is
+   * this in the future" at all, in JavaScript or in markup.
+   */
+  it('puts no upper bound on the rendered input, so no browser clock can refuse a submit', () => {
     const html = render({ kind: 'needs-declaration', user: user() });
     expect(html).toContain('min="1900-01-01"');
-    expect(html).toContain('max="2026-09-04"');
+    expect(html).not.toContain('max=');
+  });
+
+  it('is the same answer whatever day it is, because it reads no clock', () => {
+    // The property that makes the paragraph above true rather than aspirational: a
+    // function with no clock in it cannot be made to refuse anybody by a wrong one.
+    expect(dateOfBirthInputBounds()).toEqual(dateOfBirthInputBounds());
+    expect(JSON.stringify(dateOfBirthInputBounds())).not.toContain('max');
   });
 });
 
@@ -237,29 +271,55 @@ describe('dateOfBirthRequestBody — the field name is written once', () => {
 });
 
 describe('declarationOutcomeFor — what the endpoint said', () => {
-  it('treats 200 as declared', () => {
-    expect(declarationOutcomeFor(200).kind).toBe('declared');
+  it('treats 200 as the write this request made', () => {
+    expect(declarationOutcomeFor(200, null).kind).toBe('written');
   });
 
-  it('treats 409 as declared too, because the profile HAS a date of birth', () => {
-    // Two tabs, or a double tap. The state this page exists to reach was reached
-    // by somebody else's request, and showing an error would strand a person on a
-    // screen whose job is done.
-    expect(declarationOutcomeFor(409).kind).toBe('declared');
+  /**
+   * A 409 is NOT the same outcome as a 200, and folding the two together was a
+   * defect rather than tidiness.
+   *
+   * Both mean "the profile has a date of birth", so both end this screen's job. What
+   * differs is what the page may do next: a 200 carries the new projection in its
+   * body, a 409 carries no value at all (deliberately). While they shared a kind,
+   * the page fell back to re-reading `/v1/auth/me` after a 409 — which answers "not
+   * declared" for exactly the profile whose stored value this product no longer
+   * accepts, so the form came back, the submit was refused again, and round it went.
+   */
+  it('treats 409 as ALREADY declared, which is a different answer from 200', () => {
+    expect(declarationOutcomeFor(409, null).kind).toBe('already-declared');
+    expect(declarationOutcomeFor(409, null).kind).not.toBe(declarationOutcomeFor(200, null).kind);
   });
 
   it('shows the same refusal sentence for a 400 as the field does locally', () => {
-    expect(declarationOutcomeFor(400)).toEqual({
+    expect(declarationOutcomeFor(400, null)).toEqual({
       kind: 'message',
       notice: { message: DATE_OF_BIRTH_INVALID_MESSAGE, retryAfterSeconds: null },
     });
   });
 
   it('says the session ended for a 401', () => {
-    expect(declarationOutcomeFor(401)).toEqual({
+    expect(declarationOutcomeFor(401, null)).toEqual({
       kind: 'message',
       notice: { message: SESSION_LOST_MESSAGE, retryAfterSeconds: null },
     });
+  });
+
+  /**
+   * The answers Fastify gives BEFORE this product's handler is asked anything.
+   *
+   * A missing or wrong `content-type` is a 415 and an over-sized body is a 413, and
+   * both are permanent: the same request will be refused the same way for ever. They
+   * fell into `default`, which says "hãy thử lại sau ít phút" — the one thing that is
+   * certainly untrue about them, and an invitation to keep pressing a button that
+   * cannot work.
+   */
+  it.each([[413], [415]])('says a %i cannot be retried into working', (status) => {
+    expect(declarationOutcomeFor(status, null)).toEqual({
+      kind: 'message',
+      notice: { message: REQUEST_NOT_SENT_MESSAGE, retryAfterSeconds: null },
+    });
+    expect(REQUEST_NOT_SENT_MESSAGE).not.toContain('ít phút');
   });
 
   /**
@@ -293,8 +353,8 @@ describe('declarationOutcomeFor — what the endpoint said', () => {
           state={{ kind: 'needs-declaration', user: user() }}
           notice={{ message: RATE_LIMITED_MESSAGE, retryAfterSeconds: 30 }}
           submitting={false}
-          today={TODAY}
           onRetry={() => undefined}
+          onWaitFinished={() => undefined}
           onSubmit={() => undefined}
         />,
       );
@@ -309,7 +369,7 @@ describe('declarationOutcomeFor — what the endpoint said', () => {
     (status) => {
       // The dangerous default is the other one: telling somebody their profile is
       // complete on the strength of a 502 means they never come back to finish it.
-      expect(declarationOutcomeFor(status)).toEqual({
+      expect(declarationOutcomeFor(status, null)).toEqual({
         kind: 'message',
         notice: { message: TRY_AGAIN_MESSAGE, retryAfterSeconds: null },
       });
@@ -317,8 +377,8 @@ describe('declarationOutcomeFor — what the endpoint said', () => {
   );
 
   it('never says anything technical', () => {
-    for (const status of [0, 400, 401, 429, 500, 502]) {
-      const outcome = declarationOutcomeFor(status);
+    for (const status of [0, 400, 401, 415, 429, 500, 502]) {
+      const outcome = declarationOutcomeFor(status, null);
       if (outcome.kind !== 'message') continue;
       for (const leak of [String(status), 'HTTP', 'server', 'API', 'fetch']) {
         expect(outcome.notice.message).not.toContain(leak);
@@ -335,13 +395,36 @@ describe('the panel renders one screen per state, and only one', () => {
   });
 
   it('does not tell an unreadable profile to go and log in', () => {
-    const html = render({ kind: 'unavailable' });
+    const html = render(unreadable);
 
     expect(html).toContain(PROFILE_UNAVAILABLE_MESSAGE);
     // No login link: the person may well be signed in already, and a click there
     // is what turns a rate limit into a longer one.
     expect(html).not.toContain(`href="${SIGN_IN_PATHNAME}"`);
     expect(html).not.toContain('<form');
+  });
+
+  /**
+   * M4, on the screen rather than in the decision: a rate-limited load says how
+   * long, and the only button on the branch waits for it.
+   */
+  it('says how long to wait, and disables the retry until it is over', () => {
+    const html = render({ kind: 'unavailable', retryAfterSeconds: 45 });
+
+    expect(html).toContain(RATE_LIMITED_MESSAGE);
+    expect(html).toContain(countdownLabel(45));
+    expect(html).toContain('disabled');
+    // And it is not the vague sentence: this branch knows more than "sau ít phút".
+    expect(html).not.toContain(PROFILE_UNAVAILABLE_MESSAGE);
+  });
+
+  it('leaves the retry usable when there is no wait to observe', () => {
+    // Without this, "disabled" above could be satisfied by a branch that disables
+    // the button always — which is the dead end, not the fix for it.
+    const html = render(unreadable);
+
+    expect(html).toContain(PROFILE_RETRY_LABEL);
+    expect(html).not.toContain('disabled');
   });
 
   it('offers a way to the login page, not a form, when signed out', () => {
@@ -372,13 +455,35 @@ describe('the panel renders one screen per state, and only one', () => {
   it('offers NO form once the declaration is made', () => {
     // The row that matters: there is no endpoint that would accept a second
     // value, so a form here is a button that can only ever produce a refusal.
-    const html = render({ kind: 'declared', user: user({ profile_completed: true }) });
+    const html = render({ kind: 'declared' });
 
     expect(html).toContain(DECLARED_HEADING);
     expect(html).toContain(DATE_OF_BIRTH_ALREADY_SET_MESSAGE);
     expect(html).not.toContain('<form');
     expect(html).not.toContain('<input');
     expect(html).not.toContain(DATE_OF_BIRTH_SUBMIT);
+  });
+
+  it('offers a way ONWARD from the terminal branch, which used to have none', () => {
+    // It was the only state on this screen with nothing at all to click: a sentence,
+    // and then the person had to invent their own next move. The account view is the
+    // login route, which renders the signed-in panel and the sign-out button.
+    const html = render({ kind: 'declared' });
+
+    expect(html).toContain(`href="${SIGN_IN_PATHNAME}"`);
+    expect(html).toContain(BACK_TO_ACCOUNT_LINK);
+  });
+
+  it('promises no support channel, because there is not one', () => {
+    // `deferred-work.md` records that the flow this sentence used to name does not
+    // exist: no inbox, no operator tool, no role that can write the column twice.
+    // Sending somebody to look for it costs them the search and finds nothing.
+    for (const html of [
+      render({ kind: 'declared' }),
+      render({ kind: 'needs-declaration', user: user() }),
+    ]) {
+      expect(html).not.toContain('hỗ trợ');
+    }
   });
 });
 
@@ -389,10 +494,7 @@ describe('the screen never renders a date of birth or an age', () => {
    * half: that the screen does not put one on the page from anything it holds.
    */
   it('shows no date and no age on the confirmation', () => {
-    const html = render({
-      kind: 'declared',
-      user: user({ profile_completed: true, is_over_18: true }),
-    });
+    const html = render({ kind: 'declared' });
 
     expect(html).not.toMatch(/\d{4}-\d{2}-\d{2}/);
     for (const word of AGE_VOCABULARY) {
@@ -402,8 +504,12 @@ describe('the screen never renders a date of birth or an age', () => {
 
   it('shows no age on the form either', () => {
     // Naming the threshold on the form tells somebody who is under it exactly which
-    // year to type instead. The form DOES carry `min`/`max` for the picker, so the
-    // rule is over age vocabulary rather than over every digit on the page.
+    // year to type instead. The form DOES carry `min` for the picker, so the rule is
+    // over age vocabulary rather than over every digit on the page.
+    //
+    // `AGE_VOCABULARY` comes from `packages/contracts` — it used to be copied here
+    // with two words missing, so this screen could have said "dưới 18" or "trưởng
+    // thành" while the contract suite claimed the whole vocabulary was covered.
     const html = render({ kind: 'needs-declaration', user: user() });
     for (const word of AGE_VOCABULARY) {
       expect(html, `the form must not mention "${word}"`).not.toContain(word);
@@ -425,10 +531,7 @@ describe('a notice is shown where it belongs and nowhere else', () => {
   it('does not carry a stale notice onto the confirmation screen', () => {
     // Once the declaration is made, a refusal from a previous attempt is telling
     // somebody about a problem that no longer exists.
-    const html = render(
-      { kind: 'declared', user: user({ profile_completed: true }) },
-      DATE_OF_BIRTH_INVALID_MESSAGE,
-    );
+    const html = render({ kind: 'declared' }, DATE_OF_BIRTH_INVALID_MESSAGE);
     expect(html).not.toContain(DATE_OF_BIRTH_INVALID_MESSAGE);
   });
 });
@@ -443,8 +546,8 @@ describe('the submit button is disabled while a declaration is in flight', () =>
         state={{ kind: 'needs-declaration', user: user() }}
         notice={null}
         submitting
-        today={TODAY}
         onRetry={() => undefined}
+        onWaitFinished={() => undefined}
         onSubmit={() => undefined}
       />,
     );
@@ -493,7 +596,7 @@ describe('the field is wired up for somebody who cannot see it', () => {
   });
 
   it('offers a way out of "we could not read your profile"', () => {
-    const html = render({ kind: 'unavailable' });
+    const html = render(unreadable);
     expect(html).toContain(PROFILE_RETRY_LABEL);
     expect(html).toContain('<button');
     // And it is still not a login prompt: this person may well be signed in.

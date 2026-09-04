@@ -353,6 +353,17 @@ suite('Story 1.2 — identity tables, ownership enforced by GRANT', () => {
             WHERE id = $1 AND date_of_birth IS NULL`,
           [id, '1999-04-02'],
         );
+        /**
+         * Put back what this example changed.
+         *
+         * No role in this repository holds `DELETE` (AD-12's posture, applied to
+         * every table), so the row itself cannot go — but the COLUMN this suite is
+         * about can, and leaving it set meant every later example in the same
+         * database ran against a `users` table with a declared row in it that
+         * nobody had asked for. That is the shape of a suite whose examples pass in
+         * the order they were written and fail in any other.
+         */
+        await client.query(`UPDATE users SET date_of_birth = NULL WHERE id = $1`, [id]);
         return updated.rowCount;
       }),
     ).resolves.toBe(1);
@@ -369,13 +380,48 @@ suite('Story 1.2 — identity tables, ownership enforced by GRANT', () => {
   });
 
   it('refuses a date the column cannot represent, at the database', async () => {
-    // The `date` type is the floor under `parseDateOfBirth`: even a caller that
-    // bypassed the application rule cannot store the 30th of February.
+    /**
+     * The `date` type is the floor under `parseDateOfBirth`: even a caller that
+     * bypassed the application rule cannot store the 30th of February.
+     *
+     * The previous version of this example was `'2026-02-30'::date WHERE false`,
+     * and it proved nothing about the column at all. A literal cast is folded
+     * before the plan runs, so the throw came from the CAST — which happens whether
+     * `date_of_birth` is a `date`, a `text` column, or absent from the schema
+     * entirely. It was green in three worlds it claimed to distinguish.
+     *
+     * So the value arrives as a PARAMETER, on a row that really exists, and the
+     * refusal therefore comes from the column accepting the write or not.
+     */
     await expect(
-      withClient(apiUrl, (client) =>
-        client.query(`UPDATE users SET date_of_birth = '2026-02-30'::date WHERE false`),
-      ),
+      withClient(apiUrl, async (client) => {
+        const user = await client.query<{ id: string }>(
+          `INSERT INTO users (display_name) VALUES ('Dob Rejecter') RETURNING id`,
+        );
+        return client.query(`UPDATE users SET date_of_birth = $2 WHERE id = $1`, [
+          user.rows[0]?.id,
+          '2026-02-30',
+        ]);
+      }),
     ).rejects.toThrow();
+
+    // And the positive counterpart, on the same shaped statement: a real day IS
+    // written. Without it, a column that refused everything — or a statement that
+    // matched no row — would satisfy the assertion above perfectly.
+    await expect(
+      withClient(apiUrl, async (client) => {
+        const user = await client.query<{ id: string }>(
+          `INSERT INTO users (display_name) VALUES ('Dob Accepter') RETURNING id`,
+        );
+        const id = user.rows[0]?.id;
+        const updated = await client.query(
+          `UPDATE users SET date_of_birth = $2 WHERE id = $1 AND date_of_birth IS NULL`,
+          [id, '1999-04-02'],
+        );
+        await client.query(`UPDATE users SET date_of_birth = NULL WHERE id = $1`, [id]);
+        return updated.rowCount;
+      }),
+    ).resolves.toBe(1);
   });
 
   it('lets stuwith_api write the identity tables', async () => {

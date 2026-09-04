@@ -32,6 +32,18 @@
  * but the inherited `SELECT`, which is correct: AD-8 makes `api` the sole writer
  * of a person's identity, and age is part of that.
  *
+ * ## No `IF NOT EXISTS`, on purpose
+ *
+ * It was there, and it bought nothing this schema does not already have. Migrations
+ * are forward-only and `node-pg-migrate` keeps its own ledger in `pgmigrations`, so
+ * this file runs exactly once per database whether or not the clause is present.
+ * What the clause DOES buy is silence in the one case that matters: if a column
+ * called `date_of_birth` already exists with a different type — `text`, or a
+ * `timestamptz` from somebody's manual fix — the statement succeeds, the migration
+ * is recorded as applied, and every argument below about `date` and `to_char`
+ * quietly stops being true. A plain `ADD COLUMN` fails loudly on that database
+ * instead, which is the answer a deploy can act on.
+ *
  * ## No CHECK constraint, and the reason is not laziness
  *
  * The rules worth enforcing are "not in the future" and "a plausible year", and
@@ -54,7 +66,7 @@ exports.up = (pgm) => {
   // paid several review rounds for. The application reads it back as text
   // (`to_char(..., 'YYYY-MM-DD')`) so no driver's local-midnight conversion can
   // shift the day either.
-  pgm.sql(`ALTER TABLE users ADD COLUMN IF NOT EXISTS date_of_birth date`);
+  pgm.sql(`ALTER TABLE users ADD COLUMN date_of_birth date`);
 
   pgm.sql(`
     COMMENT ON COLUMN users.date_of_birth IS

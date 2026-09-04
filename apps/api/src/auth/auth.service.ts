@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import {
   AUTH_COOKIE_PATH,
   REFRESH_COOKIE_NAME,
@@ -33,8 +33,10 @@ import {
   bruteForceCounterKey,
   bruteForceSubjectFor,
   bruteForceLockKey,
+  fixedAt,
   isAdult,
   isProfileComplete,
+  readStoredDateOfBirth,
 } from '@stuwith/domain';
 import { APP_CONFIG, type AppConfig } from '../config.token';
 import { RateLimitHealth } from '../rate-limit/rate-limit-health';
@@ -203,6 +205,12 @@ export class AuthService {
   private readonly clock: ClockPort;
   private readonly registry: ProviderRegistry;
   private readonly rateLimit: RateLimitPort;
+  /**
+   * `Auth`, not the class name, for the same reason `RateLimitHealth` names its
+   * own: the context is what an operator greps for, and it must not change when
+   * somebody renames a class.
+   */
+  private readonly logger = new Logger('Auth');
 
   constructor(
     @Inject(APP_CONFIG) private readonly config: AppConfig,
@@ -624,7 +632,34 @@ export class AuthService {
       return { kind: 'json', status: 401, body: unauthenticated(), cookies: [] };
     }
 
-    return { kind: 'json', status: 200, body: toCurrentUser(user, this.clock), cookies: [] };
+    // Read ONCE, here, and handed down as an instant. See `toCurrentUser`.
+    const now = this.clock.now();
+    this.reportUnusableDateOfBirth(user, now);
+    return { kind: 'json', status: 200, body: toCurrentUser(user, now), cookies: [] };
+  }
+
+  /**
+   * The one place the "stored but unusable" state becomes visible to an operator.
+   *
+   * A row whose `date_of_birth` no longer satisfies `parseDateOfBirth` — a year
+   * below the plausibility floor, a day in the future after a clock correction —
+   * answers "not complete" and "not an adult", and the person behind it cannot fix
+   * it: the column is written exactly once and no endpoint updates it. Before this
+   * line there was no log, no metric and no inventory that said such a row existed;
+   * the only symptom was a person who could never finish the declaration step.
+   *
+   * What is logged is the fact and the user id. NOT the value — that is the one
+   * thing this story forbids reaching a log line at any level, and knowing WHICH row
+   * is enough to run the inventory query `deferred-work.md` records.
+   */
+  private reportUnusableDateOfBirth(user: User, now: Date): void {
+    if (readStoredDateOfBirth(user, fixedAt(now)).kind !== 'unusable') {
+      return;
+    }
+    this.logger.warn(
+      `stored date of birth is not a value this product accepts, so user ${user.id} ` +
+        'cannot complete their profile and no endpoint can repair it',
+    );
   }
 
   /**
@@ -688,18 +723,38 @@ export class AuthService {
 
     const outcome = await this.identity.recordDateOfBirth(user.id, dateOfBirth, now);
     if (!outcome.ok) {
-      return outcome.reason === 'UserNotFound'
-        ? { kind: 'json', status: 401, body: unauthenticated(), cookies: [] }
-        : { kind: 'json', status: 409, body: dateOfBirthAlreadySet(), cookies: [] };
+      if (outcome.reason === 'UserNotFound') {
+        /**
+         * The session survived the profile it points at, so the cookies go too.
+         *
+         * This is the one 401 on this route where clearing is right, and the
+         * difference from the branch above is not cosmetic. Up there the session
+         * cookie may simply have expired while a perfectly good refresh cookie is
+         * still in the jar — the seam renews on a 401 and retries, so clearing
+         * would destroy the credential that was about to fix it and log somebody
+         * out mid-session. Here the user row is gone: a renewal would succeed and
+         * the very next `/me` would 401 again, so the browser would keep a dead
+         * cookie and spend one `/me` plus one `auth_refresh` on every visit for
+         * ever. Clearing ends it in one round trip.
+         */
+        return {
+          kind: 'json',
+          status: 401,
+          body: unauthenticated(),
+          cookies: clearAllAuthCookies(parseCookies(cookieHeader)),
+        };
+      }
+      return { kind: 'json', status: 409, body: dateOfBirthAlreadySet(), cookies: [] };
     }
 
     // The updated profile, through the same projection `/me` uses — so the client
     // gets the new flags without a second round trip, and gets them from the one
-    // function that decides what may leave this process.
+    // function that decides what may leave this process. The SAME `now` the write
+    // was judged and stamped with, not a fresh reading.
     return {
       kind: 'json',
       status: 200,
-      body: toCurrentUser(outcome.user, this.clock),
+      body: toCurrentUser(outcome.user, now),
       cookies: [],
     };
   }
@@ -1301,17 +1356,28 @@ function refreshFailureReason(reason: SessionRefusalReason): SignInFailureReason
  * function, and a second copy of "born before which day" is how the API and the
  * guard eventually disagree about one person.
  *
- * The clock is a parameter rather than `new Date()` for the same reason it is one
- * in the domain: a projection that reads the wall clock cannot be tested at a
- * chosen instant, and the flow suite runs on a `FixedClock`.
+ * The INSTANT is a parameter rather than `new Date()`, and rather than a
+ * `ClockPort`, for two reasons that are not the same one twice: a projection that
+ * reads the wall clock cannot be tested at a chosen instant (the flow suite runs on
+ * a `FixedClock`), and a projection handed a live port can read it again — which is
+ * what this function did, once per flag, inside a request that had already decided
+ * what "now" was. A `Date` cannot be asked twice.
  */
-export function toCurrentUser(user: User, clock: ClockPort) {
+export function toCurrentUser(user: User, now: Date) {
+  // ONE instant for the whole projection, and the type is what says so.
+  //
+  // It used to take a `ClockPort` and hand it to `isAdult`, which called `now()`
+  // again — a third reading of the wall clock inside a request that had already
+  // decided what "now" was, in a story whose central principle is that a value must
+  // not have two readings. Taking the instant makes a second reading unspellable
+  // here; `fixedAt` is what keeps the domain's `ClockPort` signature intact.
+  const at = fixedAt(now);
   return currentUserSchema.parse({
     id: user.id,
     display_name: user.displayName,
     avatar_url: user.avatarUrl,
     role: user.role,
-    profile_completed: isProfileComplete(user),
-    is_over_18: isAdult(user, clock),
+    profile_completed: isProfileComplete(user, at),
+    is_over_18: isAdult(user, at),
   });
 }

@@ -4,7 +4,7 @@ type: 'feature'
 created: '2026-09-04'
 baseline_commit: '8fdb2ce044486398d43126cd6c2176e3102a17c1'
 status: 'in-review'
-review_loop_iteration: 1
+review_loop_iteration: 2
 context:
   - '{project-root}/_bmad-output/implementation-artifacts/epic-1-context.md'
   - '{project-root}/AGENTS.md'
@@ -100,8 +100,8 @@ context:
 - [x] `apps/api/src/auth/` -- Endpoint khai ngày sinh và cờ trạng thái trên `/v1/auth/me`; ngày sinh không đi ra ngoài
 - [x] `apps/api/src/logging.test.ts` -- Chạy process thật, khai một ngày sinh qua HTTP, khẳng định không dòng log nào chứa giá trị đó **kèm** assertion dương chứng minh log không rỗng
 - [x] `apps/web/src/app/<route>/` -- Màn khai ngày sinh: hàm thuần giữ mọi quyết định, component không effect, gọi qua seam
-- [ ] `apps/web/src/app/dang-nhap/` -- **Dẫn người chưa khai tới màn khai.** Một màn hình tồn tại mà không ai tới được thì AC "không có đường bỏ qua bước khai" không đạt — và không cổng nào thấy, vì màn hình render hoàn hảo khi test riêng
-- [ ] `apps/web/src/app/` -- Test buộc hằng `DATE_OF_BIRTH_PATHNAME` khớp thư mục route có thật; một hằng chỉ được so với hằng khác là một hằng trỏ vào 404 mà không ai biết
+- [x] `apps/web/src/app/dang-nhap/` -- **Dẫn người chưa khai tới màn khai.** Một màn hình tồn tại mà không ai tới được thì AC "không có đường bỏ qua bước khai" không đạt — và không cổng nào thấy, vì màn hình render hoàn hảo khi test riêng
+- [x] `apps/web/src/app/` -- Test buộc hằng `DATE_OF_BIRTH_PATHNAME` khớp thư mục route có thật; một hằng chỉ được so với hằng khác là một hằng trỏ vào 404 mà không ai biết
 - [x] `apps/web/src/app/<route>/*.test.ts(x)` -- Phủ các hàng Matrix phía web bằng `renderToStaticMarkup` và hàm thuần
 - [x] `.env.example` -- Chỉ chạm nếu thực sự thêm biến; mặc định story này **không** thêm
 
@@ -133,6 +133,18 @@ context:
 - **2026-09-04 — thêm `auth_date_of_birth` vào `RATE_LIMIT_ACTIONS`.** Không nằm trong danh sách Ask First, và là điều kiện để "chỉ cần không phá" decorator rate-limit thành sự thật: `rate-limit.flow.test.ts` khẳng định *mọi* route của `AuthController` trừ `logout` mang một action. Một route mới không có decorator sẽ làm test đó đỏ, và cách duy nhất khác — đặt endpoint ở controller khác — chỉ là né phép kiểm chứ không giữ được bất biến. Kênh là `json` (client gọi bằng `fetch`, đọc được envelope). Không thêm biến môi trường; ngưỡng và cửa sổ dùng lại các knob sẵn có.
 - **2026-09-04 — đóng cả *lớp* lỗ rò camelCase trong `LOG_REDACT_PATHS`, không chỉ `'*.dateOfBirth'`.** Task chỉ yêu cầu một đường, nhưng khi viết test theo lớp ("mỗi trường PII phải có cả hai cách viết") thì `'*.accessToken'`, `'*.refreshToken'`, `'*.providerId'` cùng thiếu — cùng một khiếm khuyết, cùng một nguyên nhân. Vá đúng ví dụ được báo là đúng kiểu thất bại `AGENTS.md` ghi lại ở danh sách trusted proxy. Thay đổi thuần cộng thêm: chỉ xoá thêm trường khỏi log, không thêm trường nào.
 - **2026-09-04 — màn khai có trạng thái thứ năm `unavailable`.** `/v1/auth/me` bị rate-limit nên `429` là câu trả lời có thật; gộp nó vào "chưa đăng nhập" sẽ bảo người đang đăng nhập đi đăng nhập lại, và mỗi cú bấm ở trang đó tốn thêm một lượt và kéo dài thời gian chờ — đúng lỗi Story 1.3 đã sửa ở `/dang-nhap`, đi vào bằng cửa khác. Chỉ `401` mới là "chưa đăng nhập".
+
+### Vòng 2 — 2026-09-05
+
+**Finding kích hoạt:** bản vá của vòng 1 mắc đúng lỗi mà vòng 1 sửa. `SignedInPanel` — thứ duy nhất dẫn tới màn khai — chỉ được test bằng cách render trực tiếp; không gì ghim rằng `page.tsx` gọi nó. Hoàn tác một dòng là route chết trở lại với 1572 test vẫn xanh. Đây là lần thứ ba của cùng lớp lỗi trong dự án: seam của 1.3c, route chết của 1.4, và bản vá cho chính route đó.
+
+**Đã sửa gì trong spec:** không sửa Boundaries hay Matrix. Ghi lại đây rằng **"đã có test cho component" không phải bằng chứng "sản phẩm dùng component đó"**, và mọi bản vá cho một lỗi thuộc lớp này phải kèm một luật quét được, không phải một test render.
+
+**Trạng thái xấu đã tránh:** đóng story với niềm tin rằng lỗ đã bịt, trong khi cái bịt nó có thể bị gỡ mà không ai biết.
+
+**KEEP bổ sung cho vòng sau:**
+- `isProfileComplete` và `isAtLeastYearsOld` phải đọc giá trị lưu bằng **cùng một luật**; hai luật trên một cột là cách sinh ra trạng thái kẹt không lối ra.
+- Không đặt giá trị mặc định cho tham số mà việc nối dây phụ thuộc vào — để trình biên dịch giữ luật thay cho test.
 
 ## Design Notes
 
