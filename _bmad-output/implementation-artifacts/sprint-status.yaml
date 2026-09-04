@@ -37,7 +37,7 @@ story_location: _bmad-output/implementation-artifacts
 development_status:
   epic-1: in-progress
   1-1-dựng-khung-monorepo-hai-process-và-bốn-cổng-ci: done
-  1-2-đăng-nhập-bằng-bốn-provider-mạng-xã-hội: review
+  1-2-đăng-nhập-bằng-bốn-provider-mạng-xã-hội: done
   1-3-trạng-thái-lỗi-đăng-nhập-và-chống-brute-force: review
   1-4-khai-ngày-sinh-khi-tạo-hồ-sơ-lần-đầu: backlog
   1-5-cổng-chặn-hành-vi-có-tiền-theo-tuổi: backlog
