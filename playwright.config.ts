@@ -63,6 +63,11 @@ export default defineConfig({
         API_PORT: String(API_PORT),
         API_DATABASE_URL: 'postgres://smoke@127.0.0.1:5432/smoke',
         SESSION_COOKIE_SECRET: placeholder('session'),
+        // Required from Story 1.2 on. No provider is enabled here, so no
+        // credential is needed: `AUTH_ENABLED_PROVIDERS` defaults to empty and
+        // every `/v1/auth/:provider/start` answers 404.
+        WEB_BASE_URL: 'http://127.0.0.1:3000',
+        OAUTH_REDIRECT_BASE_URL: API_BASE_URL,
       },
     },
     {

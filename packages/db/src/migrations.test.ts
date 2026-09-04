@@ -237,3 +237,194 @@ suite('migrations on a database that already has data', () => {
     });
   });
 });
+
+/**
+ * Story 1.2 — the same two rules, now against the tables the story actually adds.
+ *
+ * The AD-8 block above proves the DEFAULT posture on an anonymous probe table.
+ * That is necessary and not sufficient: a migration can be perfectly consistent
+ * with the default posture and still hand the wrong role a write, because a GRANT
+ * is an explicit statement and defaults have nothing to say about it. These
+ * examples check the grants that were actually issued.
+ */
+suite('Story 1.2 — identity tables, ownership enforced by GRANT', () => {
+  let pg2: StartedPostgres;
+  let apiUrl: string;
+  let realtimeUrl: string;
+
+  beforeAll(async () => {
+    pg2 = await startPostgres();
+    await applyMigrations(pg2.connectionString);
+    apiUrl = pg2.connectionStringFor('stuwith_api', TEST_ROLE_PASSWORDS.DB_ROLE_API_PASSWORD);
+    realtimeUrl = pg2.connectionStringFor(
+      'stuwith_realtime',
+      TEST_ROLE_PASSWORDS.DB_ROLE_REALTIME_PASSWORD,
+    );
+  }, 300_000);
+
+  afterAll(async () => {
+    await pg2?.stop();
+  }, 120_000);
+
+  it('creates users, user_identities, sessions and audit_events', async () => {
+    const result = await withClient(pg2.connectionString, (client) =>
+      client.query<{ table_name: string }>(
+        `SELECT table_name FROM information_schema.tables
+          WHERE table_schema = 'public'
+            AND table_name IN ('users','user_identities','sessions','audit_events')
+          ORDER BY table_name`,
+      ),
+    );
+    expect(result.rows.map((r) => r.table_name)).toEqual([
+      'audit_events',
+      'sessions',
+      'user_identities',
+      'users',
+    ]);
+  });
+
+  it('has no date_of_birth column — that is Story 1.4', async () => {
+    const result = await withClient(pg2.connectionString, (client) =>
+      client.query<{ column_name: string }>(
+        `SELECT column_name FROM information_schema.columns
+          WHERE table_schema = 'public' AND column_name = 'date_of_birth'`,
+      ),
+    );
+    expect(result.rows).toEqual([]);
+  });
+
+  it('lets stuwith_api write the identity tables', async () => {
+    await expect(
+      withClient(apiUrl, async (client) => {
+        const user = await client.query<{ id: string }>(
+          `INSERT INTO users (display_name, email) VALUES ('Api Writer', 'api@example.test') RETURNING id`,
+        );
+        const id = user.rows[0]?.id;
+        await client.query(
+          `INSERT INTO user_identities (user_id, provider, provider_user_id)
+           VALUES ($1, 'google', 'grant-probe-1')`,
+          [id],
+        );
+        await client.query(`UPDATE users SET display_name = 'Renamed' WHERE id = $1`, [id]);
+        return id;
+      }),
+    ).resolves.toBeTruthy();
+  });
+
+  it.each(['users', 'user_identities', 'sessions'])(
+    'refuses an INSERT on %s from stuwith_realtime, at the database',
+    async (table) => {
+      const privileges = await withClient(pg2.connectionString, (client) =>
+        client.query<{ can_insert: boolean; can_update: boolean; can_delete: boolean }>(
+          `SELECT has_table_privilege('stuwith_realtime', $1, 'INSERT') AS can_insert,
+                  has_table_privilege('stuwith_realtime', $1, 'UPDATE') AS can_update,
+                  has_table_privilege('stuwith_realtime', $1, 'DELETE') AS can_delete`,
+          [table],
+        ),
+      );
+      const row = privileges.rows[0];
+      expect(row?.can_insert, `${table} must not be insertable by realtime`).toBe(false);
+      expect(row?.can_update, `${table} must not be updatable by realtime`).toBe(false);
+      expect(row?.can_delete, `${table} must not be deletable by realtime`).toBe(false);
+    },
+  );
+
+  it('rejects a realtime UPDATE on users with a real statement, not just a privilege bit', async () => {
+    await withClient(pg2.connectionString, (client) =>
+      client.query(`INSERT INTO users (display_name) VALUES ('victim') ON CONFLICT DO NOTHING`),
+    );
+
+    await expect(
+      withClient(realtimeUrl, (client) => client.query(`UPDATE users SET display_name = 'x'`)),
+    ).rejects.toMatchObject({ code: '42501' }); // insufficient_privilege
+  });
+
+  it('lets BOTH roles append to audit_events', async () => {
+    for (const [service, url] of [
+      ['api', apiUrl],
+      ['realtime-gateway', realtimeUrl],
+    ] as const) {
+      await expect(
+        withClient(url, (client) =>
+          client.query(
+            `INSERT INTO audit_events (source_service, action, request_id, metadata)
+             VALUES ($1, 'auth.signed_in', 'req-grant-probe', '{}'::jsonb)`,
+            [service],
+          ),
+        ),
+      ).resolves.toBeTruthy();
+    }
+  });
+
+  it.each([
+    ['stuwith_api', 'api'],
+    ['stuwith_realtime', 'realtime'],
+  ])('gives %s neither UPDATE nor DELETE on audit_events (AD-12)', async (role) => {
+    const result = await withClient(pg2.connectionString, (client) =>
+      client.query<{ can_update: boolean; can_delete: boolean; can_truncate: boolean }>(
+        `SELECT has_table_privilege($1, 'audit_events', 'UPDATE')   AS can_update,
+                has_table_privilege($1, 'audit_events', 'DELETE')   AS can_delete,
+                has_table_privilege($1, 'audit_events', 'TRUNCATE') AS can_truncate`,
+        [role],
+      ),
+    );
+    const row = result.rows[0];
+    expect(row?.can_update, `${role} must not be able to rewrite history`).toBe(false);
+    expect(row?.can_delete, `${role} must not be able to erase history`).toBe(false);
+    expect(row?.can_truncate, `${role} must not be able to empty the table`).toBe(false);
+  });
+
+  it('rejects a real UPDATE and a real DELETE on audit_events from the writing role', async () => {
+    await withClient(apiUrl, (client) =>
+      client.query(
+        `INSERT INTO audit_events (source_service, action, request_id)
+         VALUES ('api', 'auth.sign_in_failed', 'req-immutability-probe')`,
+      ),
+    );
+
+    await expect(
+      withClient(apiUrl, (client) =>
+        client.query(`UPDATE audit_events SET action = 'auth.signed_in'`),
+      ),
+    ).rejects.toMatchObject({ code: '42501' });
+
+    await expect(
+      withClient(apiUrl, (client) => client.query(`DELETE FROM audit_events`)),
+    ).rejects.toMatchObject({ code: '42501' });
+  });
+
+  it('refuses a duplicate (provider, provider_user_id) at the database', async () => {
+    const userId = await withClient(apiUrl, async (client) => {
+      const result = await client.query<{ id: string }>(
+        `INSERT INTO users (display_name) VALUES ('dup probe') RETURNING id`,
+      );
+      return result.rows[0]?.id ?? '';
+    });
+
+    await withClient(apiUrl, (client) =>
+      client.query(
+        `INSERT INTO user_identities (user_id, provider, provider_user_id)
+         VALUES ($1, 'apple', 'dup-subject')`,
+        [userId],
+      ),
+    );
+
+    await expect(
+      withClient(apiUrl, (client) =>
+        client.query(
+          `INSERT INTO user_identities (user_id, provider, provider_user_id)
+           VALUES ($1, 'apple', 'dup-subject')`,
+          [userId],
+        ),
+      ),
+    ).rejects.toMatchObject({ code: '23505' }); // unique_violation
+  });
+
+  it('rejects a role value the contract does not declare', async () => {
+    await expect(
+      withClient(apiUrl, (client) =>
+        client.query(`INSERT INTO users (display_name, role) VALUES ('bad role', 'host')`),
+      ),
+    ).rejects.toMatchObject({ code: '23514' }); // check_violation — `host` is per-room
+  });
+});

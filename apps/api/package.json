@@ -18,6 +18,7 @@
     "@stuwith/db": "workspace:*",
     "@stuwith/domain": "workspace:*",
     "fastify": "5.12.1",
+    "jose": "5.10.0",
     "nestjs-pino": "4.6.1",
     "pino": "10.3.1",
     "pino-http": "11.0.0",

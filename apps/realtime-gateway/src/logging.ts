@@ -1,4 +1,4 @@
-import { loggerBaseOptions, resolveRequestId } from '@stuwith/config';
+import { loggerBaseOptions, resolveRequestId, sanitizeLoggedUrl } from '@stuwith/config';
 import type { RealtimeGatewayEnv } from '@stuwith/config';
 import type { Params } from 'nestjs-pino';
 import { randomUUID } from 'node:crypto';
@@ -37,7 +37,10 @@ export function buildLoggerParams(config: RealtimeGatewayEnv): Params {
         req: (req: { id: unknown; method: string; url: string }) => ({
           id: req.id,
           method: req.method,
-          url: req.url,
+          // Query string dropped, not filtered — see `sanitizeLoggedUrl` in
+          // packages/config for why. Both processes use it so the rule cannot
+          // hold in one and not the other.
+          url: sanitizeLoggedUrl(req.url),
         }),
         res: (res: { statusCode: number }) => ({ statusCode: res.statusCode }),
       },

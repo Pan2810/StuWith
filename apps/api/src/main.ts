@@ -4,6 +4,7 @@ import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fa
 import { loadApiConfig } from '@stuwith/config';
 import { Logger } from 'nestjs-pino';
 import { AppModule } from './app.module';
+import { configureHttpApp } from './http-setup';
 
 async function bootstrap(): Promise<void> {
   // FIRST statement on purpose. AD-14 requires the process to exit non-zero,
@@ -16,6 +17,9 @@ async function bootstrap(): Promise<void> {
     { bufferLogs: true },
   );
   app.useLogger(app.get(Logger));
+  // CORS with credentials, and the form-encoded parser Apple's callback needs.
+  // Shared with the flow-test harness so neither can drift from the other.
+  configureHttpApp(app, config);
   app.enableShutdownHooks();
 
   await app.listen({ port: config.API_PORT, host: '0.0.0.0' });

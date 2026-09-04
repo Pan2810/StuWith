@@ -28,7 +28,83 @@ export const LOG_REDACT_PATHS: readonly string[] = [
   '*.access_token',
   '*.refresh_token',
   '*.provider_id',
+
+  // ── Story 1.2, the OAuth handshake ────────────────────────────────────────
+  //
+  // Everything below is a value that, on its own, is enough to take over an
+  // account or to identify a person. An authorization `code` can be exchanged for
+  // tokens; `state` and `code_verifier` are what stop somebody else exchanging it;
+  // an `id_token` carries the email and the provider subject in its payload.
+  'req.query.code',
+  'req.query.state',
+  'req.body.code',
+  'req.body.state',
+  'req.body.code_verifier',
+  'req.body.refresh_token',
+  '*.code_verifier',
+  '*.codeVerifier',
+  '*.id_token',
+  '*.idToken',
+  '*.client_secret',
+  '*.clientSecret',
+  '*.session_token',
+  '*.sessionToken',
+  '*.provider_user_id',
+  '*.providerUserId',
+  '*.oauth_state',
+  '*.authorization_code',
+  '*.state',
 ];
+
+/**
+ * A bare `*.code` is deliberately NOT in the list above, and the omission is a
+ * decision rather than an oversight.
+ *
+ * pino's one-level wildcard would match `err.code` — the Postgres SQLSTATE, the
+ * Node errno, the HTTP status class — and deleting those makes every production
+ * incident harder to read while protecting nothing that the specific paths above
+ * do not already cover. The place an OAuth `code` would actually have reached a
+ * log line is the request URL (`/v1/auth/google/callback?code=...&state=...`), and
+ * a redaction path cannot reach inside a string. That leak is closed structurally
+ * instead, by {@link sanitizeLoggedUrl}, which both processes put in front of
+ * `req.url`.
+ */
+export const REDACTION_NOTES = {
+  bareCodeExcluded:
+    'req.query.code + sanitizeLoggedUrl cover the OAuth code; a bare *.code would delete err.code',
+} as const;
+
+/**
+ * The path of a request URL, with the query string dropped entirely.
+ *
+ * Not "the query string with sensitive parameters removed": an allow-list of safe
+ * parameters is a list that stops being complete the first time somebody adds an
+ * endpoint, and the values at risk here (`code`, `state`, `id_token`) are exactly
+ * the ones an incident makes you want to log. The path alone identifies the
+ * endpoint, which is what a log line needs; the request id ties it to everything
+ * else.
+ *
+ * The `?` is kept as a marker so a reader can tell "this request had no query"
+ * from "the query was dropped" — a distinction that matters when the bug IS the
+ * missing parameter.
+ */
+export function sanitizeLoggedUrl(rawUrl: unknown): string {
+  if (typeof rawUrl !== 'string') {
+    return '';
+  }
+  const queryStart = rawUrl.indexOf('?');
+  const fragmentStart = rawUrl.indexOf('#');
+  if (queryStart === -1 && fragmentStart === -1) {
+    return rawUrl;
+  }
+  const cut =
+    queryStart === -1
+      ? fragmentStart
+      : fragmentStart === -1
+        ? queryStart
+        : Math.min(queryStart, fragmentStart);
+  return `${rawUrl.slice(0, cut)}?<redacted>`;
+}
 
 /** Header carrying the request id across both processes (spine, "Logging"). */
 export const REQUEST_ID_HEADER = 'x-request-id';

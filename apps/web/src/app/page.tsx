@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { CONTRACT_VERSION } from '@stuwith/contracts';
 
 /**
@@ -11,6 +12,9 @@ export default function Page() {
     <main>
       <h1>StuWith</h1>
       <p>Khung dự án đã dựng. Hợp đồng API: {CONTRACT_VERSION}.</p>
+      <p>
+        <Link href="/dang-nhap">Đăng nhập</Link>
+      </p>
     </main>
   );
 }

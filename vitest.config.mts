@@ -78,6 +78,19 @@ export default defineConfig({
       },
       {
         test: {
+          // The gateway had NO project at all, so a test placed in
+          // apps/realtime-gateway would silently never run — and AGENTS.md claims
+          // both processes share the AD-15 URL sanitising. One of the two was
+          // verified; the claim covered both.
+          name: 'realtime-gateway',
+          root: './apps/realtime-gateway',
+          environment: 'node',
+          include: ['src/**/*.test.ts'],
+          setupFiles: [],
+        },
+      },
+      {
+        test: {
           name: 'gates',
           root: './tests/gates',
           environment: 'node',

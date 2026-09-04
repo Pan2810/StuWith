@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
   LOG_REDACT_PATHS,
+  REDACTION_NOTES,
   REQUEST_ID_HEADER,
   REQUEST_ID_MAX_LENGTH,
   isAcceptableRequestId,
   loggerBaseOptions,
   resolveRequestId,
+  sanitizeLoggedUrl,
 } from './logging';
 
 /**
@@ -91,5 +93,69 @@ describe('inbound request id is not trusted verbatim', () => {
     for (const bad of ['has space', 'quote"inside', "quote'inside", 'brace{}']) {
       expect(isAcceptableRequestId(bad), `${bad} must not be accepted`).toBe(false);
     }
+  });
+});
+
+describe('the OAuth handshake never reaches a log line (Story 1.2)', () => {
+  const required = [
+    'req.query.code',
+    'req.query.state',
+    '*.code_verifier',
+    '*.id_token',
+    '*.client_secret',
+    '*.session_token',
+    '*.provider_user_id',
+    '*.state',
+  ];
+
+  it.each(required)('redacts %s', (path) => {
+    expect(LOG_REDACT_PATHS).toContain(path);
+  });
+
+  it('covers every handshake value the spec names as never-loggable', () => {
+    const joined = LOG_REDACT_PATHS.join('\n');
+    for (const field of ['code', 'state', 'code_verifier', 'id_token', 'refresh_token']) {
+      expect(joined, `no redaction path mentions ${field}`).toContain(field);
+    }
+  });
+
+  it('deliberately does NOT blanket-redact `code`, and says why', () => {
+    // A bare `*.code` would match `err.code` — SQLSTATE, errno, status class — and
+    // delete the field every incident starts from. The OAuth `code` is covered by
+    // the specific paths above plus sanitizeLoggedUrl. This assertion exists so the
+    // omission stays a decision instead of decaying into an oversight.
+    expect(LOG_REDACT_PATHS).not.toContain('*.code');
+    expect(REDACTION_NOTES.bareCodeExcluded).toContain('err.code');
+  });
+});
+
+describe('sanitizeLoggedUrl — the leak a redact path cannot reach', () => {
+  it('drops the query string of an OAuth callback entirely', () => {
+    const raw =
+      '/v1/auth/google/callback?code=4/0AeanS0b-SECRET&state=abc123&scope=openid%20email';
+    const sanitised = sanitizeLoggedUrl(raw);
+
+    expect(sanitised).toBe('/v1/auth/google/callback?<redacted>');
+    for (const leak of ['4/0AeanS0b-SECRET', 'abc123', 'code=', 'state=']) {
+      expect(sanitised).not.toContain(leak);
+    }
+  });
+
+  it('leaves a plain path untouched, so ordinary logs stay readable', () => {
+    expect(sanitizeLoggedUrl('/v1/auth/me')).toBe('/v1/auth/me');
+    expect(sanitizeLoggedUrl('/healthz')).toBe('/healthz');
+  });
+
+  it('marks that a query WAS present, so a missing parameter is still diagnosable', () => {
+    // `/x` and `/x?<redacted>` are different facts. Collapsing them hides the case
+    // where the bug is that a parameter never arrived.
+    expect(sanitizeLoggedUrl('/x?')).toBe('/x?<redacted>');
+    expect(sanitizeLoggedUrl('/x')).toBe('/x');
+  });
+
+  it('drops a fragment too, and survives a non-string', () => {
+    expect(sanitizeLoggedUrl('/v1/auth/callback#id_token=leak')).toBe('/v1/auth/callback?<redacted>');
+    expect(sanitizeLoggedUrl(undefined)).toBe('');
+    expect(sanitizeLoggedUrl(42)).toBe('');
   });
 });
