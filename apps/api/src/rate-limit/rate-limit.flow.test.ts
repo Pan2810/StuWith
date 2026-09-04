@@ -1,4 +1,5 @@
 import {
+  AUTH_DATE_OF_BIRTH_PATH,
   RATE_LIMITED_MESSAGE,
   REFRESH_COOKIE_NAME,
   SIGN_IN_OUTCOME_QUERY_PARAM,
@@ -88,6 +89,44 @@ describe('Matrix row: over the threshold, by address', () => {
     expect(retryAfter).not.toBeNull();
     expect(Number(retryAfter)).toBeGreaterThan(0);
     expect(body.error.details?.['retry_after_seconds']).toBe(Number(retryAfter));
+  }, 60_000);
+
+  /**
+   * The Story 1.4 route, fired at for real.
+   *
+   * Its decorator was only ever checked by reading metadata off the class. A
+   * decorator is not a limit: the guard has to be on the route, the action has to
+   * resolve to a `json` channel, and the refusal has to come back as an envelope
+   * with a `Retry-After` the declaration screen can render — which is the whole
+   * reason that screen now has a `429` branch.
+   */
+  it('refuses POST /v1/auth/date-of-birth with a JSON 429 and a Retry-After', async () => {
+    harness = await createAuthHarness({ enabledProviders: ['google'], ipLimit: 1 });
+
+    // No session on either request: the guard runs BEFORE the handler, so the
+    // first spends the budget (answering 401) and the second never reaches the
+    // handler at all.
+    const first = await harness.request(AUTH_DATE_OF_BIRTH_PATH, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ date_of_birth: '1999-04-02' }),
+    });
+    expect(first.status).toBe(401);
+
+    const blocked = await harness.request(AUTH_DATE_OF_BIRTH_PATH, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ date_of_birth: '1999-04-02' }),
+    });
+
+    expect(blocked.status).toBe(429);
+    const body = errorEnvelopeSchema.parse(await blocked.json());
+    expect(body.error.code).toBe('rate_limited');
+    expect(body.error.message).toBe(RATE_LIMITED_MESSAGE);
+    // The header the screen reads through `parseSignInRetryAfterSeconds`.
+    expect(Number(blocked.headers.get('retry-after'))).toBeGreaterThan(0);
+    // And the refusal said nothing about the body it never looked at.
+    expect(JSON.stringify(body)).not.toContain('1999');
   }, 60_000);
 
   it('sends a BROWSER leg back to the login page with the locked code and the seconds', async () => {
@@ -794,8 +833,28 @@ describe('every /v1/auth route is limited, and logout is the only exception', ()
   }
 
   it('finds every route, so the assertions below are about all of them', () => {
-    // If this drops to one or zero the two examples underneath become vacuous.
-    expect(declaredActions().size).toBeGreaterThanOrEqual(6);
+    /**
+     * An EQUALITY, not a floor, and the difference is the whole point of the
+     * check.
+     *
+     * `>= 6` was written when the controller had six routes. Story 1.4 added a
+     * seventh and the floor stayed behind, so a route silently losing its
+     * decorator — or being deleted outright — still satisfied it. A floor cannot
+     * notice the thing it was put there to notice.
+     *
+     * Seven: start, callback (GET), callback (POST), refresh, logout, me,
+     * date-of-birth. Adding an eighth is meant to fail here, and the fix is to
+     * count it — which is the moment somebody checks it carries an action.
+     */
+    expect([...declaredActions().keys()].sort()).toEqual([
+      'callback',
+      'callbackFormPost',
+      'logout',
+      'me',
+      'recordDateOfBirth',
+      'refresh',
+      'start',
+    ]);
   });
 
   it('gives every route but logout an action from the closed set', () => {

@@ -3,7 +3,7 @@
 import {
   AUTH_DATE_OF_BIRTH_PATH,
   DATE_OF_BIRTH_FIELD,
-  type CurrentUser,
+  parseCurrentUser,
 } from '@stuwith/contracts';
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { useApiBaseUrl, useAuthorizedFetch } from '../session-expiry-provider';
@@ -13,8 +13,10 @@ import {
   dateOfBirthSubmission,
   declarationOutcomeFor,
   profileLoadStateFor,
+  screenStateFor,
   TRY_AGAIN_MESSAGE,
   type DateOfBirthScreenState,
+  type DeclarationNotice,
 } from './date-of-birth-form';
 
 /**
@@ -39,7 +41,7 @@ import {
  */
 export default function KhaiNgaySinhPage() {
   const [state, setState] = useState<DateOfBirthScreenState>({ kind: 'loading' });
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<DeclarationNotice | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   /**
@@ -69,7 +71,12 @@ export default function KhaiNgaySinhPage() {
         setState(profileLoadStateFor(response.status, null));
         return;
       }
-      setState(profileLoadStateFor(200, (await response.json()) as CurrentUser));
+      // Parsed, never cast. The whole argument this story rests on is that
+      // `toCurrentUser` parses the projection on the way OUT so a drift cannot
+      // publish itself; casting a 200 body on the way in would trust exactly what
+      // that parse refuses to. A body that is not a `CurrentUser` is not a profile
+      // this screen can act on, so it lands on `unavailable` — never on a guess.
+      setState(profileLoadStateFor(200, parseCurrentUser(await response.json())));
     } catch {
       // Nothing came back at all, so there is no status to interpret. `0` is the
       // convention this page and its tests share for that.
@@ -102,13 +109,18 @@ export default function KhaiNgaySinhPage() {
         return;
       }
 
+      // `DATE_OF_BIRTH_FIELD` on both halves, and the panel writes the `name`
+      // attribute from the same constant rather than from a prop this file passes
+      // in — so the reader and the writer cannot name the field differently.
       const raw = new FormData(event.currentTarget).get(DATE_OF_BIRTH_FIELD);
-      const submission = dateOfBirthSubmission(raw, new Date());
+      const submission = dateOfBirthSubmission(raw);
       if (submission.kind === 'invalid') {
         // Refused here, so nothing is sent and nothing is written. The sentence is
         // the same one the server would have answered with — one message for one
-        // mistake, whether or not the network was involved.
-        setNotice(submission.message);
+        // mistake, whether or not the network was involved. "In the future" is not
+        // decided here: see `dateOfBirthSubmission` on why the browser's clock is
+        // not allowed to refuse anybody.
+        setNotice({ message: submission.message, retryAfterSeconds: null });
         return;
       }
 
@@ -119,21 +131,39 @@ export default function KhaiNgaySinhPage() {
           headers: { 'content-type': 'application/json' },
           body: dateOfBirthRequestBody(submission.value),
         });
-        const outcome = declarationOutcomeFor(response.status);
+        const outcome = declarationOutcomeFor(
+          response.status,
+          response.headers.get('retry-after'),
+        );
         if (outcome.kind === 'declared') {
-          // Re-read rather than trusting the body: the profile flags are the
-          // server's answer, and reloading them is what keeps this screen from
-          // ever showing a state it inferred for itself.
           setNotice(null);
+          /**
+           * The 200 carries the updated projection, and the endpoint's own
+           * docblock says why: "so the client gets the new flags without a second
+           * round trip". This used to throw that body away and call `load()`,
+           * which spent one more rate-limited `/v1/auth/me` on every declaration
+           * — and the state it landed on was still the server's, just fetched
+           * twice. It is still the server's answer, parsed through the same
+           * schema; nothing is inferred here.
+           *
+           * A 409 has no body worth reading (it names no value, deliberately), and
+           * a body that will not parse means this screen does not know the new
+           * flags — both fall back to re-reading, which is the old path.
+           */
+          const declared = parseCurrentUser(await response.json().catch(() => null));
+          if (declared !== null) {
+            setState(screenStateFor(declared));
+            return;
+          }
           await load();
           return;
         }
-        setNotice(outcome.message);
+        setNotice(outcome.notice);
       } catch {
         // Nothing came back at all, so there is no status to interpret. Same
         // sentence as an unrecognised one: "we do not know that it worked" is the
         // only honest thing to say, and it is never "it worked".
-        setNotice(TRY_AGAIN_MESSAGE);
+        setNotice({ message: TRY_AGAIN_MESSAGE, retryAfterSeconds: null });
       } finally {
         setSubmitting(false);
       }
@@ -154,7 +184,10 @@ export default function KhaiNgaySinhPage() {
         state={state}
         notice={notice}
         submitting={submitting}
-        inputName={DATE_OF_BIRTH_FIELD}
+        // The picker's upper bound and nothing else — no verdict in this package
+        // reads it. See `dateOfBirthSubmission`.
+        today={new Date()}
+        onRetry={() => void load()}
         onSubmit={(event) => void submit(event)}
       />
     </main>

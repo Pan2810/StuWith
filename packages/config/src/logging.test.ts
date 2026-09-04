@@ -40,21 +40,57 @@ describe('LOG_REDACT_PATHS (AD-15)', () => {
     expect(LOG_REDACT_PATHS).toContain(path);
   });
 
-  it('covers each PII field in BOTH the wire spelling and the domain spelling', () => {
-    /**
-     * The class of hole `*.dateOfBirth` closed rather than the one example.
-     *
-     * A payload crosses two vocabularies: snake_case on the wire, camelCase on
-     * the `packages/domain` types. A redaction list that names only one of them
-     * protects only one of them, and the half it misses is usually the one
-     * `logger.info({ user })` actually writes.
-     */
-    const bothSpellings = ['date_of_birth', 'access_token', 'refresh_token', 'provider_id'];
-    for (const snake of bothSpellings) {
-      const camel = snake.replace(/_([a-z])/g, (_match, letter: string) => letter.toUpperCase());
-      expect(LOG_REDACT_PATHS, `no path covers ${snake}`).toContain(`*.${snake}`);
-      expect(LOG_REDACT_PATHS, `no path covers ${camel}`).toContain(`*.${camel}`);
-    }
+  /**
+   * The pairing, as a rule over the SET rather than over a list of examples.
+   *
+   * The previous version of this test iterated a hand-written array of four field
+   * names. That is a list of examples, and it was green while `*.oauth_state`,
+   * `*.authorization_code`, `req.body.access_token`, `req.body.id_token`,
+   * `req.body.provider_id`, `req.body.code_verifier` and `req.body.refresh_token`
+   * all had no camelCase half — the exact class of hole the array was written to
+   * close. The comment in `logging.ts` claimed the stronger property; only now is
+   * that claim true.
+   *
+   * The rule walks `LOG_REDACT_PATHS` itself, so a field added later in ONE
+   * spelling fails here without anybody remembering to extend a list.
+   */
+  describe('every path is declared in both spellings of its last segment', () => {
+    /** `req.headers["set-cookie"]` and friends: a quoted segment is not a field name. */
+    const fieldPaths = LOG_REDACT_PATHS.filter((path) => !path.includes('['));
+
+    const split = (path: string): { prefix: string; field: string } => {
+      const cut = path.lastIndexOf('.');
+      return { prefix: path.slice(0, cut), field: path.slice(cut + 1) };
+    };
+    const toCamel = (snake: string): string =>
+      snake.replace(/_([a-z0-9])/g, (_match, next: string) => next.toUpperCase());
+    const toSnake = (camel: string): string =>
+      camel.replace(/[A-Z]/g, (upper) => `_${upper.toLowerCase()}`);
+
+    it('finds paths to check at all, so an empty sweep cannot pass', () => {
+      // Same guard as `dep-check`'s module count: a filter that matched nothing
+      // would make every assertion below vacuous.
+      expect(fieldPaths.length).toBeGreaterThanOrEqual(20);
+      // And the sweep must actually reach both vocabularies it is about.
+      expect(fieldPaths.some((path) => split(path).field.includes('_'))).toBe(true);
+      expect(fieldPaths.some((path) => /[a-z][A-Z]/.test(split(path).field))).toBe(true);
+    });
+
+    it.each(fieldPaths.filter((path) => split(path).field.includes('_')))(
+      '%s has a camelCase sibling',
+      (path) => {
+        const { prefix, field } = split(path);
+        expect(LOG_REDACT_PATHS).toContain(`${prefix}.${toCamel(field)}`);
+      },
+    );
+
+    it.each(fieldPaths.filter((path) => /[a-z][A-Z]/.test(split(path).field)))(
+      '%s has a snake_case sibling',
+      (path) => {
+        const { prefix, field } = split(path);
+        expect(LOG_REDACT_PATHS).toContain(`${prefix}.${toSnake(field)}`);
+      },
+    );
   });
 
   it('covers every field the spine names as never-loggable', () => {

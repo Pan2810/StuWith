@@ -116,6 +116,30 @@ export function isOver18(user: Pick<CurrentUser, 'is_over_18'>): boolean {
 }
 
 /**
+ * A `/v1/auth/me` body turned into a profile, or `null` — the one place a client
+ * decides that what came back IS a profile.
+ *
+ * Same shape as every other parser here: nothing throws, everything that is not
+ * valid is `null`, and the caller decides what a `null` means.
+ *
+ * It exists because both `apps/web` screens were writing `(await
+ * response.json()) as CurrentUser`. A cast is a claim about a body this process
+ * did not write, and it is the exact opposite of the argument this story rests
+ * on: `toCurrentUser` parses the projection on the way OUT so that adding a
+ * column cannot publish it, and then the client trusted any 200 at all. A body
+ * with `is_over_18: "yes"` would have reached `isOver18` as truthy-looking data
+ * on the one boolean that protects minors.
+ *
+ * Here rather than in `apps/web` for the reason the whole file exists: two
+ * processes reading one shape must not read it two ways (AD-13), and a mobile
+ * client has the same 200 to judge.
+ */
+export function parseCurrentUser(body: unknown): CurrentUser | null {
+  const parsed = currentUserSchema.safeParse(body);
+  return parsed.success ? parsed.data : null;
+}
+
+/**
  * Cookie names are part of the boundary, not of the shell: the browser is the
  * transport, so renaming one is a breaking change to `/v1` exactly as renaming a
  * JSON field would be.

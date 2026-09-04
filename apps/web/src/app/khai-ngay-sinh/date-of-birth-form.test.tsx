@@ -2,20 +2,28 @@ import {
   DATE_OF_BIRTH_ALREADY_SET_MESSAGE,
   DATE_OF_BIRTH_FIELD,
   DATE_OF_BIRTH_INVALID_MESSAGE,
+  MIN_DATE_OF_BIRTH_YEAR,
+  RATE_LIMITED_MESSAGE,
   SIGN_IN_PATHNAME,
   type CurrentUser,
 } from '@stuwith/contracts';
+import { countdownLabel } from '../dang-nhap/countdown-text';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import {
+  DATE_OF_BIRTH_ERROR_ID,
   DATE_OF_BIRTH_HINT,
+  DATE_OF_BIRTH_HINT_ID,
   DATE_OF_BIRTH_LABEL,
   DATE_OF_BIRTH_SUBMIT,
   DECLARED_HEADING,
   DateOfBirthPanel,
+  PROFILE_RETRY_LABEL,
   PROFILE_UNAVAILABLE_MESSAGE,
   SESSION_LOST_MESSAGE,
   TRY_AGAIN_MESSAGE,
+  dateOfBirthDescribedBy,
+  dateOfBirthInputBounds,
   dateOfBirthRequestBody,
   dateOfBirthSubmission,
   declarationOutcomeFor,
@@ -46,17 +54,43 @@ function user(overrides: Partial<CurrentUser> = {}): CurrentUser {
   };
 }
 
-function render(state: DateOfBirthScreenState, notice: string | null = null): string {
+/**
+ * The panel at a chosen instant, with a message or without one.
+ *
+ * `today` is injected rather than read inside the component for the reason
+ * `SignInCountdown` takes a clock: output that depends on the wall clock cannot be
+ * asserted. It reaches only the picker's `max` — no verdict in this package reads
+ * it.
+ */
+function render(state: DateOfBirthScreenState, message: string | null = null): string {
   return renderToStaticMarkup(
     <DateOfBirthPanel
       state={state}
-      notice={notice}
+      notice={message === null ? null : { message, retryAfterSeconds: null }}
       submitting={false}
-      inputName={DATE_OF_BIRTH_FIELD}
+      today={TODAY}
+      onRetry={() => undefined}
       onSubmit={() => undefined}
     />,
   );
 }
+
+/**
+ * Age vocabulary, rather than the two raw substrings this used to check.
+ *
+ * `not.toContain('18')` is both too narrow and too wide: it says nothing about
+ * "trên 18", "đủ tuổi" or "vị thành niên", and it goes red for any id or date that
+ * happens to contain those two digits. The rule is about what the screen SAYS.
+ */
+const AGE_VOCABULARY = [
+  '18',
+  'tuổi',
+  'đủ tuổi',
+  'trên 18',
+  'vị thành niên',
+  'người lớn',
+  'trẻ em',
+];
 
 describe('screenStateFor — what a profile means once one has been read', () => {
   it('offers the form to a profile that has not declared', () => {
@@ -114,7 +148,7 @@ describe('profileLoadStateFor — only a 401 means "signed out"', () => {
 
 describe('dateOfBirthSubmission — nothing unusable is ever sent', () => {
   it('passes a good value through unchanged', () => {
-    const submission = dateOfBirthSubmission('1999-04-02', TODAY);
+    const submission = dateOfBirthSubmission('1999-04-02');
     expect(submission).toEqual({ kind: 'send', value: '1999-04-02' });
   });
 
@@ -130,23 +164,67 @@ describe('dateOfBirthSubmission — nothing unusable is ever sent', () => {
     ['a day that does not exist', '2026-02-30'],
     ['the wrong shape', '02/04/1999'],
     ['an ISO instant', '1999-04-02T00:00:00.000Z'],
-    ['a future date', '2026-09-05'],
     ['an implausible year', '0001-01-01'],
     ['a File, which is what FormData.get returns for a file input', new Blob()],
     ['null, which is what FormData.get returns for a missing field', null],
   ])('refuses %s with the same sentence the server would have sent', (_label, raw) => {
-    const submission = dateOfBirthSubmission(raw, TODAY);
+    const submission = dateOfBirthSubmission(raw);
     expect(submission.kind).toBe('invalid');
     expect(submission.kind === 'invalid' && submission.message).toBe(
       DATE_OF_BIRTH_INVALID_MESSAGE,
     );
   });
 
-  it('judges "in the future" against the instant it is given, not the wall clock', () => {
-    expect(dateOfBirthSubmission('2026-09-05', TODAY).kind).toBe('invalid');
-    expect(
-      dateOfBirthSubmission('2026-09-05', new Date('2026-09-06T00:00:00.000Z')).kind,
-    ).toBe('send');
+  /**
+   * "In the future" is the one part of the format rule that needs a clock, and this
+   * screen deliberately does not answer it.
+   *
+   * It used to call `dateOfBirthSubmission(raw, new Date())` — the BROWSER's clock.
+   * A machine whose date is wrong then refused a perfectly good date of birth on
+   * the spot, with the exact sentence a real refusal carries, and the request never
+   * reached the server to be judged by the `ClockPort` that is authoritative. The
+   * person had no way to tell the two apart and no way through.
+   *
+   * So the client check is a strict SUPERSET of the server's: it never accepts what
+   * the server would refuse, and it never refuses what the server would accept. A
+   * future date travels, and `apps/api` answers 400 with the same sentence —
+   * `auth.flow.test.ts` runs exactly that over real HTTP.
+   */
+  it('lets a future date travel rather than refusing it on the browser clock', () => {
+    expect(dateOfBirthSubmission('2999-01-01')).toEqual({ kind: 'send', value: '2999-01-01' });
+  });
+
+  it('still refuses everything the format rule decides without a clock', () => {
+    // The superset is not "accept anything": shape, real-day and the year floor all
+    // still apply here, which is what saves the round trip in the ordinary case.
+    expect(dateOfBirthSubmission('2999-02-30').kind).toBe('invalid');
+    expect(dateOfBirthSubmission('1899-12-31').kind).toBe('invalid');
+  });
+});
+
+describe('dateOfBirthInputBounds — the picker is bounded, and it is only a picker', () => {
+  it('offers nothing after today and nothing before the contract floor', () => {
+    expect(dateOfBirthInputBounds(TODAY)).toEqual({ min: '1900-01-01', max: '2026-09-04' });
+    expect(dateOfBirthInputBounds(TODAY).min.startsWith(String(MIN_DATE_OF_BIRTH_YEAR))).toBe(true);
+  });
+
+  it('reads the bound on the UTC calendar, like every other date in this product', () => {
+    // 23:00 UTC on the 4th is already the 5th in UTC+7. The picker follows UTC, the
+    // same calendar the age rule and the parser use, so the screen and the server
+    // cannot disagree about which day "today" is.
+    expect(dateOfBirthInputBounds(new Date('2026-09-04T23:00:00.000Z')).max).toBe('2026-09-04');
+  });
+
+  it('drops the upper bound rather than inventing one when the clock is unusable', () => {
+    // A bound nobody can satisfy would lock the picker; the value is judged twice
+    // more after this anyway.
+    expect(dateOfBirthInputBounds(new Date('not-a-date')).max).toBeUndefined();
+  });
+
+  it('puts both bounds on the rendered input', () => {
+    const html = render({ kind: 'needs-declaration', user: user() });
+    expect(html).toContain('min="1900-01-01"');
+    expect(html).toContain('max="2026-09-04"');
   });
 });
 
@@ -173,25 +251,67 @@ describe('declarationOutcomeFor — what the endpoint said', () => {
   it('shows the same refusal sentence for a 400 as the field does locally', () => {
     expect(declarationOutcomeFor(400)).toEqual({
       kind: 'message',
-      message: DATE_OF_BIRTH_INVALID_MESSAGE,
+      notice: { message: DATE_OF_BIRTH_INVALID_MESSAGE, retryAfterSeconds: null },
     });
   });
 
   it('says the session ended for a 401', () => {
     expect(declarationOutcomeFor(401)).toEqual({
       kind: 'message',
-      message: SESSION_LOST_MESSAGE,
+      notice: { message: SESSION_LOST_MESSAGE, retryAfterSeconds: null },
     });
   });
 
-  it.each([[0], [429], [500], [502], [418]])(
+  /**
+   * The route carries `@RateLimited('auth_date_of_birth')` on a `json` channel, so
+   * a `429` with a `Retry-After` header is an answer this screen really receives.
+   * It used to fall into `default` and read "thử lại sau ít phút" — vaguer than the
+   * truth, and an invitation to keep tapping when every tap costs another attempt.
+   */
+  describe('a 429 is a real answer here, not an unrecognised one', () => {
+    it('says what /dang-nhap says, with the wait the header carried', () => {
+      expect(declarationOutcomeFor(429, '30')).toEqual({
+        kind: 'message',
+        notice: { message: RATE_LIMITED_MESSAGE, retryAfterSeconds: 30 },
+      });
+    });
+
+    it('shows the message with no clock when the header is missing or nonsense', () => {
+      // Same parser the login page runs the URL parameter through, so a header this
+      // product did not write cannot put a number on the screen either.
+      for (const header of [null, 'abc', '-5', '0', '99999999', ' 30 ']) {
+        expect(declarationOutcomeFor(429, header)).toEqual({
+          kind: 'message',
+          notice: { message: RATE_LIMITED_MESSAGE, retryAfterSeconds: null },
+        });
+      }
+    });
+
+    it('renders the wait beside the message, so the number reaches the screen', () => {
+      const html = renderToStaticMarkup(
+        <DateOfBirthPanel
+          state={{ kind: 'needs-declaration', user: user() }}
+          notice={{ message: RATE_LIMITED_MESSAGE, retryAfterSeconds: 30 }}
+          submitting={false}
+          today={TODAY}
+          onRetry={() => undefined}
+          onSubmit={() => undefined}
+        />,
+      );
+
+      expect(html).toContain(RATE_LIMITED_MESSAGE);
+      expect(html).toContain(countdownLabel(30));
+    });
+  });
+
+  it.each([[0], [500], [502], [418]])(
     'defaults %i to "we do not know that it worked", never to declared',
     (status) => {
       // The dangerous default is the other one: telling somebody their profile is
       // complete on the strength of a 502 means they never come back to finish it.
       expect(declarationOutcomeFor(status)).toEqual({
         kind: 'message',
-        message: TRY_AGAIN_MESSAGE,
+        notice: { message: TRY_AGAIN_MESSAGE, retryAfterSeconds: null },
       });
     },
   );
@@ -201,7 +321,7 @@ describe('declarationOutcomeFor — what the endpoint said', () => {
       const outcome = declarationOutcomeFor(status);
       if (outcome.kind !== 'message') continue;
       for (const leak of [String(status), 'HTTP', 'server', 'API', 'fetch']) {
-        expect(outcome.message).not.toContain(leak);
+        expect(outcome.notice.message).not.toContain(leak);
       }
     }
   });
@@ -275,16 +395,19 @@ describe('the screen never renders a date of birth or an age', () => {
     });
 
     expect(html).not.toMatch(/\d{4}-\d{2}-\d{2}/);
-    expect(html).not.toContain('18');
-    expect(html).not.toContain('tuổi');
+    for (const word of AGE_VOCABULARY) {
+      expect(html, `the confirmation must not mention "${word}"`).not.toContain(word);
+    }
   });
 
   it('shows no age on the form either', () => {
+    // Naming the threshold on the form tells somebody who is under it exactly which
+    // year to type instead. The form DOES carry `min`/`max` for the picker, so the
+    // rule is over age vocabulary rather than over every digit on the page.
     const html = render({ kind: 'needs-declaration', user: user() });
-    // Naming the threshold on the form tells somebody who is under it exactly
-    // which year to type instead.
-    expect(html).not.toContain('18');
-    expect(html).not.toContain('tuổi');
+    for (const word of AGE_VOCABULARY) {
+      expect(html, `the form must not mention "${word}"`).not.toContain(word);
+    }
   });
 });
 
@@ -320,10 +443,94 @@ describe('the submit button is disabled while a declaration is in flight', () =>
         state={{ kind: 'needs-declaration', user: user() }}
         notice={null}
         submitting
-        inputName={DATE_OF_BIRTH_FIELD}
+        today={TODAY}
+        onRetry={() => undefined}
         onSubmit={() => undefined}
       />,
     );
     expect(html).toContain('disabled');
+  });
+});
+
+/**
+ * The wiring a screen reader needs, and the way out of `unavailable`.
+ *
+ * None of it is decoration. An input whose hint and whose error are on the page
+ * but not attached to it is an input that reads as bare, and a branch that offers
+ * one sentence and no control is a dead end somebody has to guess their way out
+ * of (a page reload, which nothing tells them to try).
+ */
+describe('the field is wired up for somebody who cannot see it', () => {
+  it('describes the field with the hint, always', () => {
+    const html = render({ kind: 'needs-declaration', user: user() });
+    expect(html).toContain(`aria-describedby="${DATE_OF_BIRTH_HINT_ID}"`);
+    expect(html).toContain(`id="${DATE_OF_BIRTH_HINT_ID}"`);
+  });
+
+  it('adds the error to the description WITHOUT dropping the hint', () => {
+    // Replacing rather than adding is the tempting shape and the wrong one: the
+    // person hears the complaint and loses the instruction that would fix it.
+    expect(dateOfBirthDescribedBy(true)).toBe(`${DATE_OF_BIRTH_HINT_ID} ${DATE_OF_BIRTH_ERROR_ID}`);
+    expect(dateOfBirthDescribedBy(false)).toBe(DATE_OF_BIRTH_HINT_ID);
+
+    const html = render({ kind: 'needs-declaration', user: user() }, DATE_OF_BIRTH_INVALID_MESSAGE);
+    expect(html).toContain(
+      `aria-describedby="${DATE_OF_BIRTH_HINT_ID} ${DATE_OF_BIRTH_ERROR_ID}"`,
+    );
+    expect(html).toContain(`id="${DATE_OF_BIRTH_ERROR_ID}"`);
+  });
+
+  it('marks the field invalid only while a message is on screen', () => {
+    expect(render({ kind: 'needs-declaration', user: user() })).not.toContain('aria-invalid');
+    expect(
+      render({ kind: 'needs-declaration', user: user() }, DATE_OF_BIRTH_INVALID_MESSAGE),
+    ).toContain('aria-invalid="true"');
+  });
+
+  it('announces the loading branch, like the other two that claim nothing', () => {
+    // It was the only state of this screen a screen reader was never told about.
+    expect(render({ kind: 'loading' })).toContain('role="status"');
+  });
+
+  it('offers a way out of "we could not read your profile"', () => {
+    const html = render({ kind: 'unavailable' });
+    expect(html).toContain(PROFILE_RETRY_LABEL);
+    expect(html).toContain('<button');
+    // And it is still not a login prompt: this person may well be signed in.
+    expect(html).not.toContain(SIGN_IN_PATHNAME);
+  });
+});
+
+/**
+ * M1 — the form field's name is written in ONE place.
+ *
+ * `page.tsx` used to pass `inputName={DATE_OF_BIRTH_FIELD}` and read the submitted
+ * form back with the same constant: two halves, two files, nothing holding them
+ * equal. Passing `inputName="ngay-sinh"` — an easy mistake, since the `id` and the
+ * `htmlFor` are already that string — broke the screen permanently, every submit
+ * answering "Ngày sinh chưa hợp lệ", with every test green because this file
+ * supplied the prop itself.
+ */
+describe('the field name cannot drift between where it is written and where it is read', () => {
+  it('renders the contract field name, with no prop able to say otherwise', () => {
+    const html = render({ kind: 'needs-declaration', user: user() });
+    expect(html).toContain(`name="${DATE_OF_BIRTH_FIELD}"`);
+  });
+
+  it('is the same name the request body carries', () => {
+    // The two halves the page puts together: what the form is named, and what the
+    // body is keyed on. One constant, so they cannot disagree.
+    expect(Object.keys(JSON.parse(dateOfBirthRequestBody('1999-04-02')))).toEqual([
+      DATE_OF_BIRTH_FIELD,
+    ]);
+  });
+
+  it('is the name a FormData built from the rendered markup would answer to', () => {
+    // The end-to-end shape of the round trip, without a DOM: the markup declares
+    // this name, and `page.tsx` reads `FormData.get(DATE_OF_BIRTH_FIELD)`. Both
+    // sides now come from the constant, so this asserts the one that is rendered.
+    const html = render({ kind: 'needs-declaration', user: user() });
+    const names = [...html.matchAll(/name="([^"]+)"/g)].map((match) => match[1]);
+    expect(names).toEqual([DATE_OF_BIRTH_FIELD]);
   });
 });

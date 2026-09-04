@@ -3,6 +3,7 @@ import { auditEventSchema } from './audit';
 import {
   AUTH_DATE_OF_BIRTH_PATH,
   DATE_OF_BIRTH_FIELD,
+  DATE_OF_BIRTH_PATHNAME,
   MAX_SIGN_IN_RETURN_PATH_LENGTH,
   MIN_DATE_OF_BIRTH_YEAR,
   SIGN_IN_OUTCOME_QUERY_PARAM,
@@ -55,6 +56,29 @@ export function toOpenApiComponents(): Record<string, unknown> {
 
 const unauthenticated = {
   description: 'No usable session',
+  content: {
+    'application/json': { schema: { $ref: '#/components/schemas/ErrorEnvelope' } },
+  },
+} as const;
+
+/**
+ * The answer a rate-limited `fetch` leg gets, which the document did not mention
+ * anywhere at all.
+ *
+ * Every `/v1/auth` route but `logout` carries `@RateLimited(...)`, so `429` is an
+ * ordinary answer rather than an exception — and a client written against a
+ * document that does not mention it has no reason to read `Retry-After` and every
+ * reason to retry immediately, which is the loop the limit exists to break.
+ *
+ * Only the `json`-channel legs are documented with it. `/start` and `/callback`
+ * are reached by a browser following a navigation, so their refusal travels as a
+ * `303` back to the login page rather than as an envelope; documenting a `429`
+ * there would describe an answer those routes never give.
+ */
+const rateLimited = {
+  description:
+    'Too many attempts. The `Retry-After` header carries how many seconds to ' +
+    'wait; the message says nothing about which limit was reached.',
   content: {
     'application/json': { schema: { $ref: '#/components/schemas/ErrorEnvelope' } },
   },
@@ -191,6 +215,14 @@ function authPaths(): Record<string, unknown> {
         ],
         responses: {
           '302': { description: 'Redirect to the provider authorization endpoint' },
+          // The browser channel's refusal: a rate-limited navigation goes back to
+          // the login page carrying the outcome, not to a JSON body a person would
+          // be shown as a page of braces.
+          '303': {
+            description:
+              'Too many attempts. Redirect to the sign-in page carrying the ' +
+              'rate-limited outcome and the seconds to wait.',
+          },
           '404': {
             description: 'The provider is not enabled on this deployment',
             content: {
@@ -207,6 +239,7 @@ function authPaths(): Record<string, unknown> {
         responses: {
           '204': { description: 'Rotated; new cookies are set' },
           '401': unauthenticated,
+          '429': rateLimited,
         },
       },
     },
@@ -232,6 +265,7 @@ function authPaths(): Record<string, unknown> {
             },
           },
           '401': unauthenticated,
+          '429': rateLimited,
         },
       },
     },
@@ -261,7 +295,14 @@ function dateOfBirthPath(): Record<string, unknown> {
         'deliberately no endpoint that changes an existing value — that goes ' +
         'through support. The date is never echoed back and never appears in any ' +
         'response; what the caller gets is the same CurrentUser projection ' +
-        `${'`GET /v1/auth/me`'} returns, carrying the two booleans.`,
+        `${'`GET /v1/auth/me`'} returns, carrying the two booleans. ` +
+        // The half of `DATE_OF_BIRTH_PATHNAME`'s docblock that was not true until
+        // this line existed: it claims `apps/api` publishes the web route in the
+        // OpenAPI description of the endpoint behind it, and nothing here referred
+        // to the constant at all. A mobile client has no `/khai-ngay-sinh` of its
+        // own, but a web integrator sending somebody to the step needs the URL,
+        // and this is the one document both processes read.
+        `The browser-facing screen for this step lives at ${DATE_OF_BIRTH_PATHNAME}.`,
       requestBody: {
         required: true,
         content: {
@@ -309,6 +350,7 @@ function dateOfBirthPath(): Record<string, unknown> {
             'application/json': { schema: { $ref: '#/components/schemas/ErrorEnvelope' } },
           },
         },
+        '429': rateLimited,
       },
     },
   };

@@ -1,10 +1,11 @@
 'use client';
 
-import type { CurrentUser } from '@stuwith/contracts';
+import { parseCurrentUser, type CurrentUser } from '@stuwith/contracts';
 import { useCallback, useEffect, useState } from 'react';
 import { useApiBaseUrl, useAuthorizedFetch } from '../session-expiry-provider';
 import {
   SignInPanel,
+  SignedInPanel,
   nextLocationAfterOutcome,
   signInNoticeFromMe,
   type SignInNotice,
@@ -94,7 +95,14 @@ export default function DangNhapPage() {
         setState({ status: 'signed-out' });
         return;
       }
-      setState({ status: 'signed-in', user: (await response.json()) as CurrentUser });
+      // Parsed, never cast. `as CurrentUser` is a claim about a body this process
+      // did not write, and the whole reason `toCurrentUser` parses on the way out
+      // is that a shape nobody checks is a shape that drifts. A 200 carrying
+      // something else is not a session this page can render, so it takes the same
+      // branch as no session at all — which is what the `catch` below already did
+      // for a body that would not even parse as JSON.
+      const user = parseCurrentUser(await response.json());
+      setState(user === null ? { status: 'signed-out' } : { status: 'signed-in', user });
     } catch {
       // A network failure is not a signed-in state, and it is not an expired
       // session either: nothing came back, so there is no status to report and the
@@ -160,16 +168,15 @@ export default function DangNhapPage() {
         onCountdownFinished={() => setNotice(null)}
       />
 
+      {/*
+        The signed-in view is ONE component for the same reason the notice and the
+        login links are: who the person is, what is still missing from their
+        profile and the way out are one decision. While the outstanding step was
+        not rendered at all, `/khai-ngay-sinh` was a route nothing in the product
+        linked to — a screen that existed, worked and could not be reached.
+      */}
       {state.status === 'signed-in' ? (
-        <section>
-          <p>
-            Đang đăng nhập: <strong>{state.user.display_name}</strong> (vai trò:{' '}
-            {state.user.role})
-          </p>
-          <button type="button" onClick={() => void logout()}>
-            Đăng xuất
-          </button>
-        </section>
+        <SignedInPanel user={state.user} onSignOut={() => void logout()} />
       ) : null}
     </main>
   );

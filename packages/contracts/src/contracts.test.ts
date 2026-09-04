@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { auditEventSchema, toAuditWireTimestamp } from './audit';
 import {
+  AUTH_DATE_OF_BIRTH_PATH,
+  DATE_OF_BIRTH_FIELD,
+  DATE_OF_BIRTH_PATHNAME,
   MAX_SIGN_IN_RETRY_AFTER_SECONDS,
   MAX_SIGN_IN_RETURN_PATH_LENGTH,
   RATE_LIMITED_MESSAGE,
@@ -212,6 +215,104 @@ describe('OpenAPI emission (AD-13)', () => {
       );
 
       expect(named).not.toContain(SIGN_IN_RETURN_PATH_QUERY_PARAM);
+    });
+  });
+
+  /**
+   * The Story 1.4 endpoint, read out of the document that is emitted.
+   *
+   * Nothing looked at `doc.paths[AUTH_DATE_OF_BIRTH_PATH]` at all, so deleting the
+   * registration line, or documenting a `422` the service never answers, left
+   * every gate green. That failure has happened here once already — the comment
+   * above the return-path block records it about `/start`'s `parameters` — which
+   * is why the same shape is applied rather than a note about being careful.
+   */
+  describe('the date-of-birth endpoint as published', () => {
+    const operation = () =>
+      (doc.paths[AUTH_DATE_OF_BIRTH_PATH] as Record<string, unknown>).post as {
+        responses: Record<string, unknown>;
+        requestBody?: { required?: boolean; content: Record<string, { schema: unknown }> };
+        description?: string;
+      };
+
+    it('is registered, and only as a POST', () => {
+      // There is deliberately no PATCH or PUT: the value is written once and
+      // changing it goes through support, so a route that could update one must
+      // not exist for an integrator to find — or to build a settings screen on.
+      expect(Object.keys(doc.paths[AUTH_DATE_OF_BIRTH_PATH] as object)).toEqual(['post']);
+    });
+
+    it('documents exactly the statuses the service answers with', () => {
+      // Not a superset and not a subset: an undocumented `429` leaves a client with
+      // no reason to read `Retry-After`, and a documented `422` sends one looking
+      // for a branch that does not exist.
+      expect(Object.keys(operation().responses).sort()).toEqual([
+        '200',
+        '400',
+        '401',
+        '409',
+        '429',
+      ]);
+    });
+
+    it('requires a body carrying the contract field name and its format', () => {
+      const schema = operation().requestBody?.content['application/json']?.schema as {
+        required: string[];
+        properties: Record<string, { pattern?: string }>;
+      };
+
+      expect(operation().requestBody?.required).toBe(true);
+      expect(schema.required).toEqual([DATE_OF_BIRTH_FIELD]);
+      expect(schema.properties[DATE_OF_BIRTH_FIELD]?.pattern).toBe('^\\d{4}-\\d{2}-\\d{2}$');
+    });
+
+    it('publishes the web route behind this endpoint, as its docblock promises', () => {
+      // `DATE_OF_BIRTH_PATHNAME`'s docblock says `apps/api` "publishes it in the
+      // OpenAPI description of the endpoint behind it". That was a description of
+      // behaviour that did not exist: nothing in `openapi.ts` referred to the
+      // constant. This is the assertion that keeps the sentence true.
+      expect(operation().description).toContain(DATE_OF_BIRTH_PATHNAME);
+    });
+  });
+
+  /**
+   * `429` was absent from the WHOLE document while every route but `logout`
+   * carried `@RateLimited(...)`.
+   *
+   * A client reading a document with no `429` in it has no reason to look at
+   * `Retry-After` and every reason to retry at once — which is the loop the limit
+   * exists to break. The browser legs are the deliberate exception: their refusal
+   * is a `303` back to the login page, so a `429` there would describe an answer
+   * they never give.
+   */
+  describe('a rate-limited answer is documented wherever it can happen', () => {
+    it.each([['/v1/auth/refresh'], ['/v1/auth/me'], [AUTH_DATE_OF_BIRTH_PATH]])(
+      '%s documents 429',
+      (path) => {
+        const operations = doc.paths[path] as Record<string, { responses: Record<string, unknown> }>;
+        for (const operation of Object.values(operations)) {
+          expect(Object.keys(operation.responses)).toContain('429');
+        }
+      },
+    );
+
+    it('documents the browser legs redirecting instead, never answering 429', () => {
+      const start = (doc.paths['/v1/auth/{provider}/start'] as Record<string, {
+        responses: Record<string, unknown>;
+      }>).get;
+
+      expect(Object.keys(start.responses)).toContain('303');
+      expect(Object.keys(start.responses)).not.toContain('429');
+    });
+
+    it('leaves logout alone, because logout is not limited', () => {
+      // Limiting sign-out keeps somebody inside a session they are trying to leave.
+      // There is no `RateLimitAction` for it, so there is nothing to document.
+      const logout = (doc.paths['/v1/auth/logout'] as Record<string, {
+        responses: Record<string, unknown>;
+      }>).post;
+
+      expect(Object.keys(logout.responses)).toEqual(['204']);
     });
   });
 

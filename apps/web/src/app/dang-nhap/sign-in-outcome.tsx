@@ -16,12 +16,15 @@
  */
 
 import {
+  DATE_OF_BIRTH_PATHNAME,
   MAX_SIGN_IN_RETRY_AFTER_SECONDS,
   RATE_LIMITED_MESSAGE,
   SIGN_IN_OUTCOME_QUERY_PARAM,
   SIGN_IN_RETRY_AFTER_QUERY_PARAM,
+  isProfileCompleted,
   isSignInOutcome,
   parseSignInRetryAfterSeconds,
+  type CurrentUser,
   type SignInOutcome,
 } from '@stuwith/contracts';
 import { SignInProviderLinks } from '../sign-in-links';
@@ -393,6 +396,98 @@ export function SignInPanel({
         </nav>
       ) : null}
     </>
+  );
+}
+
+/**
+ * What a signed-in person is asked to do NEXT, as a pure function of the profile.
+ *
+ * ## The defect this exists to close
+ *
+ * `/khai-ngay-sinh` was a dead route. The screen existed, rendered correctly and
+ * had its own tests; the constant existed and was compared with other constants;
+ * the API endpoint behind it worked over real HTTP — and no file in `apps/web` or
+ * `apps/api` navigated to it. The only way to reach the one step Story 1.4 exists
+ * to make happen was to type the URL, which means the acceptance criterion "there
+ * is no way past the declaration step" was not met while 1460 tests were green.
+ * Nothing could see it, because every piece was correct on its own.
+ *
+ * So the decision is a function rather than a condition inside the page: a
+ * DOM-less project cannot execute an effect or a JSX branch reached only through
+ * one, and a decision no test can run is exactly how the gap opened.
+ *
+ * ## Why `isProfileCompleted` and not `user.profile_completed`
+ *
+ * The field is optional in the contract, so it has three states while this
+ * decision has two. The shared reader collapses the third the fail-closed way —
+ * absent means "not declared", which shows the step rather than hiding it. Showing
+ * it to somebody who has already declared costs one page they can leave; hiding it
+ * from somebody who has not is permanent, because the endpoint accepts exactly one
+ * write and nothing else in the product asks.
+ */
+export type SignedInNextStep =
+  /** Nothing outstanding: the profile is complete. */
+  | { readonly kind: 'none' }
+  /** The date of birth has not been declared. The link is where to go. */
+  | { readonly kind: 'declare-date-of-birth'; readonly href: string };
+
+export function signedInNextStep(user: Pick<CurrentUser, 'profile_completed'>): SignedInNextStep {
+  return isProfileCompleted(user)
+    ? { kind: 'none' }
+    : { kind: 'declare-date-of-birth', href: DATE_OF_BIRTH_PATHNAME };
+}
+
+/** The sentence that sends somebody to the declaration screen, and the link's text. */
+export const DECLARE_DATE_OF_BIRTH_PROMPT =
+  'Hồ sơ của bạn còn thiếu ngày sinh. Hãy khai ngày sinh để dùng đầy đủ tính năng.';
+export const DECLARE_DATE_OF_BIRTH_LINK = 'Khai ngày sinh';
+
+/**
+ * The signed-in view, as ONE effect-free component.
+ *
+ * Same shape as `SignInPanel` and for the same reason: who the person is, what is
+ * still missing from their profile and the way out are one decision, and while
+ * they were three pieces of JSX in `page.tsx` any of them could be deleted with a
+ * full green run — which is precisely what had happened to the link below.
+ *
+ * The sign-out button stays here rather than behind the outstanding step. Somebody
+ * who has not declared must still be able to leave their own session; that is a
+ * matrix row of the story ("do not lock people out of their own session"), and on
+ * a shared machine it is a security question rather than a convenience.
+ */
+export function SignedInPanel({
+  user,
+  onSignOut,
+}: {
+  readonly user: CurrentUser;
+  /** REQUIRED: a panel that renders the button and loses the handler is the bug. */
+  readonly onSignOut: () => void;
+}) {
+  const next = signedInNextStep(user);
+
+  return (
+    <section>
+      <p>
+        Đang đăng nhập: <strong>{user.display_name}</strong> (vai trò: {user.role})
+      </p>
+
+      {next.kind === 'declare-date-of-birth' ? (
+        <>
+          {/*
+            `status`, not `alert`: nothing has gone wrong, there is simply a step
+            left. The link is a plain `<a href>` — a full navigation is correct
+            here, and the route comes from `packages/contracts` rather than from a
+            literal, which is the same rule that put `SIGN_IN_PATHNAME` there.
+          */}
+          <p role="status">{DECLARE_DATE_OF_BIRTH_PROMPT}</p>
+          <a href={next.href}>{DECLARE_DATE_OF_BIRTH_LINK}</a>
+        </>
+      ) : null}
+
+      <button type="button" onClick={onSignOut}>
+        Đăng xuất
+      </button>
+    </section>
   );
 }
 

@@ -20,8 +20,11 @@ export const LOG_REDACT_PATHS: readonly string[] = [
   'req.body.dateOfBirth',
   'req.body.token',
   'req.body.access_token',
+  'req.body.accessToken',
   'req.body.id_token',
+  'req.body.idToken',
   'req.body.provider_id',
+  'req.body.providerId',
   'req.body.message',
   '*.email',
   '*.date_of_birth',
@@ -54,12 +57,33 @@ export const LOG_REDACT_PATHS: readonly string[] = [
    * behind by it.
    *
    * Patching only the reported example is the failure mode `AGENTS.md` records at
-   * length for the trusted-proxy list. `logging.test.ts` now asserts the pairing
-   * as a rule over the set, so a fifth field added in one spelling fails there.
+   * length for the trusted-proxy list. `logging.test.ts` asserts the pairing by
+   * WALKING THIS ARRAY — for every path whose last segment is snake_case there
+   * must be a sibling path with the camelCase spelling and the same prefix, and
+   * the other way round — so a fifth field added in one spelling fails there. The
+   * previous version of that test iterated a hand-written list of four field
+   * names, which is a list of examples wearing the words "as a rule over the set";
+   * it was green while `*.oauth_state`, `*.authorization_code` and three
+   * `req.body.*` entries had no camelCase half at all.
    */
   '*.accessToken',
   '*.refreshToken',
   '*.providerId',
+
+  /**
+   * Two levels down, for the ONE shape Story 1.4 introduced.
+   *
+   * pino's `*` wildcard matches exactly one level, so `*.dateOfBirth` covers
+   * `{ user: { dateOfBirth } }` and nothing deeper. `RecordDateOfBirthResult` is
+   * `{ ok: true, user: User }`, so a single `logger.info({ outcome })` in
+   * `apps/api` would put the date of birth two levels down — past every path
+   * above. Nothing logs it today; the point is that the new return type made the
+   * dangerous shape expressible, and one named path is cheaper than trusting that
+   * nobody ever writes that line. The general answer is Story 1.7's whitelist
+   * serializer, and `deferred-work.md` records the remaining depth.
+   */
+  '*.user.date_of_birth',
+  '*.user.dateOfBirth',
 
   // ── Story 1.2, the OAuth handshake ────────────────────────────────────────
   //
@@ -72,7 +96,9 @@ export const LOG_REDACT_PATHS: readonly string[] = [
   'req.body.code',
   'req.body.state',
   'req.body.code_verifier',
+  'req.body.codeVerifier',
   'req.body.refresh_token',
+  'req.body.refreshToken',
   '*.code_verifier',
   '*.codeVerifier',
   '*.id_token',
@@ -84,7 +110,9 @@ export const LOG_REDACT_PATHS: readonly string[] = [
   '*.provider_user_id',
   '*.providerUserId',
   '*.oauth_state',
+  '*.oauthState',
   '*.authorization_code',
+  '*.authorizationCode',
   '*.state',
 ];
 

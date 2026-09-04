@@ -21,6 +21,18 @@ interface UserRow {
   updated_at: Date;
 }
 
+/**
+ * What the conditional declaration statement returns: one row, always.
+ *
+ * Every user column is nullable here and nowhere else, because the `LEFT JOIN`
+ * against a CTE that matched nothing fills them with `NULL`. `user_exists` is the
+ * existence check computed in the same statement, which is what tells
+ * `AlreadyRecorded` from `UserNotFound` without a second round trip.
+ */
+type ConditionalUpdateRow = { readonly user_exists: boolean } & {
+  readonly [K in keyof UserRow]: UserRow[K] | null;
+};
+
 /** Everything on `users` that comes back as itself. `date_of_birth` does not — see below. */
 const PLAIN_USER_COLUMNS = [
   'id',
@@ -156,9 +168,26 @@ export class PgIdentityAdapter implements IdentityPort {
    * which now has a date of birth — so it matches nothing and reports zero rows.
    * Postgres picks the winner; nothing in this file does.
    *
-   * The follow-up SELECT runs only on the losing path, and only to tell two
-   * refusals apart. It is not a check that guards the write — the write has
-   * already happened or already failed by then — so it introduces no window.
+   * ## Telling the two refusals apart, in the SAME statement
+   *
+   * Zero rows means one of exactly two things and the caller needs to know which:
+   * an already-complete profile is a 409, a vanished one is a 401. That used to be
+   * answered by a follow-up `findUserById` on a SECOND connection, outside any
+   * transaction, and the docblock here claimed it "introduces no window". Only
+   * half of that was true: the WRITE has no window, and the CLASSIFICATION did —
+   * anything that removed the row between the two statements turned "your profile
+   * already has a date of birth" into "your session points at nothing", a 409
+   * reported as a 401.
+   *
+   * So the existence check rides in the same statement as the update, as a plain
+   * `EXISTS`. Every part of one statement is evaluated against one snapshot, which
+   * is what makes "did this row exist when we tried to write it" a question with
+   * one answer rather than two readings taken a round trip apart. It also drops a
+   * connection acquisition from the losing path.
+   *
+   * The `LEFT JOIN` on a one-row anchor is what keeps the result shape total: the
+   * statement returns exactly one row whether or not the UPDATE matched, with the
+   * user columns all `NULL` when it did not.
    *
    * `updated_at` moves with the value rather than being left behind: the row did
    * change, and a timestamp that lies about that is worse than no timestamp.
@@ -172,22 +201,32 @@ export class PgIdentityAdapter implements IdentityPort {
     assertValidDateOfBirth(dateOfBirth);
     assertValidNow(now);
 
-    const updated = await this.pool.query<UserRow>(
-      `UPDATE users
-          SET date_of_birth = $2::date, updated_at = $3
-        WHERE id = $1 AND date_of_birth IS NULL
-        RETURNING ${selectUserColumns()}`,
+    const result = await this.pool.query<ConditionalUpdateRow>(
+      `WITH updated AS (
+         UPDATE users
+            SET date_of_birth = $2::date, updated_at = $3
+          WHERE id = $1 AND date_of_birth IS NULL
+          RETURNING ${selectUserColumns()}
+       )
+       SELECT EXISTS (SELECT 1 FROM users WHERE id = $1) AS user_exists, u.*
+         FROM (SELECT 1) AS anchor
+         LEFT JOIN updated u ON true`,
       [userId, dateOfBirth, now],
     );
-    const row = updated.rows[0];
-    if (row !== undefined) {
-      return { ok: true, user: toUser(row) };
+    const row = result.rows[0];
+    if (row === undefined) {
+      // The anchor guarantees a row; losing it means the statement did not run the
+      // way this adapter believes, and a fault must not be laundered into a normal
+      // outcome (the collapse `heartbeat-port.ts` forbids).
+      throw new Error('conditional date_of_birth UPDATE produced no result row');
     }
-
-    // Zero rows means one of exactly two things, and the caller needs to know
-    // which: an already-complete profile is a 409, a vanished one is a 401.
-    const existing = await this.findUserById(userId);
-    return { ok: false, reason: existing === null ? 'UserNotFound' : 'AlreadyRecorded' };
+    if (row.id !== null) {
+      // The LEFT JOIN either produced the whole updated row or produced none of
+      // it; `id` is `NOT NULL` in the schema, so it is the one column that
+      // distinguishes the two cases.
+      return { ok: true, user: toUser(row as UserRow) };
+    }
+    return { ok: false, reason: row.user_exists ? 'AlreadyRecorded' : 'UserNotFound' };
   }
 
   private async findByIdentity(provider: string, providerUserId: string): Promise<User | null> {

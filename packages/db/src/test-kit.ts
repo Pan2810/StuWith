@@ -435,6 +435,47 @@ export function runIdentityPortContract(options: IdentityPortContractOptions): v
         expect((await p.findUserById(userId))?.dateOfBirth).toBe('1999-04-02');
       });
 
+      /**
+       * The read path nothing covered: a SECOND login.
+       *
+       * Every other example here reaches a user through the INSERT branch of
+       * `findOrCreateByIdentity` or through `findUserById`, and neither of those
+       * builds the join. The second login goes through `findByIdentity`, which is
+       * the one query that qualifies the select list with a table alias — and the
+       * date of birth is the one column in that list that is not a bare column
+       * name but a `to_char(...) AS date_of_birth`.
+       *
+       * Losing that alias is a one-word edit: Postgres then names the output column
+       * `to_char`, `row.date_of_birth` is `undefined`, and nothing typechecks
+       * differently because the row object comes from a driver. The user handed
+       * back from every subsequent login would carry no date of birth, `/me` would
+       * report the profile as incomplete for ever — or, with the fail-OPEN
+       * `isProfileComplete` this story shipped with, as COMPLETE for ever, which is
+       * worse: the endpoint then refuses the one write the person is allowed.
+       */
+      it('keeps the date of birth on the user a SECOND login returns', async () => {
+        const p = await port();
+        const first = await p.findOrCreateByIdentity(googleIdentity(), t0);
+        await p.recordDateOfBirth(first.user.id, '1999-04-02', t1);
+
+        const again = await p.findOrCreateByIdentity(googleIdentity(), t1);
+
+        expect(again.created).toBe(false);
+        expect(again.user.id).toBe(first.user.id);
+        expect(again.user.dateOfBirth).toBe('1999-04-02');
+      });
+
+      it('reports a brand-new profile through the same path as null, not undefined', async () => {
+        // The other half: an absent value has to be `null` on every read path, so
+        // "not declared yet" is one value rather than two that behave differently.
+        const p = await port();
+        await p.findOrCreateByIdentity(googleIdentity(), t0);
+
+        const again = await p.findOrCreateByIdentity(googleIdentity(), t1);
+
+        expect(again.user.dateOfBirth).toBeNull();
+      });
+
       it('reads back exactly the day that was written, with no time zone shift', async () => {
         // The `pg` driver parses a `date` column into a Date at LOCAL midnight, so
         // an adapter that let a Date through would return the previous day for

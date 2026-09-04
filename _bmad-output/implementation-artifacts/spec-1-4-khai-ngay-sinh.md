@@ -4,7 +4,7 @@ type: 'feature'
 created: '2026-09-04'
 baseline_commit: '8fdb2ce044486398d43126cd6c2176e3102a17c1'
 status: 'in-review'
-review_loop_iteration: 0
+review_loop_iteration: 1
 context:
   - '{project-root}/_bmad-output/implementation-artifacts/epic-1-context.md'
   - '{project-root}/AGENTS.md'
@@ -100,6 +100,8 @@ context:
 - [x] `apps/api/src/auth/` -- Endpoint khai ngày sinh và cờ trạng thái trên `/v1/auth/me`; ngày sinh không đi ra ngoài
 - [x] `apps/api/src/logging.test.ts` -- Chạy process thật, khai một ngày sinh qua HTTP, khẳng định không dòng log nào chứa giá trị đó **kèm** assertion dương chứng minh log không rỗng
 - [x] `apps/web/src/app/<route>/` -- Màn khai ngày sinh: hàm thuần giữ mọi quyết định, component không effect, gọi qua seam
+- [ ] `apps/web/src/app/dang-nhap/` -- **Dẫn người chưa khai tới màn khai.** Một màn hình tồn tại mà không ai tới được thì AC "không có đường bỏ qua bước khai" không đạt — và không cổng nào thấy, vì màn hình render hoàn hảo khi test riêng
+- [ ] `apps/web/src/app/` -- Test buộc hằng `DATE_OF_BIRTH_PATHNAME` khớp thư mục route có thật; một hằng chỉ được so với hằng khác là một hằng trỏ vào 404 mà không ai biết
 - [x] `apps/web/src/app/<route>/*.test.ts(x)` -- Phủ các hàng Matrix phía web bằng `renderToStaticMarkup` và hàm thuần
 - [x] `.env.example` -- Chỉ chạm nếu thực sự thêm biến; mặc định story này **không** thêm
 
@@ -110,6 +112,23 @@ context:
 - Given `pnpm run dep-check`, when chạy, then không vi phạm nào — `packages/domain` vẫn không chạm hạ tầng, `apps/web` vẫn chỉ chạm `packages/contracts`.
 
 ## Spec Change Log
+
+### Vòng 1 — 2026-09-04
+
+**Finding kích hoạt:** không có gì trong `apps/web/src` hay `apps/api/src` trỏ tới `/khai-ngay-sinh`. Màn hình tồn tại, render đúng, API chạy đúng, 1460 test xanh — và cách duy nhất tới được nó là tự gõ URL. AC "bắt buộc khai ngày sinh, không bỏ qua được" do đó không đạt. Cả ba lớp review độc lập cùng chỉ ra.
+
+**Đã sửa gì trong spec:** thêm hai task vào mục Tasks (ngoài khối frozen) — dẫn người chưa khai tới màn khai, và một test buộc hằng route khớp thư mục thật. Mục Tasks cũ chỉ nói "màn khai ngày sinh" mà không nói ai dẫn người dùng tới đó, nên agent làm đúng chữ và thiếu ý.
+
+**Trạng thái xấu đã tránh:** một story đóng lại với mọi cổng xanh trong khi tính năng chính không tới được — và Story 1.5 sau đó dựng cổng chặn tuổi trên một trường mà không ai có đường điền.
+
+**KEEP — phải sống sót qua mọi lần re-derive:**
+- `NULL` là biểu diễn duy nhất của "chưa khai"; không thêm cột `profile_completed`.
+- Ghi một lần nằm trong chính câu `UPDATE ... WHERE date_of_birth IS NULL`, không phải ở tầng ứng dụng.
+- Tuổi tính theo ngày lịch UTC qua `ClockPort`; sai muộn là chiều an toàn, và cả ca 29/02 lẫn ca UTC+7 đều phải giữ test.
+- Ngày sinh lưu dạng `date`, đọc lại bằng `to_char`; không bao giờ rời khỏi `apps/api`.
+- Parser test theo **lớp**, kèm đối chứng dương để luật không quá rộng.
+- Ngưỡng tuổi là hằng có tên và phép tính không đặc biệt hoá cho số 18.
+
 
 - **2026-09-04 — thêm `auth_date_of_birth` vào `RATE_LIMIT_ACTIONS`.** Không nằm trong danh sách Ask First, và là điều kiện để "chỉ cần không phá" decorator rate-limit thành sự thật: `rate-limit.flow.test.ts` khẳng định *mọi* route của `AuthController` trừ `logout` mang một action. Một route mới không có decorator sẽ làm test đó đỏ, và cách duy nhất khác — đặt endpoint ở controller khác — chỉ là né phép kiểm chứ không giữ được bất biến. Kênh là `json` (client gọi bằng `fetch`, đọc được envelope). Không thêm biến môi trường; ngưỡng và cửa sổ dùng lại các knob sẵn có.
 - **2026-09-04 — đóng cả *lớp* lỗ rò camelCase trong `LOG_REDACT_PATHS`, không chỉ `'*.dateOfBirth'`.** Task chỉ yêu cầu một đường, nhưng khi viết test theo lớp ("mỗi trường PII phải có cả hai cách viết") thì `'*.accessToken'`, `'*.refreshToken'`, `'*.providerId'` cùng thiếu — cùng một khiếm khuyết, cùng một nguyên nhân. Vá đúng ví dụ được báo là đúng kiểu thất bại `AGENTS.md` ghi lại ở danh sách trusted proxy. Thay đổi thuần cộng thêm: chỉ xoá thêm trường khỏi log, không thêm trường nào.

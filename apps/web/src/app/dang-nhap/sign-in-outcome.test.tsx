@@ -1,7 +1,9 @@
 import {
+  DATE_OF_BIRTH_PATHNAME,
   MAX_SIGN_IN_RETRY_AFTER_SECONDS,
   RATE_LIMITED_MESSAGE,
   SIGN_IN_OUTCOMES,
+  type CurrentUser,
   type SignInOutcome,
 } from '@stuwith/contracts';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -17,10 +19,14 @@ import {
   type CountdownClock,
 } from './countdown-text';
 import {
+  DECLARE_DATE_OF_BIRTH_LINK,
+  DECLARE_DATE_OF_BIRTH_PROMPT,
   MAX_OPTIONS_HIDDEN_SECONDS,
   OUTCOME_NOTICES,
   SignInPanel,
+  SignedInPanel,
   nextLocationAfterOutcome,
+  signedInNextStep,
   resolveSignInOutcome,
   signInNoticeFromMe,
   signInOptionsVisible,
@@ -779,5 +785,74 @@ describe('the panel is one decision, not two', () => {
     );
 
     expect(html).toContain('Đang kiểm tra phiên');
+  });
+});
+
+/**
+ * H1 — the declaration screen was reachable only by typing its URL.
+ *
+ * Every piece of Story 1.4 was correct in isolation: the route constant existed,
+ * the screen rendered, the endpoint answered over real HTTP, and 1460 tests were
+ * green. Nothing in `apps/web` or `apps/api` navigated to `/khai-ngay-sinh`, so
+ * the acceptance criterion "there is no way past the declaration step" was not
+ * met and no gate could say so.
+ *
+ * These tests render the real markup. Deleting the link, dropping the branch, or
+ * flipping the decision to `profile_completed === false ? none : declare` all fail
+ * here.
+ */
+describe('a signed-in profile is led to the declaration screen', () => {
+  const signedIn = (overrides: Partial<CurrentUser> = {}): CurrentUser => ({
+    id: '019200f0-0000-7000-8000-000000000001',
+    display_name: 'An Nguyen',
+    avatar_url: null,
+    role: 'user',
+    ...overrides,
+  });
+
+  const renderSignedIn = (user: CurrentUser): string =>
+    renderToStaticMarkup(<SignedInPanel user={user} onSignOut={() => undefined} />);
+
+  it('asks somebody who has not declared to, and names the contract route', () => {
+    expect(signedInNextStep(signedIn({ profile_completed: false }))).toEqual({
+      kind: 'declare-date-of-birth',
+      href: DATE_OF_BIRTH_PATHNAME,
+    });
+  });
+
+  it('asks nothing of a completed profile', () => {
+    expect(signedInNextStep(signedIn({ profile_completed: true }))).toEqual({ kind: 'none' });
+  });
+
+  it('treats an ABSENT flag as not declared — the fail-closed reading', () => {
+    // A client talking to a deployment that cannot answer must show the step, not
+    // hide it: showing it costs a page somebody can leave, hiding it is permanent.
+    expect(signedInNextStep(signedIn()).kind).toBe('declare-date-of-birth');
+  });
+
+  it('renders a real link to the declaration route, not just a sentence', () => {
+    const html = renderSignedIn(signedIn({ profile_completed: false }));
+
+    expect(html).toContain(`href="${DATE_OF_BIRTH_PATHNAME}"`);
+    expect(html).toContain(DECLARE_DATE_OF_BIRTH_LINK);
+    expect(html).toContain(DECLARE_DATE_OF_BIRTH_PROMPT);
+  });
+
+  it('offers no such link once the profile is complete', () => {
+    const html = renderSignedIn(signedIn({ profile_completed: true }));
+
+    expect(html).not.toContain(DATE_OF_BIRTH_PATHNAME);
+    expect(html).not.toContain(DECLARE_DATE_OF_BIRTH_PROMPT);
+    // And the panel is not simply empty, which would satisfy the line above.
+    expect(html).toContain('An Nguyen');
+  });
+
+  it('keeps the way out available to somebody who has not declared', () => {
+    // The story's matrix row: an incomplete profile must not be locked out of its
+    // own session. Sign-out sits beside the outstanding step, never behind it.
+    const html = renderSignedIn(signedIn({ profile_completed: false }));
+
+    expect(html).toContain('Đăng xuất');
+    expect(html).toContain('An Nguyen');
   });
 });

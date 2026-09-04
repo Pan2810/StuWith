@@ -14,6 +14,7 @@ import {
   isCalendarDate,
   isOver18,
   isProfileCompleted,
+  parseCurrentUser,
   parseDateOfBirth,
   parseInternalReturnPath,
 } from './auth';
@@ -427,6 +428,60 @@ describe('currentUserSchema still refuses to carry a date of birth', () => {
     expect(Object.keys(parsed)).not.toContain('date_of_birth');
   });
 
+  /**
+   * The client half of the same invariant, and the one that was missing.
+   *
+   * `apps/web` used to write `(await response.json()) as CurrentUser` on both
+   * screens: the API parses the projection on the way OUT so that adding a column
+   * cannot publish it, and then the client believed any 200 body at all. A cast
+   * is not a check, and the field it matters most for is `is_over_18` — a client
+   * that reads a string there is a control protecting minors reading whatever it
+   * was handed.
+   */
+  describe('parseCurrentUser — a 200 body is judged, never cast', () => {
+    const valid = {
+      id: '019200f0-0000-7000-8000-000000000001',
+      display_name: 'An Nguyen',
+      avatar_url: null,
+      role: 'user',
+      profile_completed: true,
+      is_over_18: true,
+    };
+
+    it('returns the profile for a body that IS one', () => {
+      expect(parseCurrentUser(valid)).toEqual(valid);
+    });
+
+    it('strips a date of birth even here, so a client cannot hold one either', () => {
+      const parsed = parseCurrentUser({ ...valid, date_of_birth: '1999-04-02' });
+      expect(JSON.stringify(parsed)).not.toContain('1999-04-02');
+    });
+
+    it.each([
+      ['null', null],
+      ['a string', 'nope'],
+      ['an empty object', {}],
+      ['a 204 body read as JSON', undefined],
+      ['a role outside the closed set', { ...valid, role: 'superuser' }],
+      ['an id that is not a uuid', { ...valid, id: 'me' }],
+      ['a flag that is a string rather than a boolean', { ...valid, is_over_18: 'yes' }],
+      ['an error envelope, which is what a refused call actually returns', {
+        error: { code: 'unauthenticated', message: 'no' },
+      }],
+    ])('returns null for %s rather than a profile-shaped lie', (_label, body) => {
+      expect(parseCurrentUser(body)).toBeNull();
+    });
+
+    it('never throws, whatever it is handed', () => {
+      // Same contract as every other parser in this file: `null` is the answer, an
+      // exception is not — a screen that crashes on a bad body tells nobody
+      // anything.
+      for (const body of [Number.NaN, [], () => undefined, new Date(), Symbol('x')]) {
+        expect(() => parseCurrentUser(body)).not.toThrow();
+      }
+    });
+  });
+
   it('accepts the Story 1.2 shape unchanged, so the new fields are compatible', () => {
     const parsed = currentUserSchema.safeParse({
       id: '019200f0-0000-7000-8000-000000000001',
@@ -450,12 +505,38 @@ describe('the two Story 1.4 paths are distinct and go to different places', () =
     expect(DATE_OF_BIRTH_PATHNAME).not.toBe(SIGN_IN_PATHNAME);
   });
 
-  it('says nothing about the age threshold in either message', () => {
-    // The threshold is not the visitor's business, and a sentence carrying it
-    // tells somebody who was refused exactly which year to type instead.
+  /**
+   * The threshold is not the visitor's business, and a sentence carrying it tells
+   * somebody who was refused exactly which year to type instead.
+   *
+   * The rule is over AGE VOCABULARY rather than over two raw substrings. `/18/`
+   * and `/tuổi/i` were both too narrow — "trên 18", "đủ tuổi", "vị thành niên" all
+   * passed — and, wherever the same check was applied to a whole response body
+   * rather than to a constant, too wide: an id or a date containing those two
+   * digits went red for no reason.
+   */
+  const AGE_VOCABULARY = [
+    '18',
+    'tuổi',
+    'đủ tuổi',
+    'trên 18',
+    'dưới 18',
+    'vị thành niên',
+    'người lớn',
+    'trẻ em',
+    'trưởng thành',
+  ];
+
+  it.each(AGE_VOCABULARY)('says nothing about "%s" in either message', (word) => {
     for (const message of [DATE_OF_BIRTH_INVALID_MESSAGE, DATE_OF_BIRTH_ALREADY_SET_MESSAGE]) {
-      expect(message).not.toMatch(/18/);
-      expect(message).not.toMatch(/tuổi/i);
+      expect(message.toLowerCase()).not.toContain(word.toLowerCase());
     }
+  });
+
+  it('still says something, so the rule above is not passing on empty strings', () => {
+    // Every "must not contain" needs a positive counterpart; two empty constants
+    // would satisfy the whole block above perfectly.
+    expect(DATE_OF_BIRTH_INVALID_MESSAGE.length).toBeGreaterThan(20);
+    expect(DATE_OF_BIRTH_ALREADY_SET_MESSAGE.length).toBeGreaterThan(20);
   });
 });

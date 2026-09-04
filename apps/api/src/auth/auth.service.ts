@@ -666,22 +666,27 @@ export class AuthService {
       return { kind: 'json', status: 401, body: unauthenticated(), cookies: [] };
     }
 
+    // ONE reading of the clock for the whole request, not one per use.
+    //
+    // It was two: `parseDateOfBirth(submitted, this.clock.now())` and then
+    // `recordDateOfBirth(..., this.clock.now())`. Two instants for one request, in
+    // a story whose central principle is that a value must not have two readings —
+    // and the gap between them straddles a midnight, so a declaration made in that
+    // millisecond is judged against one day and stamped with the next.
+    const now = this.clock.now();
+
     // `unknown` all the way in: a JSON body is whatever the caller sent, and
     // `parseDateOfBirth` is total over `unknown` for exactly this reason.
     const submitted =
       body !== null && typeof body === 'object'
         ? (body as Record<string, unknown>)[DATE_OF_BIRTH_FIELD]
         : undefined;
-    const dateOfBirth = parseDateOfBirth(submitted, this.clock.now());
+    const dateOfBirth = parseDateOfBirth(submitted, now);
     if (dateOfBirth === null) {
       return { kind: 'json', status: 400, body: invalidDateOfBirth(), cookies: [] };
     }
 
-    const outcome = await this.identity.recordDateOfBirth(
-      user.id,
-      dateOfBirth,
-      this.clock.now(),
-    );
+    const outcome = await this.identity.recordDateOfBirth(user.id, dateOfBirth, now);
     if (!outcome.ok) {
       return outcome.reason === 'UserNotFound'
         ? { kind: 'json', status: 401, body: unauthenticated(), cookies: [] }

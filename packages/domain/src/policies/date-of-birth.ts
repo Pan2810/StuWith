@@ -1,4 +1,4 @@
-import { parseDateOfBirth } from '@stuwith/contracts';
+import { isCalendarDate, parseDateOfBirth } from '@stuwith/contracts';
 import type { ClockPort } from '../ports/clock-port';
 
 /**
@@ -37,9 +37,32 @@ import type { ClockPort } from '../ports/clock-port';
  */
 export const ADULT_AGE_YEARS = 18;
 
-/** A profile is complete exactly when it carries a date of birth. Nothing else. */
+/**
+ * A profile is complete exactly when it carries a date of birth. Nothing else.
+ *
+ * ## Why this asks what the value IS rather than what it is not
+ *
+ * It used to read `user.dateOfBirth !== null`, which is fail-OPEN and contradicted
+ * the docblock three paragraphs above: `undefined` is not `null`, so a profile
+ * whose date of birth never arrived read as COMPLETE — the one answer that sends
+ * somebody past the declaration screen for ever, since the endpoint refuses a
+ * second write.
+ *
+ * `undefined` is reachable, and not hypothetically. `selectUserColumns` in
+ * `packages/db` reads the column as `to_char(date_of_birth, 'YYYY-MM-DD') AS
+ * date_of_birth`; drop that alias and Postgres names the output column `to_char`,
+ * so `row.date_of_birth` — and therefore `user.dateOfBirth` — is `undefined` with
+ * every type still satisfied, because the row object is shaped by a runtime driver
+ * rather than by `tsc`.
+ *
+ * So the question is asked positively, through the same `isCalendarDate` both
+ * adapters validate writes with (AD-13, one rule): only a string that names a real
+ * calendar day counts as a declaration. `null`, `undefined`, `''` and anything
+ * hand-edited into a shape the product never writes all answer "not declared yet",
+ * which is the direction that merely repeats the question instead of closing it.
+ */
 export function isProfileComplete(user: { readonly dateOfBirth: string | null }): boolean {
-  return user.dateOfBirth !== null;
+  return isCalendarDate(user.dateOfBirth);
 }
 
 /**

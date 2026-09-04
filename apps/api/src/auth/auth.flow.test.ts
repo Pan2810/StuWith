@@ -13,8 +13,10 @@ import {
   currentUserSchema,
   type SignInOutcome,
 } from '@stuwith/contracts';
+import { RequestMethod } from '@nestjs/common';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { SIGN_IN_FAILURE_REASONS } from './audit';
+import { AuthController } from './auth.controller';
 import { CookieJar, createAuthHarness, type AuthHarness } from './__testing__/auth-harness';
 
 /**
@@ -1531,10 +1533,31 @@ describe('POST /v1/auth/date-of-birth', () => {
   const me = async (jar: CookieJar) =>
     currentUserSchema.parse(await (await harness.request('/v1/auth/me', { jar })).json());
 
+  const anonymousJar = (): CookieJar => new CookieJar();
+
   it('is mounted at the path the contract declares', () => {
-    // The controller composes it from `@Controller('v1/auth')` + `@Post(...)`,
-    // so the two halves can drift from the constant `apps/web` navigates to.
-    expect(AUTH_DATE_OF_BIRTH_PATH).toBe('/v1/auth/date-of-birth');
+    /**
+     * Read off the DECORATORS, not compared with a literal.
+     *
+     * The previous version of this test asserted `AUTH_DATE_OF_BIRTH_PATH ===
+     * '/v1/auth/date-of-birth'` — a constant against a copy of itself, which says
+     * nothing about where Nest actually mounted the handler. The controller
+     * composes the route from `@Controller('v1/auth')` and `@Post('date-of-birth')`
+     * and either half can be edited alone; that is the drift this claims to catch,
+     * so it is the thing it now reads.
+     */
+    const controllerPath = Reflect.getMetadata('path', AuthController) as string;
+    const methodPath = Reflect.getMetadata(
+      'path',
+      (AuthController.prototype as unknown as Record<string, object>)['recordDateOfBirth'],
+    ) as string;
+
+    expect(`/${controllerPath}/${methodPath}`).toBe(AUTH_DATE_OF_BIRTH_PATH);
+    // And it is a POST, with no PATCH or PUT beside it: the value is written once
+    // and changing it goes through support.
+    expect(Reflect.getMetadata('method', (AuthController.prototype as unknown as Record<string, object>)['recordDateOfBirth'])).toBe(
+      RequestMethod.POST,
+    );
   });
 
   it('Matrix row: a brand-new profile is reported as NOT completed', async () => {
@@ -1640,11 +1663,73 @@ describe('POST /v1/auth/date-of-birth', () => {
       declare(jar, { date_of_birth: '1970-01-01' }),
     ]);
 
-    const statuses = [first.status, second.status].sort();
+    // Numeric sort. The default is LEXICOGRAPHIC — `[200, 409].sort()` is right
+    // here only by the accident that both are three digits and sort the same way
+    // as strings; `[409, 1000]` would not.
+    const statuses = [first.status, second.status].sort((a, b) => a - b);
+
+    // A 409 is not an error the caller did something wrong with — it is the normal
+    // answer to "somebody else got there first", and it must never be a 5xx. The
+    // assertion below used to be a separate `not.toContain(500)` sitting under an
+    // exact `toEqual([200, 409])`, which cannot fail unless the line above already
+    // has.
     expect(statuses).toEqual([200, 409]);
-    // A 409 is not an error the caller did something wrong with — it is the
-    // normal answer to "somebody else got there first", and it must never be a 5xx.
-    expect(statuses).not.toContain(500);
+  });
+
+  /**
+   * H2 — "no audit row" is a Never in the spec, and nothing held it.
+   *
+   * `audit_events` has no `DELETE` for any role and its `metadata` column has no
+   * key whitelist, so a row carrying a date of birth is permanently uncorrectable.
+   * The whole `POST /v1/auth/date-of-birth` suite touched `harness.audit` zero
+   * times, which means adding `this.audit.record(...)` with the declared date
+   * inside `recordDateOfBirth` passed every gate: `currentUserSchema` still strips
+   * the field from the response, and `InMemoryAuditAdapter` does not go through
+   * pino, so the log suite could not see it either.
+   *
+   * Both halves are needed. "The audit contains no date" is trivially true of an
+   * empty audit, so the count from the login is asserted first.
+   */
+  describe('Never: the declaration writes no audit row', () => {
+    it('leaves the audit exactly as the login left it', async () => {
+      const { jar } = await harness.login('google', googleProfile);
+      const before = harness.audit.all().length;
+
+      // A positive control on the same object: the login DID write, so a suite
+      // asserting emptiness is not passing on an audit nobody wired up.
+      expect(before).toBeGreaterThan(0);
+      expect(harness.audit.byAction('auth.signed_in').length).toBe(1);
+
+      await declare(jar, { date_of_birth: '1999-04-02' });
+
+      expect(harness.audit.all().length, 'the declaration must add no audit row').toBe(before);
+    });
+
+    it('has no audit row anywhere carrying the declared date', async () => {
+      const { jar } = await harness.login('google', googleProfile);
+      const declared = '1999-04-02';
+
+      await declare(jar, { date_of_birth: declared });
+      // The refused second attempt too: a refusal is exactly the event somebody
+      // would be tempted to record, and it carries a date of its own.
+      await declare(jar, { date_of_birth: '1970-01-01' });
+
+      const serialised = JSON.stringify(harness.audit.all());
+      expect(serialised.length).toBeGreaterThan(2);
+      for (const leak of [declared, '1999', '1970-01-01', '1970', 'date_of_birth', 'dateOfBirth']) {
+        expect(serialised, `the audit must not carry ${leak}`).not.toContain(leak);
+      }
+    });
+
+    it('records nothing for a refused declaration either', async () => {
+      const { jar } = await harness.login('google', googleProfile);
+      const before = harness.audit.all().length;
+
+      await declare(jar, { date_of_birth: '2026-02-30' });
+      await declare(anonymousJar(), { date_of_birth: '1999-04-02' });
+
+      expect(harness.audit.all().length).toBe(before);
+    });
   });
 
   describe('Matrix row: input that is not a date of birth is refused, and nothing is stored', () => {
@@ -1695,9 +1780,16 @@ describe('POST /v1/auth/date-of-birth', () => {
         await (await declare(jar, { date_of_birth: '2026-02-30' })).json(),
       );
 
+      // The message is the contract's constant, byte for byte — which is where the
+      // "says nothing about the threshold" rule is enforced, over the whole age
+      // vocabulary, in `packages/contracts/src/auth.test.ts`. Repeating a raw
+      // `not.toContain('18')` here would be both weaker (it misses "trên 18", "đủ
+      // tuổi", "vị thành niên") and unreliable, since it is applied to bodies that
+      // carry uuids and dates.
       expect(envelope.error.message).toBe(DATE_OF_BIRTH_INVALID_MESSAGE);
-      // No parser vocabulary, no field name, no age.
-      for (const leak of ['parse', 'YYYY', 'zod', 'date_of_birth', '18']) {
+      // What is worth checking HERE is that no parser or framework vocabulary
+      // leaked into the envelope on the way out of this process.
+      for (const leak of ['parse', 'YYYY', 'zod', 'date_of_birth', 'Fastify']) {
         expect(envelope.error.message).not.toContain(leak);
       }
       // And no `details`, which is where diagnostics leak out of an envelope.

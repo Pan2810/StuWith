@@ -109,6 +109,15 @@ describe('apps/api logger wiring (AD-15)', () => {
     ['date_of_birth', '1999-04-02'],
     ['access_token', 'ya29.leak'],
     ['provider_id', 'google-oauth2|1234567890'],
+    // The camelCase halves, run through a REAL pino rather than only checked for
+    // membership in an array. `packages/domain`'s `User` carries `dateOfBirth`,
+    // and that object — not a request body — is what `logger.info({ user })`
+    // writes; until this table had these four rows, no camelCase path had ever
+    // been exercised by a logger.
+    ['dateOfBirth', '1999-04-02'],
+    ['accessToken', 'ya29.leak'],
+    ['refreshToken', 'refresh-leak-me'],
+    ['providerId', 'google-oauth2|1234567890'],
   ])('never writes a %s one level down in the payload', (field, value) => {
     const { logger, lines } = loggerUnderTest();
 
@@ -118,6 +127,33 @@ describe('apps/api logger wiring (AD-15)', () => {
     expect(output).not.toContain(value);
     // The id is not PII and must still be there — otherwise this test would pass
     // just as well against a logger that writes nothing at all.
+    expect(output).toContain('u-1');
+  });
+
+  /**
+   * The one two-level shape Story 1.4 created, run through a real pino.
+   *
+   * `RecordDateOfBirthResult` is `{ ok: true, user: User }`, so `logger.info({
+   * outcome })` puts the date of birth at `outcome.user.dateOfBirth` — two levels
+   * down, which the `*.` wildcard cannot reach. `*.user.dateOfBirth` is the named
+   * path that does. Nothing in `apps/api` logs that object today; the point is
+   * that the return type made the shape expressible, and the covering path is
+   * cheaper than trusting nobody writes the line. Depth beyond this is Story 1.7's
+   * whitelist serializer and is recorded in `deferred-work.md`.
+   */
+  it.each([
+    ['date_of_birth' as const],
+    ['dateOfBirth' as const],
+  ])('never writes a %s TWO levels down, inside a port result', (field) => {
+    const { logger, lines } = loggerUnderTest();
+
+    logger.info(
+      { outcome: { ok: true, user: { id: 'u-1', [field]: '1999-04-02' } } },
+      'date of birth recorded',
+    );
+
+    const output = lines.join('');
+    expect(output).not.toContain('1999-04-02');
     expect(output).toContain('u-1');
   });
 

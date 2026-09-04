@@ -2,12 +2,16 @@ import {
   DATE_OF_BIRTH_ALREADY_SET_MESSAGE,
   DATE_OF_BIRTH_FIELD,
   DATE_OF_BIRTH_INVALID_MESSAGE,
+  MIN_DATE_OF_BIRTH_YEAR,
+  RATE_LIMITED_MESSAGE,
   SIGN_IN_PATHNAME,
   isProfileCompleted,
   parseDateOfBirth,
+  parseSignInRetryAfterSeconds,
   type CurrentUser,
 } from '@stuwith/contracts';
 import type { FormEvent } from 'react';
+import { countdownLabel } from '../dang-nhap/countdown-text';
 
 /**
  * Everything the date-of-birth screen DECIDES, kept out of `page.tsx`.
@@ -114,11 +118,58 @@ export type DateOfBirthSubmission =
   | { readonly kind: 'send'; readonly value: string }
   | { readonly kind: 'invalid'; readonly message: string };
 
-export function dateOfBirthSubmission(raw: unknown, today: Date): DateOfBirthSubmission {
-  const parsed = parseDateOfBirth(raw, today);
+/**
+ * The instant this screen asks the shared parser about, and it is deliberately
+ * NOT the browser's idea of now.
+ *
+ * `parseDateOfBirth` refuses a day after `today`, and that half of the rule needs
+ * a trustworthy clock. The browser's is not one: a machine whose date is wrong —
+ * a dead CMOS battery, a deliberately shifted clock, a phone that has not synced —
+ * would refuse a perfectly good date of birth ON THE SPOT, with the exact sentence
+ * a real refusal carries, and the request would never reach the server to be
+ * judged by the `ClockPort` that is authoritative. The person would have no way to
+ * tell the two apart and no way through.
+ *
+ * So the client asks the same rule with the one instant that cannot make the
+ * answer wrong. Everything the format rule decides without a clock — the shape,
+ * whether the string names a real day, the year floor — still applies here and
+ * still saves a round trip. "Is this in the future" is left to `apps/api`, which
+ * refuses it with the same sentence, from a clock this product controls.
+ *
+ * The client check is therefore a strict SUPERSET of what the server accepts,
+ * which is the only safe direction for a pre-flight: it can never accept something
+ * the server would refuse, and it can never refuse something the server would
+ * accept.
+ */
+const NO_FUTURE_CHECK = new Date(8_640_000_000_000_000);
+
+export function dateOfBirthSubmission(raw: unknown): DateOfBirthSubmission {
+  const parsed = parseDateOfBirth(raw, NO_FUTURE_CHECK);
   return parsed === null
     ? { kind: 'invalid', message: DATE_OF_BIRTH_INVALID_MESSAGE }
     : { kind: 'send', value: parsed };
+}
+
+/**
+ * What the date picker offers, which is a convenience and never a control.
+ *
+ * `min` comes from the contract's own plausibility floor and needs no clock.
+ * `max` is today as the browser sees it — good enough to stop the picker offering
+ * tomorrow, and deliberately not load-bearing: the value is judged by
+ * {@link dateOfBirthSubmission} and then again by `apps/api`. An unusable clock
+ * simply produces no `max` rather than a bound nobody can satisfy.
+ */
+export function dateOfBirthInputBounds(today: Date): {
+  readonly min: string;
+  readonly max: string | undefined;
+} {
+  const min = `${String(MIN_DATE_OF_BIRTH_YEAR).padStart(4, '0')}-01-01`;
+  if (!(today instanceof Date) || Number.isNaN(today.getTime())) {
+    return { min, max: undefined };
+  }
+  const month = String(today.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(today.getUTCDate()).padStart(2, '0');
+  return { min, max: `${String(today.getUTCFullYear()).padStart(4, '0')}-${month}-${day}` };
 }
 
 /** The request body, built in one place so the field name cannot be typed twice. */
@@ -140,11 +191,33 @@ export function dateOfBirthRequestBody(value: string): string {
  * screen whose job is already done — which is what happens if two tabs are open,
  * or if a submit is double-tapped.
  */
+/**
+ * A message on the screen, and the wait that belongs to it.
+ *
+ * One value rather than two, for the reason `SignInNotice` gives about itself: a
+ * "please wait" sentence and the number of seconds are one fact, and while they
+ * were two pieces of state either could be dropped and leave a lock message with
+ * no clock in it.
+ */
+export interface DeclarationNotice {
+  readonly message: string;
+  /** `null` means "no clock", never "zero". */
+  readonly retryAfterSeconds: number | null;
+}
+
 export type DeclarationOutcome =
   | { readonly kind: 'declared' }
-  | { readonly kind: 'message'; readonly message: string };
+  | { readonly kind: 'message'; readonly notice: DeclarationNotice };
 
-export function declarationOutcomeFor(status: number): DeclarationOutcome {
+const notice = (message: string, retryAfterSeconds: number | null = null): DeclarationOutcome => ({
+  kind: 'message',
+  notice: { message, retryAfterSeconds },
+});
+
+export function declarationOutcomeFor(
+  status: number,
+  retryAfterHeader: string | null = null,
+): DeclarationOutcome {
   switch (status) {
     case 200:
       return { kind: 'declared' };
@@ -153,15 +226,36 @@ export function declarationOutcomeFor(status: number): DeclarationOutcome {
       // The goal state, reached by somebody else's request.
       return { kind: 'declared' };
     case 400:
-      return { kind: 'message', message: DATE_OF_BIRTH_INVALID_MESSAGE };
+      return notice(DATE_OF_BIRTH_INVALID_MESSAGE);
     case 401:
       // The session died between loading this page and submitting it. The seam
       // has already tried a refresh and raised the dialog; this sentence is what
       // is left on the screen underneath it.
-      return { kind: 'message', message: SESSION_LOST_MESSAGE };
+      return notice(SESSION_LOST_MESSAGE);
+    case 429:
+      /**
+       * The route carries `@RateLimited('auth_date_of_birth')` on a `json`
+       * channel, so `429` with a `Retry-After` header is an answer this screen
+       * really receives — it was falling into `default` and reading "thử lại sau
+       * ít phút", which is both vaguer than the truth and an invitation to keep
+       * tapping, and every tap costs another attempt.
+       *
+       * Same sentence and same parser as `/dang-nhap`: `RATE_LIMITED_MESSAGE`
+       * crosses the process boundary from `packages/contracts`, and
+       * `parseSignInRetryAfterSeconds` is what stops a header this product did not
+       * write putting a nonsense number on the screen.
+       */
+      return notice(RATE_LIMITED_MESSAGE, parseSignInRetryAfterSeconds(retryAfterHeader));
     default:
-      return { kind: 'message', message: TRY_AGAIN_MESSAGE };
+      return notice(TRY_AGAIN_MESSAGE);
   }
+}
+
+/** The countdown sentence beside a notice, or `null` when there is no clock. */
+export function declarationWaitLabel(current: DeclarationNotice | null): string | null {
+  return current === null || current.retryAfterSeconds === null
+    ? null
+    : countdownLabel(current.retryAfterSeconds);
 }
 
 /**
@@ -185,6 +279,34 @@ export const TRY_AGAIN_MESSAGE = 'Chưa lưu được. Hãy thử lại sau ít 
 export const PROFILE_UNAVAILABLE_MESSAGE =
   'Chưa đọc được hồ sơ của bạn. Hãy thử lại sau ít phút.';
 
+/**
+ * The way OUT of `unavailable`, which used to be a dead end.
+ *
+ * The branch rendered one `<p role="status">` and nothing else, so the only way
+ * forward was for the person to work out that a page reload might help. A button
+ * that re-reads `/v1/auth/me` is the whole of what was missing, and it is the same
+ * call the page already makes on mount.
+ */
+export const PROFILE_RETRY_LABEL = 'Thử lại';
+
+/** The ids that wire the field to its hint and its error, for a screen reader. */
+export const DATE_OF_BIRTH_INPUT_ID = 'ngay-sinh';
+export const DATE_OF_BIRTH_HINT_ID = 'ngay-sinh-hint';
+export const DATE_OF_BIRTH_ERROR_ID = 'ngay-sinh-loi';
+
+/**
+ * What `aria-describedby` must say, given whether there is a message.
+ *
+ * A pure function because it is the part that is easy to get wrong and impossible
+ * to see: the hint has to stay described even while an error is showing, or the
+ * person hears the complaint and loses the instruction that would fix it.
+ */
+export function dateOfBirthDescribedBy(hasNotice: boolean): string {
+  return hasNotice
+    ? `${DATE_OF_BIRTH_HINT_ID} ${DATE_OF_BIRTH_ERROR_ID}`
+    : DATE_OF_BIRTH_HINT_ID;
+}
+
 /** The label and helper text, in one place so the two cannot drift apart. */
 export const DATE_OF_BIRTH_LABEL = 'Ngày sinh của bạn';
 export const DATE_OF_BIRTH_HINT = 'Chỉ khai một lần. Muốn đổi thì cần liên hệ hỗ trợ.';
@@ -205,17 +327,30 @@ export const DECLARED_HEADING = 'Bạn đã khai ngày sinh';
  */
 export function DateOfBirthPanel({
   state,
-  notice,
+  notice: current,
   submitting,
-  inputName,
+  today,
+  onRetry,
   onSubmit,
 }: {
   readonly state: DateOfBirthScreenState;
-  /** A message from the last attempt, or `null`. */
-  readonly notice: string | null;
+  /** A message from the last attempt, with its wait, or `null`. */
+  readonly notice: DeclarationNotice | null;
   readonly submitting: boolean;
-  /** The form field's name, so `page.tsx` reads back what this rendered. */
-  readonly inputName: string;
+  /**
+   * Today, for the picker's `max` only — never for a verdict.
+   *
+   * Injected rather than read here for the reason `SignInCountdown` takes a
+   * clock: a component that reads the wall clock cannot be rendered at a chosen
+   * instant, so its output cannot be asserted in a project with no DOM.
+   */
+  readonly today: Date;
+  /**
+   * Re-read the profile. REQUIRED, because the `unavailable` branch renders the
+   * button and a branch that renders a button with no handler is the dead end
+   * this parameter exists to remove.
+   */
+  readonly onRetry: () => void;
   /**
    * REQUIRED, even though `renderToStaticMarkup` never calls it.
    *
@@ -228,62 +363,117 @@ export function DateOfBirthPanel({
    */
   readonly onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
-  if (state.kind === 'loading') {
-    return <p>Đang kiểm tra phiên…</p>;
+  const waitLabel = declarationWaitLabel(current);
+  const bounds = dateOfBirthInputBounds(today);
+
+  switch (state.kind) {
+    case 'loading':
+      // `status` like the other two non-form branches. It was the only one without
+      // it, so a screen reader was told about every state of this screen except
+      // the one it starts in.
+      return <p role="status">Đang kiểm tra phiên…</p>;
+
+    case 'unavailable':
+      // `status`, not `alert`: nothing is wrong with what the person did, and
+      // nothing here is urgent enough to interrupt a screen reader mid-sentence.
+      return (
+        <>
+          <p role="status">{PROFILE_UNAVAILABLE_MESSAGE}</p>
+          {/*
+            The way forward, which this branch used to lack entirely. Without it
+            the only move left is a page reload the person has to think of.
+          */}
+          <button type="button" onClick={onRetry}>
+            {PROFILE_RETRY_LABEL}
+          </button>
+        </>
+      );
+
+    case 'signed-out':
+      return (
+        <>
+          <p role="status">Bạn cần đăng nhập trước khi khai ngày sinh.</p>
+          {/*
+            A plain link to the login page, and the route comes from
+            `packages/contracts` rather than from a literal — the same rule that put
+            `SIGN_IN_PATHNAME` there in the first place.
+          */}
+          <a href={SIGN_IN_PATHNAME}>Tới trang đăng nhập</a>
+        </>
+      );
+
+    case 'declared':
+      return (
+        <section>
+          <h2>{DECLARED_HEADING}</h2>
+          {/*
+            What is NOT here is the point: not the date, not the age, not a field to
+            change it. The screen confirms that the step is done and offers no way
+            to redo it, because there is no endpoint that would accept one.
+          */}
+          <p>{DATE_OF_BIRTH_ALREADY_SET_MESSAGE}</p>
+        </section>
+      );
+
+    case 'needs-declaration':
+      return (
+        <form onSubmit={onSubmit}>
+          <label htmlFor={DATE_OF_BIRTH_INPUT_ID}>{DATE_OF_BIRTH_LABEL}</label>
+          {/*
+            `type="date"` so a browser offers its own picker and produces the one
+            format the contract accepts — `YYYY-MM-DD` is exactly what a date
+            input's value is. It is a convenience and never a control:
+            `dateOfBirthSubmission` judges whatever comes out, because a
+            `type="date"` input is a text field to anything that is not a browser.
+
+            `required`, `min` and `max` are the same kind of help: they stop a
+            picker offering tomorrow or the year 1200, and they prove nothing —
+            three layers behind this one refuse those anyway.
+
+            `name` is `DATE_OF_BIRTH_FIELD` directly, not a prop. It used to be
+            passed in by `page.tsx`, which then read the submitted form back with
+            the constant — two halves that had to agree with nothing holding them
+            together, and every test still green if they stopped. Read here, the
+            disagreement is not expressible.
+          */}
+          <input
+            id={DATE_OF_BIRTH_INPUT_ID}
+            name={DATE_OF_BIRTH_FIELD}
+            type="date"
+            required
+            min={bounds.min}
+            max={bounds.max}
+            aria-describedby={dateOfBirthDescribedBy(current !== null)}
+            // Only while a message is on screen, and it is the field's own state:
+            // "unavailable" and "signed out" never render this input at all.
+            aria-invalid={current === null ? undefined : true}
+          />
+          <p id={DATE_OF_BIRTH_HINT_ID}>{DATE_OF_BIRTH_HINT}</p>
+          {current === null ? null : (
+            <p id={DATE_OF_BIRTH_ERROR_ID} role="alert">
+              {current.message}
+              {waitLabel === null ? null : ` ${waitLabel}`}
+            </p>
+          )}
+          <button type="submit" disabled={submitting}>
+            {DATE_OF_BIRTH_SUBMIT}
+          </button>
+        </form>
+      );
+
+    default:
+      /**
+       * A sixth state has to be given a branch, and the compiler is what says so.
+       *
+       * Before this, the form was the fall-through: any state nobody had thought
+       * about rendered the declaration form — including, for a state meaning
+       * "already declared", a field for a value that can no longer be written.
+       * `never` turns adding a state without a branch into a typecheck error.
+       */
+      return exhausted(state);
   }
+}
 
-  if (state.kind === 'unavailable') {
-    // `status`, not `alert`: nothing is wrong with what the person did, and
-    // nothing here is urgent enough to interrupt a screen reader mid-sentence.
-    return <p role="status">{PROFILE_UNAVAILABLE_MESSAGE}</p>;
-  }
-
-  if (state.kind === 'signed-out') {
-    return (
-      <>
-        <p role="status">Bạn cần đăng nhập trước khi khai ngày sinh.</p>
-        {/*
-          A plain link to the login page, and the route comes from
-          `packages/contracts` rather than from a literal — the same rule that put
-          `SIGN_IN_PATHNAME` there in the first place.
-        */}
-        <a href={SIGN_IN_PATHNAME}>Tới trang đăng nhập</a>
-      </>
-    );
-  }
-
-  if (state.kind === 'declared') {
-    return (
-      <section>
-        <h2>{DECLARED_HEADING}</h2>
-        {/*
-          What is NOT here is the point: not the date, not the age, not a field to
-          change it. The screen confirms that the step is done and offers no way
-          to redo it, because there is no endpoint that would accept one.
-        */}
-        <p>{DATE_OF_BIRTH_ALREADY_SET_MESSAGE}</p>
-      </section>
-    );
-  }
-
-  return (
-    <form onSubmit={onSubmit}>
-      <label htmlFor="ngay-sinh">{DATE_OF_BIRTH_LABEL}</label>
-      {/*
-        `type="date"` so a browser offers its own picker and produces the one
-        format the contract accepts — `YYYY-MM-DD` is exactly what a date input's
-        value is. It is a convenience and never a control: `dateOfBirthSubmission`
-        judges whatever comes out, because a `type="date"` input is a text field
-        to anything that is not a browser.
-
-        `required` for the same reason: it helps a person, it proves nothing.
-      */}
-      <input id="ngay-sinh" name={inputName} type="date" required />
-      <p id="ngay-sinh-hint">{DATE_OF_BIRTH_HINT}</p>
-      {notice === null ? null : <p role="alert">{notice}</p>}
-      <button type="submit" disabled={submitting}>
-        {DATE_OF_BIRTH_SUBMIT}
-      </button>
-    </form>
-  );
+function exhausted(state: never): never {
+  throw new Error(`unhandled date-of-birth screen state: ${JSON.stringify(state)}`);
 }

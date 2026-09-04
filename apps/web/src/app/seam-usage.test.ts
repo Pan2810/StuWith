@@ -44,6 +44,22 @@ const APP_ROOT = fileURLToPath(new URL('.', import.meta.url));
  */
 const MAY_CALL_FETCH = ['session-expiry-provider.tsx'];
 
+/**
+ * The seam itself, for the second half of the rule below.
+ *
+ * `session-expiry.ts` builds `/v1` URLs and holds the retry policy, and
+ * `session-expiry-provider.tsx` is the wrapper every screen goes through. Neither
+ * is a screen, so neither can "ask the provider for the seam" — they ARE it.
+ * Everything else that mentions a `/v1` path is a screen and is held to the rule.
+ */
+const SEAM_MODULES = ['session-expiry-provider.tsx', 'session-expiry.ts'];
+
+/**
+ * How a file says it talks to `apps/api`: a `/v1` path written out, or one of the
+ * `*_PATH` constants `packages/contracts` publishes for the same routes.
+ */
+const MENTIONS_API = /\/v1\/|AUTH_[A-Z0-9_]*_PATH\b/;
+
 function sourceFiles(directory: string): string[] {
   const found: string[] = [];
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
@@ -100,14 +116,28 @@ describe('every authenticated call goes through the seam', () => {
 
   /**
    * The other half of the same rule: not calling `fetch` is not enough if a page
-   * never asks for the wrapper either. Every screen that talks to `/v1` is listed
-   * here — a new one that quietly reads `process.env` and builds its own call
-   * would satisfy the sweep above while opting out of the whole feature.
+   * never asks for the wrapper either.
+   *
+   * This half used to be an `it.each` listing two pages by hand — which is a list
+   * of examples, and the third screen nobody remembers to add to it walks straight
+   * through. The sweep above has covered every file since the day it was written;
+   * this one now does too. A screen is "one that talks to `/v1`" if its code —
+   * comments stripped — mentions a `/v1` path or one of the contract's `*_PATH`
+   * constants, which is every way a URL into `apps/api` can be spelled here.
    */
-  it.each([
-    [join('dang-nhap', 'page.tsx')],
-    [join('khai-ngay-sinh', 'page.tsx')],
-  ])('%s asks the provider for the seam and for the API origin', (file) => {
+  const apiCallers = sourceFiles(APP_ROOT)
+    .map((file) => relative(APP_ROOT, file))
+    .filter((file) => !SEAM_MODULES.includes(file))
+    .filter((file) => MENTIONS_API.test(withoutComments(readFileSync(join(APP_ROOT, file), 'utf8'))));
+
+  it('finds the screens that talk to /v1, so an empty list cannot pass', () => {
+    // Without this, a regex that stopped matching would silently turn the rule
+    // below into no rule at all.
+    expect(apiCallers).toContain(join('dang-nhap', 'page.tsx'));
+    expect(apiCallers).toContain(join('khai-ngay-sinh', 'page.tsx'));
+  });
+
+  it.each(apiCallers)('%s asks the provider for the seam and for the API origin', (file) => {
     const source = withoutComments(readFileSync(join(APP_ROOT, file), 'utf8'));
 
     expect(source).toContain('useAuthorizedFetch()');

@@ -27,6 +27,32 @@ describe('isProfileComplete — NULL is the only "not declared yet"', () => {
     expect(isProfileComplete({ dateOfBirth: '2012-01-01' })).toBe(true);
     expect(isProfileComplete({ dateOfBirth: '1999-04-02' })).toBe(true);
   });
+
+  /**
+   * The fail-OPEN hole this function used to have, pinned from the direction it
+   * actually arrives from.
+   *
+   * `!== null` reads `undefined` as "declared", and `undefined` is what a `users`
+   * row carries the moment `selectUserColumns` loses its `AS date_of_birth` alias
+   * — a one-word edit in `packages/db` that no type can see, because the row
+   * object comes from a driver rather than from `tsc`. Reading that as complete
+   * sends somebody past the only screen that could fix it, permanently, since the
+   * endpoint refuses a second write.
+   *
+   * The cast is the point of the test: this value is not supposed to be
+   * expressible, and the defect was that it happened anyway.
+   */
+  it.each([
+    ['an absent value', undefined],
+    ['an empty string', ''],
+    ['a day that does not exist', '2026-02-30'],
+    ['an ISO instant', '1999-04-02T00:00:00.000Z'],
+    ['an unpadded date', '1999-4-2'],
+    ['a number', 19_990_402],
+    ['a Date object', new Date('1999-04-02T00:00:00.000Z')],
+  ])('reads %s as NOT declared, which is the fail-closed direction', (_label, stored) => {
+    expect(isProfileComplete({ dateOfBirth: stored as string | null })).toBe(false);
+  });
 });
 
 describe('isAdult — the birthday boundary', () => {
@@ -80,13 +106,26 @@ describe('isAdult — leap years, counted as days rather than as durations', () 
     expect(isAdult({ dateOfBirth: '2008-02-29' }, at('2026-03-01T00:00:00.000Z'))).toBe(true);
   });
 
-  it('uses the real 29th when the eighteenth birthday year has one', () => {
-    // 2006 + 18 = 2024, which IS a leap year, so nothing rolls.
-    expect(isAdult({ dateOfBirth: '2006-02-29' }, at('2024-02-29T00:00:00.000Z'))).toBe(false);
-    // (2006 had no 29th of February — the input above is not a day, and the
-    // fail-closed branch is what answers. The real leap-day case:)
+  it('rolls a leap-day birthday forward at the adult threshold, because 18 can never land on one', () => {
+    // Arithmetic, not an example: a leap year plus 18 is 2 away from a multiple of
+    // 4, so the eighteenth birthday of somebody born on the 29th of February is
+    // NEVER in a leap year. There is no version of this product where the "real
+    // 29th" case exists at the adult threshold — the test that claimed to cover it
+    // was covering the rolled case twice, once through a date that is not a day.
+    expect((2004 + ADULT_AGE_YEARS) % 4).toBe(2);
     expect(isAdult({ dateOfBirth: '2004-02-29' }, at('2022-02-28T23:59:59.999Z'))).toBe(false);
     expect(isAdult({ dateOfBirth: '2004-02-29' }, at('2022-03-01T00:00:00.000Z'))).toBe(true);
+  });
+
+  it('uses the real 29th when the threshold is a multiple of four, so nothing rolls', () => {
+    // The case the name above promises, built where it can actually exist: 2004 +
+    // 20 = 2024, which IS a leap year, so the birthday is the 29th itself and the
+    // boundary must be that day rather than the 1st of March.
+    expect(isAtLeastYearsOld('2004-02-29', at('2024-02-28T23:59:59.999Z'), 20)).toBe(false);
+    expect(isAtLeastYearsOld('2004-02-29', at('2024-02-29T00:00:00.000Z'), 20)).toBe(true);
+    // And it did not simply become true a day early somewhere: the 28th is the
+    // last day of not-yet, in a year that has a 29th to be exact about.
+    expect(isAtLeastYearsOld('2004-02-29', at('2024-03-01T00:00:00.000Z'), 20)).toBe(true);
   });
 });
 
