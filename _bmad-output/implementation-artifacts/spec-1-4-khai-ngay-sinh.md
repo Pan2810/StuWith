@@ -3,7 +3,7 @@ title: 'Story 1.4 — Khai ngày sinh khi tạo hồ sơ lần đầu'
 type: 'feature'
 created: '2026-09-04'
 baseline_commit: '8fdb2ce044486398d43126cd6c2176e3102a17c1'
-status: 'in-review'
+status: 'done'
 review_loop_iteration: 2
 context:
   - '{project-root}/_bmad-output/implementation-artifacts/epic-1-context.md'
