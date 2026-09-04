@@ -68,6 +68,10 @@ export default defineConfig({
         // every `/v1/auth/:provider/start` answers 404.
         WEB_BASE_URL: 'http://127.0.0.1:3000',
         OAUTH_REDIRECT_BASE_URL: API_BASE_URL,
+        // Required from Story 1.3 part 2 on, with no default: every wrong value is
+        // silent, so the process refuses to start rather than guess. The smoke test
+        // talks to the process directly, so `none` is the true answer.
+        TRUSTED_PROXY_ADDRESSES: 'none',
       },
     },
     {

@@ -1,9 +1,3 @@
-import {
-  SIGN_IN_OUTCOME_QUERY_PARAM,
-  isSignInOutcome,
-  type SignInOutcome,
-} from '@stuwith/contracts';
-
 /**
  * How the last sign-in attempt is turned into something a person reads.
  *
@@ -20,6 +14,18 @@ import {
  * DOM. `page.tsx` is left holding `setOutcome(...)` and `replaceState(...)` and
  * nothing else. `sign-in-outcome.test.tsx` executes the rest.
  */
+
+import {
+  AUTH_PROVIDERS,
+  MAX_SIGN_IN_RETRY_AFTER_SECONDS,
+  RATE_LIMITED_MESSAGE,
+  SIGN_IN_OUTCOME_QUERY_PARAM,
+  SIGN_IN_RETRY_AFTER_QUERY_PARAM,
+  isSignInOutcome,
+  parseSignInRetryAfterSeconds,
+  type SignInOutcome,
+} from '@stuwith/contracts';
+import { SignInCountdown } from './countdown';
 
 /**
  * Everything an outcome shows, in one place per outcome.
@@ -44,15 +50,36 @@ import {
  */
 export const OUTCOME_NOTICES: Record<
   SignInOutcome,
-  { readonly message: string; readonly role: 'status' | 'alert' }
+  {
+    readonly message: string;
+    readonly role: 'status' | 'alert';
+    /** Whether a `?giay=` value means anything for this outcome. Only one does. */
+    readonly showsCountdown: boolean;
+  }
 > = {
   'that-bai': {
     message: 'Không đăng nhập được. Thử lại hoặc chọn cách khác.',
     role: 'alert',
+    showsCountdown: false,
   },
   'da-huy': {
     message: 'Bạn đã huỷ ở bước cấp quyền. Chọn lại cách đăng nhập bên dưới.',
     role: 'status',
+    showsCountdown: false,
+  },
+  /**
+   * Story 1.3 part 2. The sentence says what happened and what to do, and nothing
+   * a person probing the login could calibrate against: not whether the lock is by
+   * address or by account, not the threshold, not how many attempts were left.
+   *
+   * `status` rather than `alert`. Being asked to wait is not an error the person
+   * made, and `alert` interrupts whatever a screen reader was saying to announce
+   * it. The countdown beside it carries the only number in the story.
+   */
+  'bi-khoa': {
+    message: RATE_LIMITED_MESSAGE,
+    role: 'status',
+    showsCountdown: true,
   },
 };
 
@@ -60,12 +87,23 @@ export interface ResolvedSignInOutcome {
   /** `null` for both "no parameter" and "a parameter we do not recognise". */
   readonly outcome: SignInOutcome | null;
   /**
-   * Whether the parameter was there at all — the signal to rewrite the address
+   * The countdown, or `null` when there is no usable one.
+   *
+   * `null` means "show the lock message with no clock", never "show something
+   * plausible". This value arrives in a URL a stranger can write and send, so
+   * `?giay=abc`, `?giay=-5` and `?giay=99999999` all land here, and the last one
+   * would otherwise put "thử lại sau 1157 ngày" in front of somebody who is not
+   * locked out of anything.
+   */
+  readonly retryAfterSeconds: number | null;
+  /**
+   * Whether EITHER parameter was there at all — the signal to rewrite the address
    * bar. It is deliberately independent of `outcome`: an unrecognised value must
-   * be stripped too, or it survives a refresh for no reason.
+   * be stripped too, or it survives a refresh for no reason. A stray `?giay=` with
+   * no outcome beside it is stripped for the same reason.
    */
   readonly present: boolean;
-  /** What the query string should be once the parameter is gone, without `?`. */
+  /** What the query string should be once both parameters are gone, without `?`. */
   readonly remainingSearch: string;
 }
 
@@ -123,13 +161,29 @@ export function resolveSignInOutcome(search: string): ResolvedSignInOutcome {
   // Reading through `URLSearchParams` and rewriting through `stripQueryParam` is
   // deliberate: decoding a value is exactly what the former is for, and rewriting
   // a string you do not own is exactly what it is bad at.
-  const raw = new URLSearchParams(search).get(SIGN_IN_OUTCOME_QUERY_PARAM);
-  const stripped = stripQueryParam(search, SIGN_IN_OUTCOME_QUERY_PARAM);
+  const params = new URLSearchParams(search);
+  const raw = params.get(SIGN_IN_OUTCOME_QUERY_PARAM);
+  const outcome = raw !== null && isSignInOutcome(raw) ? raw : null;
+
+  // Both parameters come off, in one pass each, and BOTH count as "present".
+  // Leaving `giay` behind because the outcome beside it was junk would put a
+  // number back on the screen the moment anything re-read the URL.
+  const withoutOutcome = stripQueryParam(search, SIGN_IN_OUTCOME_QUERY_PARAM);
+  const withoutSeconds = stripQueryParam(
+    withoutOutcome.remaining,
+    SIGN_IN_RETRY_AFTER_QUERY_PARAM,
+  );
 
   return {
-    outcome: raw !== null && isSignInOutcome(raw) ? raw : null,
-    present: stripped.present,
-    remainingSearch: stripped.remaining,
+    outcome,
+    // The seconds mean nothing without an outcome that uses them. Reading them
+    // anyway would let `?giay=30` alone put a countdown on an ordinary visit.
+    retryAfterSeconds:
+      outcome !== null && OUTCOME_NOTICES[outcome].showsCountdown
+        ? parseSignInRetryAfterSeconds(params.get(SIGN_IN_RETRY_AFTER_QUERY_PARAM))
+        : null,
+    present: withoutOutcome.present || withoutSeconds.present,
+    remainingSearch: withoutSeconds.remaining,
   };
 }
 
@@ -140,8 +194,21 @@ export interface PageLocation {
   readonly hash: string;
 }
 
+/**
+ * Everything the notice needs, as one value.
+ *
+ * The outcome and its countdown travel together from the URL to the screen, so
+ * they are one object rather than two parallel pieces of state that a careless
+ * edit can separate. `null` retryAfterSeconds means "no clock", never "zero".
+ */
+export interface SignInNotice {
+  readonly outcome: SignInOutcome;
+  readonly retryAfterSeconds: number | null;
+}
+
 export interface OutcomeLocationChange {
-  readonly outcome: SignInOutcome | null;
+  /** `null` for "nothing to show", which covers an unrecognised code too. */
+  readonly notice: SignInNotice | null;
   /**
    * The URL the address bar should carry from now on, or `null` when there was no
    * outcome parameter and therefore nothing to rewrite.
@@ -166,12 +233,15 @@ export interface OutcomeLocationChange {
 export function nextLocationAfterOutcome(location: PageLocation): OutcomeLocationChange {
   const resolved = resolveSignInOutcome(location.search);
   if (!resolved.present) {
-    return { outcome: null, nextUrl: null };
+    return { notice: null, nextUrl: null };
   }
 
   const query = resolved.remainingSearch;
   return {
-    outcome: resolved.outcome,
+    notice:
+      resolved.outcome === null
+        ? null
+        : { outcome: resolved.outcome, retryAfterSeconds: resolved.retryAfterSeconds },
     nextUrl: `${location.pathname}${query.length > 0 ? `?${query}` : ''}${location.hash}`,
   };
 }
@@ -185,16 +255,177 @@ export function nextLocationAfterOutcome(location: PageLocation): OutcomeLocatio
  * a back button, and "Chọn lại cách đăng nhập bên dưới" above a signed-in view
  * with no login buttons under it is an instruction that cannot be followed.
  */
-export function SignInOutcomeNotice({
-  outcome,
+/**
+ * The longest a notice may hide the login links: the absolute ceiling the
+ * contract puts on a retry-after value, and nothing narrower.
+ *
+ * It was `900`, the DEFAULT brute-force lock, and that was a number this package
+ * had no right to know. `RATE_LIMIT_BRUTE_FORCE_LOCK_SECONDS` is configurable up
+ * to a day, so a deployment that set it to 1800 produced real locks that sailed
+ * over this cap: the page then showed all four provider links to somebody who was
+ * genuinely locked out, and every click spent another attempt and bounced them
+ * back — the exact loop `SignInPanel` exists to break, re-opened by a constant in
+ * the wrong package.
+ *
+ * The remaining reason for a cap at all is that `?ket-qua=bi-khoa&giay=86400` is a
+ * link a stranger can send to somebody who is not rate-limited. Two things bound
+ * that, and neither needs a guessed number: the value is filtered through
+ * `parseSignInRetryAfterSeconds`, so nothing beyond the contract's own maximum is
+ * ever shown, and `nextLocationAfterOutcome` strips both parameters from the
+ * address bar immediately — so a reload clears the notice rather than serving out
+ * a day of it.
+ */
+export const MAX_OPTIONS_HIDDEN_SECONDS = MAX_SIGN_IN_RETRY_AFTER_SECONDS;
+
+/**
+ * Whether to offer the four provider links.
+ *
+ * They used to be shown whenever `/v1/auth/me` answered 401 — which a rate-limited
+ * `429` also produces. So a locked-out visitor read "hãy chờ một lát" directly
+ * above four buttons, and each click spent another `auth_start` attempt and
+ * bounced them straight back with a longer wait. The notice and the links have to
+ * agree about whether signing in is possible right now.
+ */
+export function signInOptionsVisible(notice: SignInNotice | null, canSignIn: boolean): boolean {
+  if (!canSignIn) {
+    return false;
+  }
+  if (notice === null) {
+    return true;
+  }
+  if (!OUTCOME_NOTICES[notice.outcome].showsCountdown || notice.retryAfterSeconds === null) {
+    return true;
+  }
+  // Capped, and deliberately not by the same bound as the displayed number: see
+  // MAX_OPTIONS_HIDDEN_SECONDS.
+  return notice.retryAfterSeconds > MAX_OPTIONS_HIDDEN_SECONDS;
+}
+
+/**
+ * The notice and the login options as ONE component, because they are one
+ * decision.
+ *
+ * They were two: `page.tsx` rendered `<SignInOutcomeNotice>` and then decided
+ * separately whether to render the provider links. Both halves were deletable with
+ * a full green run — nothing renders the page — and deleting either restored the
+ * bug they were added to fix: a "please wait" message above four links that each
+ * spend another attempt. Folded into one component, there is no decision left in
+ * the page to delete, and everything below is rendered by real tests.
+ */
+export function SignInPanel({
+  notice,
   canSignIn,
+  loading,
+  apiBaseUrl,
+  onCountdownFinished,
 }: {
-  readonly outcome: SignInOutcome | null;
+  /**
+   * ONE prop carrying both halves of the notice, and that is the point of its
+   * shape. The countdown used to be a second, optional prop with a `null` default,
+   * so deleting it typechecked and shipped a lock message with no clock.
+   */
+  readonly notice: SignInNotice | null;
   readonly canSignIn: boolean;
+  readonly loading: boolean;
+  readonly apiBaseUrl: string;
+  /**
+   * Told when the wait ends, so the links come back.
+   *
+   * REQUIRED, for the same reason `notice` is one prop rather than two: while it
+   * was optional, forgetting it typechecked and shipped a page whose countdown
+   * reached zero and left the four links hidden for ever — the person is told to
+   * wait, waits, and is then given nothing to click.
+   */
+  readonly onCountdownFinished: () => void;
 }) {
-  if (outcome === null || !canSignIn) {
+  const presentation = notice === null ? null : OUTCOME_NOTICES[notice.outcome];
+  // Only one outcome has anything to count, and a number that arrived beside any
+  // other one is ignored rather than rendered somewhere it makes no sense.
+  const seconds =
+    notice !== null && presentation !== null && presentation.showsCountdown
+      ? notice.retryAfterSeconds
+      : null;
+
+  return (
+    <>
+      {/*
+        `canSignIn` is why this can sit above everything: the notice hides itself
+        for a visitor who is already signed in, rather than telling them to
+        "chọn lại cách đăng nhập bên dưới" over a view with no login buttons in
+        it. While the session check is still in flight the answer is not known
+        yet, so nothing is claimed.
+
+        Known limit, left for 1.6 rather than papered over: the element only
+        EXISTS once the outcome is read, and a live region that appears at the
+        same moment as its content is announced unreliably. It reads correctly
+        in document order, which is the case that matters on a fresh load; the
+        fix is a region that is always mounted, and that belongs with the layout
+        work rather than in a bare skeleton.
+      */}
+      {presentation === null || !canSignIn ? null : (
+        <>
+          <p role={presentation.role}>{presentation.message}</p>
+          {seconds === null ? null : (
+            <SignInCountdown seconds={seconds} onFinished={onCountdownFinished} />
+          )}
+        </>
+      )}
+
+      {loading ? <p>Đang kiểm tra phiên…</p> : null}
+
+      {signInOptionsVisible(notice, canSignIn) ? (
+        <nav>
+          <p>Chọn tài khoản mạng xã hội để tiếp tục:</p>
+          <ul>
+            {AUTH_PROVIDERS.map((provider) => (
+              <li key={provider}>
+                {/*
+                  A plain anchor, not a fetch. The OAuth flow is a top-level
+                  browser navigation: it has to leave this origin, come back, and
+                  carry the SameSite=Lax state cookie on the way in. An XHR cannot
+                  do any of that.
+                */}
+                <a href={`${apiBaseUrl}/v1/auth/${provider}/start`}>
+                  Tiếp tục với {PROVIDER_LABELS[provider]}
+                </a>
+              </li>
+            ))}
+          </ul>
+          <p>
+            Provider chưa được bật trên máy chủ này sẽ trả về &ldquo;không tìm
+            thấy&rdquo;.
+          </p>
+        </nav>
+      ) : null}
+    </>
+  );
+}
+
+/** Vietnamese is the default locale; full i18n arrives with Story 1.6. */
+const PROVIDER_LABELS: Record<(typeof AUTH_PROVIDERS)[number], string> = {
+  google: 'Google',
+  facebook: 'Facebook',
+  apple: 'Apple',
+  microsoft: 'Microsoft',
+};
+
+/**
+ * What `/v1/auth/me` answering told us, including the case the page could not see.
+ *
+ * A rate-limited `/me` answers `429`, and `!response.ok` mapped that to
+ * "signed out" — so a locked-out visitor got an ordinary login page with four
+ * links and no notice, and the first click spent an `auth_start` and bounced them
+ * back. That is exactly the loop the panel above exists to break, arriving through
+ * the one entry point it could not see.
+ */
+export function signInNoticeFromMe(status: number, retryAfterHeader: string | null): SignInNotice | null {
+  if (status !== 429) {
     return null;
   }
-  const notice = OUTCOME_NOTICES[outcome];
-  return <p role={notice.role}>{notice.message}</p>;
+  return {
+    outcome: 'bi-khoa',
+    // The same parser the URL parameter goes through, so a header this product did
+    // not write cannot put a nonsense number on the screen either.
+    retryAfterSeconds: parseSignInRetryAfterSeconds(retryAfterHeader),
+  };
 }

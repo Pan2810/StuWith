@@ -1,4 +1,7 @@
 import { AUTH_PROVIDERS, isAuthProvider, type AuthProvider } from '@stuwith/contracts';
+// One implementation of "who is trusted", shared with Fastify. See
+// `trusted-proxies.ts` for why there is no parser of our own any more.
+import { NO_TRUSTED_PROXIES, compileTrustedProxies } from './trusted-proxies';
 import { z } from 'zod';
 
 /**
@@ -35,14 +38,100 @@ const httpUrl = z
   // providers reject as a redirect_uri mismatch with no useful message.
   .refine((value) => !value.endsWith('/'), 'must not end with a trailing slash');
 
+/**
+ * A whole number written as digits, and nothing else.
+ *
+ * NOT `z.coerce.number()`, which is `Number()` underneath and therefore accepts
+ * `0x10` (16), `1e3` (1000), `' 30 '` and `'30.0'`. None of those is the number
+ * the operator typed, and a limit that silently means something else is the kind
+ * of setting nobody re-reads. A digit string is what every one of these values is
+ * in `.env.example`, so the strictness costs nothing and removes a whole class of
+ * "the config says 1e3 and the log says 1000".
+ *
+ * A leading zero is refused too, and that is the same rule rather than an extra
+ * one. `'030'` is `30` under `Number()`, `24` if anything ever reads it as octal,
+ * and "thirty written oddly" to the person who typed it — three answers to one
+ * string, which is exactly the class of silent coercion this function exists to
+ * stop and the one `parseSignInRetryAfterSeconds` already refuses on the wire. A
+ * bare `'0'` is still a digit string; the range checks decide whether zero is
+ * allowed for that particular variable.
+ *
+ * The `unknown` input type is deliberate: `process.env` values are strings, but a
+ * test may pass a number, and a number that is already a whole number is fine.
+ */
+function onlyDigits(value: unknown): unknown {
+  if (typeof value === 'number') {
+    return value;
+  }
+  if (typeof value === 'string' && /^(0|[1-9][0-9]{0,11})$/.test(value)) {
+    return Number(value);
+  }
+  // Anything else reaches `z.number()` unchanged and is rejected there, naming
+  // the variable — rather than being coerced into a number nobody wrote.
+  return value;
+}
+
+const wholeNumber = (label: string, min: number, max: number, fallback: number) =>
+  z.preprocess(onlyDigits, z.number({ error: label }).int().min(min).max(max)).default(fallback);
+
 /** Seconds, as an operational knob rather than a secret. */
 const seconds = (min: number, max: number, fallback: number) =>
-  z.coerce
-    .number({ error: 'must be a whole number of seconds' })
-    .int()
-    .min(min)
-    .max(max)
-    .default(fallback);
+  wholeNumber('must be a whole number of seconds, written as digits', min, max, fallback);
+
+/** A count, as an operational knob rather than a secret. */
+const count = (min: number, max: number, fallback: number) =>
+  wholeNumber('must be a whole number, written as digits', min, max, fallback);
+
+/**
+ * The addresses of the reverse proxies that sit in front of this process.
+ *
+ * REQUIRED, with no default, and the one operational knob in this file that is
+ * treated like a secret — because every possible guess is wrong in a way nothing
+ * reports:
+ *
+ * - guess "no proxy" while Caddy terminates TLS in front, and every request
+ *   appears to come from Caddy — one person tripping the rate limit locks out the
+ *   entire product;
+ * - guess "trust the header" on a deployment with no proxy, and `X-Forwarded-For`
+ *   is whatever the client typed — anybody picks their own rate-limit key, so the
+ *   blocking layer exists and blocks nothing.
+ *
+ * Both produce a green CI run and a healthy-looking deployment.
+ *
+ * ## Why an address list rather than a hop count
+ *
+ * A hop count cannot check WHO the immediate peer is, so a client connecting
+ * straight to the API port walks past it by supplying enough hops. `fastify@5.12.1`
+ * removed numeric `trustProxy` for exactly that reason. The value here is a list
+ * of addresses and CIDRs; `X-Forwarded-For` is read only when the socket peer is
+ * one of them.
+ *
+ * ## Why "names no proxy" is rejected in every spelling but one
+ *
+ * Three near-empty values used to pass, each producing `trustProxy: false` in
+ * silence — the "every visitor is one bucket" failure, arriving from a typo:
+ *
+ * - `''`. It was read with `z.coerce.number()`, and `Number('')` is `0`, which
+ *   passed the old `.min(0)`. Because zod raised nothing, `toProblems`'
+ *   empty-string-means-missing mapping never ran either.
+ * - `','` and `' , '`. Length is 1, so `.trim().min(1)` was satisfied, and the
+ *   parser returned zero proxies with an empty `invalid` list, so nothing
+ *   complained.
+ *
+ * The parser now reports "this names no proxy" as invalid unless the operator
+ * literally wrote {@link NO_TRUSTED_PROXIES}. A range wide enough to trust every
+ * peer (`0.0.0.0/0`, `::/0`) is refused the same way, from the other direction.
+ */
+const trustedProxyAddresses = z
+  .string({ error: 'is required — proxy addresses/CIDRs, or the word "none"' })
+  .trim()
+  .min(1, 'must not be empty — write "none" if no proxy sits in front of this process')
+  .superRefine((raw, ctx) => {
+    const compiled = compileTrustedProxies(raw);
+    if (!compiled.ok) {
+      ctx.addIssue({ code: 'custom', message: compiled.problem });
+    }
+  });
 
 function splitProviders(raw: string): string[] {
   return raw
@@ -152,6 +241,52 @@ const apiEnvShape = sharedEnvSchema.extend({
   SESSION_REFRESH_TTL_SECONDS: seconds(300, 7_776_000, 2_592_000),
   /** How long a half-finished login may sit at the provider's consent screen. */
   OAUTH_STATE_TTL_SECONDS: seconds(60, 3_600, 600),
+
+  /**
+   * Story 1.3 part 2 — the blocking layer in front of `/v1/auth/*`.
+   *
+   * Everything below except the proxy list is an operational knob with a sensible
+   * default, which is the same distinction AD-14 already draws for the session
+   * TTLs: a limit that is guessed slightly wrong is visible and adjustable, while
+   * a credential that is guessed at all is a security hole. The proxy list is the
+   * one exception in this block and is required with no default — see
+   * {@link trustedProxyAddresses}.
+   */
+  TRUSTED_PROXY_ADDRESSES: trustedProxyAddresses,
+
+  /**
+   * Per address, and the number ALLOWED — the request after it is the one refused.
+   * Generous: a shared office NAT is one address for everybody in it.
+   */
+  RATE_LIMIT_IP_MAX: count(1, 10_000, 30),
+  RATE_LIMIT_IP_WINDOW_SECONDS: seconds(1, 3_600, 60),
+
+  /**
+   * Per credential, and therefore per account holder, whichever address they
+   * arrive from. Tighter than the IP budget because it cannot be shared by
+   * innocent bystanders the way one NAT address can.
+   */
+  RATE_LIMIT_USER_MAX: count(1, 10_000, 10),
+  RATE_LIMIT_USER_WINDOW_SECONDS: seconds(1, 3_600, 60),
+
+  /**
+   * Consecutive sign-in failures ALLOWED before the longer lock starts — the one
+   * after this number is the one that locks — and how long that lock lasts. Deliberately separate from the two budgets above: an ordinary
+   * window forgives a burst of noise in a minute, while repeated failure is the
+   * shape of somebody working through a list and should cost a great deal more.
+   */
+  RATE_LIMIT_BRUTE_FORCE_MAX: count(1, 1_000, 5),
+  RATE_LIMIT_BRUTE_FORCE_LOCK_SECONDS: seconds(1, 86_400, 900),
+
+  /**
+   * How long one Valkey command may take before it is treated as an outage.
+   *
+   * Small on purpose. The layer is fail-open (human decision, 2026-09-04), so a
+   * slow Valkey ends with the request going through anyway — and every
+   * millisecond spent waiting for that conclusion is added to a login that was
+   * always going to succeed.
+   */
+  VALKEY_COMMAND_TIMEOUT_MS: count(10, 10_000, 250),
 
   GOOGLE_CLIENT_ID: optionalSecret,
   GOOGLE_CLIENT_SECRET: optionalSecret,

@@ -43,6 +43,32 @@ export class ProviderExchangeError extends Error {
   constructor(
     message: string,
     readonly provider: AuthProvider,
+    /**
+     * Whether the provider ANSWERED and refused SOMETHING THE CALLER SENT, as
+     * opposed to being unreachable, slow, broken, or refusing US.
+     *
+     * The distinction decides whether a failed sign-in walks somebody towards a
+     * brute-force lock, so it has to separate three things a plain "4xx" runs
+     * together:
+     *
+     * - `400` / `404` — the provider rejecting the `code`, the verifier or the
+     *   redirect the caller supplied. That is exactly what an attacker submitting
+     *   guessed codes against one stolen `state` cookie produces, and it is the
+     *   natural attack on `/callback`. It counts.
+     * - `401` / `403` / `429` — the provider rejecting OUR credential or OUR
+     *   quota. `invalid_client` means our client secret is wrong or expired;
+     *   Apple's is rotated every six months. Counting it means that on the day the
+     *   secret expires every visitor's attempts fail and every visitor is then
+     *   locked out for fifteen minutes — a configuration mistake of ours turned
+     *   into an outage with a security-shaped explanation.
+     * - a timeout, a `5xx` or unparseable JSON — the provider having a bad
+     *   afternoon, which would lock out everybody who tried during it.
+     *
+     * Only the first is somebody's own doing, so only the first is `true`. The
+     * other two travel as `provider_exchange_failed`, which is on the innocent
+     * list.
+     */
+    readonly refusedByProvider = false,
   ) {
     super(message);
   }
@@ -67,6 +93,15 @@ export type FetchLike = typeof fetch;
  * hung provider surfaces as a failed login rather than as an outage.
  */
 export const PROVIDER_REQUEST_TIMEOUT_MS = 5_000;
+
+/**
+ * The provider statuses that mean "what the caller sent was refused", and
+ * therefore the only ones that may count towards a brute-force lock.
+ *
+ * Exported so the classification is one list rather than a comparison repeated at
+ * each call site — and so a test can read it.
+ */
+export const CALLER_REFUSED_STATUSES: ReadonlySet<number> = new Set([400, 404]);
 
 /** Small helper: a fetch that throws a ProviderExchangeError instead of a body. */
 export async function fetchJson(
@@ -93,7 +128,18 @@ export async function fetchJson(
     // The body is deliberately NOT read into the error. A provider error body is
     // long, multi-line, and routinely contains the token or the code that was
     // rejected; putting it in an Error is how it reaches a log and then a ticket.
-    throw new ProviderExchangeError(`${what} returned HTTP ${response.status}`, provider);
+    //
+    // Only 400 and 404 are "the provider refused what the CALLER sent" — a bad
+    // `code`, a bad verifier, a redirect URI that is not registered. 401, 403 and
+    // 429 are about US: an expired client secret, a disabled app, our own quota.
+    // They used to fall in here with the rest of the 4xx range, so the day Apple's
+    // six-monthly secret expired would have locked every user out for fifteen
+    // minutes on top of nobody being able to sign in. See `refusedByProvider`.
+    throw new ProviderExchangeError(
+      `${what} returned HTTP ${response.status}`,
+      provider,
+      CALLER_REFUSED_STATUSES.has(response.status),
+    );
   }
   try {
     return (await response.json()) as unknown;

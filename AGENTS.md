@@ -118,8 +118,10 @@ apps/api                 NestJS on Fastify. REST /v1, OAuth, classroom tokens.
 apps/realtime-gateway    NestJS on Fastify. WebSocket, coin scheduler, sessions.
 packages/domain          Pure rules and ports. No infrastructure, ever.
 packages/contracts       Wire vocabulary for /v1 and the audit row shape. Emits OpenAPI.
-packages/db              Postgres adapters, migrations, and the shared contract test-kit.
-packages/config          Env schema, fail-fast startup validation, logging policy.
+packages/db              Postgres AND Valkey adapters, migrations, the shared contract test-kit.
+packages/config          Env schema, fail-fast startup validation, logging policy,
+                         and the trusted-proxy list (compiled by @fastify/proxy-addr,
+                         the same library and version Fastify itself resolves).
 infra/                   docker compose stack: postgres, valkey, livekit, coturn.
 ```
 
@@ -183,9 +185,9 @@ product code.
 | `pnpm install` | Requires Node >= 24.14.1 (`engine-strict`). pnpm comes from corepack. |
 | `pnpm typecheck` | `tsc -b` over the reference graph, then `apps/web`. TS 7.0.2. |
 | `pnpm build` | Packages (TS 7), then both Nest apps (tsc6), then Next. |
-| `pnpm test` | Every Vitest project. Needs Docker for the Postgres passes. |
+| `pnpm test` | Every Vitest project. Needs Docker for the Postgres **and Valkey** passes. |
 | `pnpm test:unit` | domain + contracts + config + api + realtime-gateway + web. No Docker, no network. |
-| `pnpm test:contract` | CI gate 3 — the adapter suite against in-memory and PG18. |
+| `pnpm test:contract` | CI gate 3 — the adapter suites against in-memory, PG18 and Valkey 9. |
 | `pnpm test:migrations` | CI gate 4 — migrations on a seeded PG18. |
 | `pnpm test:gates` | Proves each gate rejects what it claims to. Builds `apps/api` first — one gate spawns the real process. |
 | `pnpm test:e2e` | Playwright smoke test: `/healthz` on both processes. |
@@ -327,3 +329,262 @@ required check is a silent pass, so both the workflow and
   the shared contract test-kit are exercised by something real. The money ports
   (`debit()` and `InsufficientFunds`) arrive in Epic 3 and follow the same shape: a
   refusal is a **return branch the caller must handle**, never a thrown exception.
+
+- **The rate limit in front of `/v1/auth/*` FAILS OPEN, and that is a decision
+  with consequences worth knowing.** A human chose this on 2026-09-04: when Valkey
+  cannot answer — down, or slower than `VALKEY_COMMAND_TIMEOUT_MS` — the request
+  goes through unchecked. **For the length of that outage there is no rate limit
+  and no brute-force lock on the login at all.** A login flood during a Valkey
+  incident is therefore a real, accepted exposure, not a bug.
+
+  What makes it defensible is the other half, and the other half is a test:
+  `apps/api/src/rate-limit/rate-limit.guard.ts` logs one `error` line saying the
+  blocking layer is off, and `rate-limit.flow.test.ts` asserts that line is
+  written. Deleting the log leaves the decision looking the same and makes it
+  indefensible — an unavailable control nobody is told about is a control that has
+  been off for a week. If you are watching production, `rate limiting is not
+  working` is the string to alert on.
+
+  The decision lives in the guard, never in the adapter. `packages/db`'s Valkey
+  adapter contains no `try/catch`: an adapter that answered "allowed" when its
+  store was unreachable would turn a fault into a normal outcome (the collapse
+  `heartbeat-port.ts` forbids) and there is nowhere in `packages/db` with the
+  context to write that log line.
+
+- **`TRUSTED_PROXY_ADDRESSES` is required, rejects every near-empty spelling, and
+  is compiled by `@fastify/proxy-addr` — not by us.** It is the only non-secret in
+  `.env.example` treated like a secret, and the file ships it **commented out** on
+  purpose. It holds the addresses/CIDRs of the proxies in front of `apps/api`, or
+  the single word `none`.
+
+  - Declare too FEW (or `none` behind Caddy) and `X-Forwarded-For` is ignored, so
+    every visitor is counted as the proxy — the first person to trip the limit
+    locks out the whole product.
+  - Declare a proxy that is not really in front and anybody connecting directly
+    can forge the header and pick their own rate-limit key, so the blocking layer
+    exists and blocks nothing.
+
+  Both produce a green CI run and a healthy-looking deployment.
+
+  **There is no IP or CIDR parser in this repository, and there must not be one
+  again.** There was: `packages/domain/src/policies/client-address.ts`. Three
+  review rounds found three different holes in it, each time in the fix for the
+  last one:
+
+  1. it counted HOPS rather than checking the peer, so a direct client with a
+     forged `X-Forwarded-For` chose its own rate-limit key;
+  2. it accepted `0.0.0.0/0`, which matches everything;
+  3. it accepted `0.0.0.0/1` and `128.0.0.0/1` — two tokens that between them
+     cover all of IPv4 — because the fix for (2) was a one-bit floor. It also
+     accepted `1.2.3.4::` and `2001:db8:1.2.3.4::1`, which `net.isIP` rejects,
+     while handing the same raw string to Fastify: the config validated while the
+     two views of the list disagreed.
+
+  Every round patched the named example instead of the class. The file is deleted.
+  `packages/config/src/trusted-proxies.ts` compiles the list with
+  **`@fastify/proxy-addr@5.1.0`** — the FORK Fastify 5 resolves, not upstream
+  `proxy-addr` — and `apps/api/src/rate-limit/request-identity.ts` resolves the
+  address with the same library and the same compiled predicate. "Fastify and we
+  cannot disagree about who is trusted" is now a property of the wiring, not of a
+  test comparing two implementations. `packages/domain` keeps key building and
+  policy only, so AD-1 is untouched.
+
+  **One rule is still ours, because the library has no opinion on it:** a list that
+  reaches out onto the public internet is refused. A fourth round found the third
+  version of that rule — nine public PROBE addresses handed to the compiled
+  predicate — was a SAMPLE: `32.0.0.0/3`, `40.0.0.0/5`, `96.0.0.0/4` and
+  `132.0.0.0/6` all fitted between the nine points and were accepted, so a peer
+  connecting directly from `40.1.2.3` could forge `X-Forwarded-For` again. Every
+  round until then had patched the example it was shown.
+
+  The rule now DECIDES, over sets rather than over examples, and it is written into
+  the spec under "Bất biến của danh sách proxy":
+
+  > a range is accepted if and only if it lies entirely inside internal/special
+  > address space, OR it covers no more addresses than the ceiling for its family.
+
+  Both halves are computed from the range's own prefix length, so they hold for
+  every spelling including ones nobody has thought of. The ceilings are `2^20` for
+  IPv4 (a `/12`, which is the largest range a real edge operator publishes —
+  Cloudflare's `104.16.0.0/12`) and `2^16` for IPv6. The IPv6 one is deliberately
+  much tighter, and not for symmetry: `::ffff:0:0/96` is where the library maps
+  every IPv4 address, so a token that reads like an ordinary IPv6 subnet would
+  otherwise trust the whole IPv4 internet. Any ceiling below `2^32` makes that
+  impossible by arithmetic rather than by spotting the mapped spelling.
+
+  **There is still no address parsing of ours.** The prefix length is read from the
+  token's own text as a decimal integer; the address half is validated by
+  `node:net`; "is this range inside internal space" is answered by asking a
+  predicate `@fastify/proxy-addr` compiled, using the fact that two CIDR blocks are
+  either nested or disjoint. `packages/config/src/trusted-proxies.test.ts` is a
+  PROPERTY test that sweeps every prefix length across every `/8` of IPv4 and a
+  spread of IPv6 against an independent model of the invariant — not a list of
+  examples, which is what failed four times.
+
+  Two spellings are refused that a permissive reading would allow, both on purpose:
+  a netmask (`10.0.0.0/255.0.0.0`), because measuring its width means parsing an
+  address, and anything `@fastify/proxy-addr` compiles that `node:net` does not
+  recognise, because that is the round-three failure where the config validated
+  while the two views of the list disagreed. The trade on the main rule: a
+  deployment whose edge really is a wide public range is refused, and the error
+  names the token, its size and what to write instead.
+
+  **The library is pinned to one copy by `overrides` in `pnpm-workspace.yaml`, and
+  `tests/gates/proxy-addr-single-copy.test.ts` proves it.** "Fastify and we cannot
+  disagree" was true only by coincidence: two workspace packages declared `5.1.0`
+  and Fastify resolved its own, which happened to match. A Fastify bump carrying a
+  different version would have split the process into two readings of the proxy
+  list, silently, in a green CI run.
+
+  **Near-empty values are refused too, and each was a real bypass.** `''` (read
+  with `z.coerce.number()` when this was a hop count: `Number('')` is `0`, `0`
+  passed `.min(0)`, and `toProblems` never saw it), `,` and `" , "` (length 1, so
+  `.trim().min(1)` was satisfied and the parser returned zero proxies with nothing
+  invalid). All produced `trustProxy: false` in silence. Any future variable added
+  here needs a schema that refuses `''` on its own.
+
+  **Never a NUMBER for `trustProxy`.** Two copies of Fastify are installed and they
+  disagree about what one means: `fastify@5.11.3` — the copy
+  `@nestjs/platform-fastify` resolves, so the one that runs — honours "trust this
+  many hops", while `5.12.1` returns `() => false` for a number as a security fix.
+  `fastifyAdapterOptions` passes the comma-separated string, or `false`.
+
+- **The numeric env knobs are digit strings, and that is a BREAKING change for an
+  existing `.env`.** `z.coerce.number()` is `Number()` underneath, so it accepted
+  `0x10` (16), `1e3` (1000), `' 30 '` and `'30.0'` — none of which is the number
+  the operator typed. The rate-limit knobs and the pre-existing `SESSION_*` /
+  `OAUTH_STATE_TTL_SECONDS` TTLs now take digits only.
+
+  Concretely: a deployment whose `.env` says `SESSION_TTL_SECONDS=3600.0` or
+  ` 3600` started yesterday and exits non-zero today, naming the variable. That is
+  the intended trade — the alternative is a config file that says one thing while
+  the process does another — but it is a change somebody could meet during a
+  deploy, so it is written down here.
+
+  A LEADING ZERO is refused too, and that is the same rule rather than an extra
+  one: `SESSION_TTL_SECONDS=03600` started yesterday and exits non-zero today.
+  `Number('030')` is 30, an octal reader says 24, and the operator meant "thirty,
+  padded" — three answers to one string, which is exactly what this change is
+  about. A bare `0` is still a digit string; whether zero is a legal value is the
+  range check's question.
+
+  `API_PORT` and `GATEWAY_PORT` deliberately still use `z.coerce`: they are
+  pre-existing, have their own tests, and were out of this story's scope. That
+  inconsistency is known, not accidental.
+
+- **A rate-limit outage logs ONCE, not once per request, and never logs the
+  error's message.** `RateLimitHealth` holds the degraded state that the guard and
+  `AuthService` share; the first failure writes the `error` line with the code
+  path, every failure after it is counted silently, and recovery is announced once
+  after three consecutive successes. The recovery streak is hysteresis: without it
+  an intermittently failing store — the shape a real incident takes — flips the
+  state twice per pair and writes two lines each time.
+
+  The error's **message** is deliberately dropped, and only `error.name` plus the
+  stack frames are logged. `iovalkey` puts the failing command and its arguments in
+  the message, and the argument is the rate-limit key — built from an address or a
+  hashed credential. Story 1.7's whitelist serializer is not here yet to catch it.
+
+  If you add a third place that touches the counter store, report through
+  `RateLimitHealth` rather than a logger.
+
+- **The fail-open branch catches STORE FAULTS only, in BOTH places.** It used to be
+  "anything that is not a `RateLimitInputError`", which swallowed every `TypeError`
+  and `RangeError` in `apps/api` as well: a plain bug was reported for ever as "the
+  counter store did not answer", pointed the alert at Valkey, and left the layer
+  off. `isStoreFault` decides positively — a connection, timeout or protocol
+  failure from the client library — and everything else surfaces as the 500 it is.
+
+  Both places, and that needed saying because for one round it was one: the guard
+  used `isStoreFault` while `AuthService.withRateLimitStore` — the half that runs
+  `countFailure` and `forgetFailures` on `/callback` and `/refresh` — still kept
+  the old rule.
+
+  `isStoreFault` does NOT match the words "valkey" or "redis" any more. They
+  matched a product name rather than a failure, so the adapter's own
+  `ValkeyReplyShapeError` (a bug in the script or in `packages/db`, thrown while
+  Valkey is healthy) was classified as an outage: the layer failed open in silence
+  and the alert pointed at a service with nothing wrong with it. That class is now
+  recognised BY NAME as a defect of ours.
+
+- **The Valkey client's offline queue is ON, and that is not the obvious choice.**
+  It was `false`, reasoning that a command must reject rather than park. What that
+  produced: `lazyConnect` means the socket is still opening when the first request
+  arrives, so the first login after every start and every reconnect went through
+  UNCOUNTED and wrote the `error` line operators are told to page on — a false
+  alarm, on a healthy Valkey, once per deploy. Adding `void connect()` did not fix
+  it either; the connect is still in flight. The bound is now enforced by
+  `commandTimeout` plus `maxRetriesPerRequest: 0`, and `client.timeout.test.ts`
+  holds it from both sides against a server that completes the handshake and then
+  stalls.
+
+- **The Valkey counter is atomic, and the contract suite now actually checks it.**
+  The Lua in `packages/db/src/valkey/client.ts` does `INCR` + `PEXPIRE` inside one
+  `EVAL`, because as two commands a process that dies between them leaves a counter
+  with **no expiry** — a key that never resets, so the person it belongs to is
+  locked out permanently and nothing in the product can say why.
+
+  For two rounds nothing could see the difference: every example called `hit`
+  sequentially and none looked at the expiry the FIRST hit left behind, so
+  rewriting it as `INCR` then an awaited `PEXPIRE` passed everything. The suite now
+  asserts a live expiry immediately after the first hit, and runs `limit + 5`
+  concurrent hits expecting exactly `limit` allowances. Both scripts also REPAIR a
+  key found alive with no expiry, and the harnesses can plant one — the branch had
+  no coverage on either pass until they could.
+
+- **The brute-force lock runs one dimension per channel: a browser leg by ADDRESS,
+  a `fetch` leg by CREDENTIAL.** `bruteForceSubjectFor` in `packages/domain` is the
+  only place that decision lives, and both halves — the guard that ENFORCES a lock
+  and `AuthService` that EARNS one — read it. That is not tidiness; the two halves
+  disagreed twice, and each way was a live defect:
+
+  - counting both dimensions everywhere while enforcing the address lock only on
+    browser legs meant `/refresh` failures earned an ADDRESS lock that then blocked
+    `/start` and `/callback` for everyone behind that address;
+  - counting the credential on a browser leg punished the wrong person entirely. A
+    signed-in visitor navigated cross-site to `/callback` sends their session
+    cookie under `SameSite=Lax`, so a few induced clicks with a bogus `state`
+    locked a credential that was never part of the attempt.
+
+  If you add a fifth `/v1/auth` route, its channel decides its dimension. Do not
+  add a second rule.
+
+- **A successful sign-in clears the ADDRESS counter, and on a shared address that
+  is everybody's.** This is a trade, taken deliberately, and the docblock in
+  `AuthService.forgetFailures` says the same thing:
+
+  - the weakness — somebody with a valid account on a campus NAT can log in
+    successfully every few failures and keep that address counter from ever
+    reaching the threshold;
+  - why the alternatives are worse — clearing nothing leaves an honest person who
+    finally got in one slip from a fifteen-minute lock they already worked
+    through, and clearing only a credential dimension is a no-op on the sign-in
+    legs, because a sign-in attempt carries no credential of its own;
+  - what limits it — the address counter is a fifteen-minute window, and the
+    CREDENTIAL dimension, which no bystander can reset, is what actually catches an
+    attack on a specific account.
+
+  A successful `/refresh` clears its own credential counter, for the same reason
+  and with none of the sharing.
+
+- **A provider's 401, 403 or 429 is OUR problem, not evidence of an attack.**
+  `fetchJson` treated every 4xx from a provider as "the provider refused what we
+  sent" and mapped it to `code_rejected`, which counts towards the brute-force
+  lock. But `401 invalid_client` means our client secret is wrong or expired —
+  Apple's is rotated every six months — and 403/429 are our app being disabled or
+  our own quota. On the day the secret expires, nobody could sign in AND everybody
+  would then be locked out for fifteen minutes, with the log calling it a
+  brute-force attempt. Only `400` and `404` count now; the rest travel as
+  `provider_exchange_failed`, which is on the innocent list.
+
+  The innocent/counted split is a `Record` over the reason union in `audit.ts`, not
+  a `Set` of one side. A set has a default, so a thirteenth reason added later
+  silently fell into "counted" — the dangerous direction. A missing key is now a
+  typecheck error.
+
+- **`POST /v1/auth/logout` is not rate limited, and cannot become so by accident.**
+  Every other `/v1/auth` route carries `@RateLimited(...)`. Logout carries nothing,
+  because `RateLimitAction` in `packages/domain` has no name for logging out — so
+  there is no value that could be written in the parentheses. Do not add one:
+  limiting sign-out keeps somebody inside a session they are trying to leave, which
+  on a shared machine is a security failure rather than an inconvenience.

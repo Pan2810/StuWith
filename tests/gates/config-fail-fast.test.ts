@@ -39,6 +39,10 @@ function completeEnv(port: number): Record<string, string> {
     SESSION_COOKIE_SECRET: placeholder('session'),
     WEB_BASE_URL: 'http://127.0.0.1:3000',
     OAUTH_REDIRECT_BASE_URL: 'http://127.0.0.1:3001',
+    // Story 1.3 part 2. Required, with no default in code: every guess is wrong
+    // in a way nothing reports. The word `none` is what a process with nothing
+    // in front of it has to say on purpose.
+    TRUSTED_PROXY_ADDRESSES: 'none',
     // Windows needs these to start a process at all; nothing else is inherited,
     // so a developer's real .env cannot accidentally satisfy a variable the test
     // is trying to remove.
@@ -176,6 +180,11 @@ describe('AD-14 — the process refuses to start on an incomplete environment', 
     'SESSION_COOKIE_SECRET',
     'LIVEKIT_API_SECRET',
     'VALKEY_URL',
+    // Not a secret, and still required. A missing proxy list cannot be defaulted:
+    // trusting none behind Caddy squashes every visitor into one rate-limit bucket,
+    // and trusting the header with nothing in front lets a client pick its own key.
+    // Both are silent, so the process refuses to start instead of choosing.
+    'TRUSTED_PROXY_ADDRESSES',
   ])('exits non-zero naming %s, without ever binding the port', async (variable) => {
     const port = await freePort();
     const env = completeEnv(port);

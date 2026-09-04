@@ -1,0 +1,29 @@
+# StuWith line-ending and diff policy.
+#
+# `* text=auto` normalises line endings on commit, which is what `core.autocrlf`
+# was doing per-clone. Stating it here makes it a property of the repository
+# rather than of each developer machine.
+#
+# The second rule is the one with a story. `apps/api/src/auth/__testing__/auth-harness.ts`
+# held a LITERAL NUL byte as a cookie-jar key separator, so git classified the
+# central fixture of the login stories as BINARY: it showed in every diff as
+# "Binary files differ", no reviewer could read it, and grep and ripgrep skipped
+# it entirely — a source file no repo-wide check could see. Marking source as
+# text means a stray NUL is a broken diff somebody notices, not a file that
+# quietly leaves the review surface.
+
+* text=auto
+
+*.ts   text diff
+*.tsx  text diff
+*.js   text diff
+*.mjs  text diff
+*.cjs  text diff
+*.json text diff
+*.md   text diff
+*.yml  text diff
+*.yaml text diff
+*.sql  text diff
+
+# Generated, and noisy in review.
+pnpm-lock.yaml -diff linguist-generated

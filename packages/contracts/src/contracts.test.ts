@@ -1,9 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { auditEventSchema, toAuditWireTimestamp } from './audit';
 import {
+  MAX_SIGN_IN_RETRY_AFTER_SECONDS,
+  RATE_LIMITED_MESSAGE,
+  MIN_SIGN_IN_RETRY_AFTER_SECONDS,
   SIGN_IN_OUTCOMES,
   SIGN_IN_OUTCOME_QUERY_PARAM,
+  SIGN_IN_RETRY_AFTER_QUERY_PARAM,
   isSignInOutcome,
+  parseSignInRetryAfterSeconds,
   signInOutcomeSchema,
 } from './auth';
 import {
@@ -182,8 +187,8 @@ describe('OpenAPI emission (AD-13)', () => {
  * own rather than only being used.
  */
 describe('sign-in outcome codes', () => {
-  it('is exactly the two codes the login page knows how to render', () => {
-    expect([...SIGN_IN_OUTCOMES]).toEqual(['that-bai', 'da-huy']);
+  it('is exactly the three codes the login page knows how to render', () => {
+    expect([...SIGN_IN_OUTCOMES]).toEqual(['that-bai', 'da-huy', 'bi-khoa']);
   });
 
   it('names the query parameter in one place, so both processes agree', () => {
@@ -259,5 +264,100 @@ describe('sign-in outcome codes', () => {
     'session_reuse_detected',
   ])('refuses the internal reason %s', (reason) => {
     expect(isSignInOutcome(reason)).toBe(false);
+  });
+});
+
+/**
+ * The countdown that rides beside `bi-khoa`.
+ *
+ * It is declared here, once, because BOTH processes read it: `apps/api` decides
+ * the value is worth putting in a redirect, `apps/web` decides it is worth
+ * rendering. Two parsers would eventually disagree about what `?giay=1e3` means,
+ * and the half that was more generous would be the one on the screen.
+ */
+describe('the sign-in retry countdown', () => {
+  it('names the query parameter in one place, so both processes agree', () => {
+    expect(SIGN_IN_RETRY_AFTER_QUERY_PARAM).toBe('giay');
+  });
+
+  it.each(['1', '30', '900', '86400'])('accepts %s', (raw) => {
+    expect(parseSignInRetryAfterSeconds(raw)).toBe(Number(raw));
+  });
+
+  it.each([
+    ['not a number', 'abc'],
+    ['negative', '-5'],
+    ['zero, which invites an instant retry', '0'],
+    ['absurdly large', '99999999'],
+    ['empty', ''],
+    ['fractional', '1.5'],
+    ['padded', ' 12 '],
+    ['hexadecimal', '0x10'],
+    ['exponential', '1e3'],
+    ['a script payload', '<script>'],
+    ['a plus sign', '+30'],
+  ])('rejects %s', (_label, raw) => {
+    // `Number()` accepts most of these, which is exactly why the check is a
+    // regex plus a range rather than a cast: each one is somebody probing, not a
+    // countdown this product wrote.
+    expect(parseSignInRetryAfterSeconds(raw)).toBeNull();
+  });
+
+  it.each([null, undefined, {}, [], true])('rejects the non-string %s', (raw) => {
+    expect(parseSignInRetryAfterSeconds(raw)).toBeNull();
+  });
+
+  it('holds the band the page is willing to show', () => {
+    // The floor stops a finished countdown being rendered; the ceiling stops
+    // "thử lại sau 1157 ngày" appearing for somebody who is not locked out.
+    expect(parseSignInRetryAfterSeconds(MIN_SIGN_IN_RETRY_AFTER_SECONDS)).toBe(
+      MIN_SIGN_IN_RETRY_AFTER_SECONDS,
+    );
+    expect(parseSignInRetryAfterSeconds(MAX_SIGN_IN_RETRY_AFTER_SECONDS)).toBe(
+      MAX_SIGN_IN_RETRY_AFTER_SECONDS,
+    );
+    expect(parseSignInRetryAfterSeconds(MIN_SIGN_IN_RETRY_AFTER_SECONDS - 1)).toBeNull();
+    expect(parseSignInRetryAfterSeconds(MAX_SIGN_IN_RETRY_AFTER_SECONDS + 1)).toBeNull();
+  });
+});
+
+/**
+ * What the rate-limited sentence may contain, decided ONCE, beside the constant.
+ *
+ * Three files used to keep their own blacklists — `rate-limit.flow.test.ts`,
+ * `rate-limited.filter.test.ts` and the web notice test — all checking this same
+ * frozen string, and all diverging. A word added to one left the other two blind,
+ * which is the failure mode a shared constant exists to prevent. Those three now
+ * assert equality with `RATE_LIMITED_MESSAGE`; the rules about the string itself
+ * live here.
+ */
+describe('the rate-limited sentence leaks nothing a prober could calibrate on', () => {
+  const sentence = RATE_LIMITED_MESSAGE.toLowerCase();
+
+  it.each([
+    ['the dimension, in English', 'ip'],
+    ['the dimension, in Vietnamese', 'địa chỉ'],
+    ['the account', 'tài khoản'],
+    ['the mechanism', 'brute'],
+    ['the store', 'valkey'],
+    ['the layer', 'rate limit'],
+    ['a key prefix', 'rl:'],
+    ['a rate', 'lần/'],
+  ])('does not name %s', (_label, leak) => {
+    expect(sentence).not.toContain(leak);
+  });
+
+  it('contains no number at all', () => {
+    // A threshold in the message says exactly how slowly to go. The only number a
+    // person is given is how long to wait, and it travels separately — as
+    // `Retry-After` and as `?giay=`.
+    expect(sentence).not.toMatch(/\d/);
+  });
+
+  it('says what happened and what to do next', () => {
+    // The other half of the acceptance criterion: not leaking is not enough if the
+    // person is left with nothing actionable.
+    expect(RATE_LIMITED_MESSAGE.length).toBeGreaterThan(20);
+    expect(sentence).toContain('thử lại');
   });
 });
