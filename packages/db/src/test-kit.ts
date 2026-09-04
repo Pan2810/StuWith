@@ -396,6 +396,209 @@ export function runIdentityPortContract(options: IdentityPortContractOptions): v
       });
     });
 
+    /* --------------------------------------------------------------------- *
+     * Story 1.4 — the date of birth is written exactly once
+     * --------------------------------------------------------------------- */
+
+    describe('records a date of birth exactly once', () => {
+      /**
+       * Runs against BOTH adapters, and that is the whole value of it. The
+       * in-memory store cannot express a concurrent UPDATE, so a read-then-write
+       * implementation looks perfect there; Postgres is where the race is real.
+       * Conversely, a Postgres-only suite would let the in-memory adapter drift
+       * into accepting a second write, and every `apps/api` test runs against
+       * that one.
+       */
+      const createdUserId = async (): Promise<string> => {
+        const created = await (await port()).findOrCreateByIdentity(googleIdentity(), t0);
+        return created.user.id;
+      };
+
+      it('starts a brand-new profile with no date of birth', async () => {
+        // The Story 1.2 half of the contract: first login must not require, invent
+        // or default one. `null` is what makes the profile "not finished yet", and
+        // it is the only representation of that state.
+        const created = await (await port()).findOrCreateByIdentity(googleIdentity(), t0);
+        expect(created.user.dateOfBirth).toBeNull();
+      });
+
+      it('writes it on a profile that has none, and reports the updated user', async () => {
+        const p = await port();
+        const userId = await createdUserId();
+
+        const outcome = await p.recordDateOfBirth(userId, '1999-04-02', t1);
+
+        expect(outcome.ok).toBe(true);
+        expect(outcome.ok && outcome.user.dateOfBirth).toBe('1999-04-02');
+        // And it is durable, not just returned: reading the row back is what
+        // catches an adapter that answered from the argument it was handed.
+        expect((await p.findUserById(userId))?.dateOfBirth).toBe('1999-04-02');
+      });
+
+      it('reads back exactly the day that was written, with no time zone shift', async () => {
+        // The `pg` driver parses a `date` column into a Date at LOCAL midnight, so
+        // an adapter that let a Date through would return the previous day for
+        // anybody east of UTC. The 1st of January is the spelling where a one-day
+        // shift also changes the year, which is what makes it worth choosing.
+        const p = await port();
+        const userId = await createdUserId();
+
+        await p.recordDateOfBirth(userId, '2000-01-01', t1);
+
+        expect((await p.findUserById(userId))?.dateOfBirth).toBe('2000-01-01');
+      });
+
+      it('refuses a second write and leaves the first value untouched', async () => {
+        const p = await port();
+        const userId = await createdUserId();
+        await p.recordDateOfBirth(userId, '1999-04-02', t1);
+
+        const second = await p.recordDateOfBirth(userId, '1970-01-01', t1);
+
+        expect(second.ok).toBe(false);
+        expect(!second.ok && second.reason).toBe('AlreadyRecorded');
+        // The refusal is worthless if the value moved anyway.
+        expect((await p.findUserById(userId))?.dateOfBirth).toBe('1999-04-02');
+      });
+
+      it('lets exactly ONE of two concurrent writes win', async () => {
+        // The row this design exists for, and the one a read-then-write adapter
+        // fails. Both callers see an empty profile at the same moment; only the
+        // conditional write can decide between them, and in production the failure
+        // is silent — two "saved" answers and whichever value landed last.
+        const p = await port();
+        const userId = await createdUserId();
+
+        const outcomes = await Promise.all([
+          p.recordDateOfBirth(userId, '1999-04-02', t1),
+          p.recordDateOfBirth(userId, '1970-01-01', t1),
+        ]);
+
+        const winners = outcomes.filter((outcome) => outcome.ok);
+        expect(winners.length, 'exactly one write may succeed').toBe(1);
+        for (const loser of outcomes.filter((outcome) => !outcome.ok)) {
+          expect(!loser.ok && loser.reason).toBe('AlreadyRecorded');
+        }
+
+        // And the stored value is the winner's, not a blend and not the loser's.
+        const stored = (await p.findUserById(userId))?.dateOfBirth;
+        const winner = winners[0];
+        expect(stored).toBe(winner?.ok === true ? winner.user.dateOfBirth : undefined);
+        expect(['1999-04-02', '1970-01-01']).toContain(stored);
+      });
+
+      it('survives a burst of concurrent writes with one winner, not one per connection', async () => {
+        // Two requests can be a coincidence of scheduling. Five is the shape a
+        // double-tapped submit on a flaky connection actually takes, and against a
+        // real pool each one runs on its own connection.
+        const p = await port();
+        const userId = await createdUserId();
+
+        const outcomes = await Promise.all(
+          ['2001-01-01', '2002-02-02', '2003-03-03', '2004-04-04', '2005-05-05'].map((day) =>
+            p.recordDateOfBirth(userId, day, t1),
+          ),
+        );
+
+        expect(outcomes.filter((outcome) => outcome.ok).length).toBe(1);
+      });
+
+      it('refuses for a user nobody owns, and says so distinctly', async () => {
+        // Distinct from `AlreadyRecorded` because the two need different answers
+        // at the boundary: one is "your profile is already complete", the other is
+        // "your session points at a profile that is gone".
+        const outcome = await (await port()).recordDateOfBirth(
+          '019200ff-0000-7000-8000-00000000ffff',
+          '1999-04-02',
+          t1,
+        );
+
+        expect(outcome.ok).toBe(false);
+        expect(!outcome.ok && outcome.reason).toBe('UserNotFound');
+      });
+
+      it('does not create a user as a side effect of a refused write', async () => {
+        await (await port()).recordDateOfBirth(
+          '019200ff-0000-7000-8000-00000000ffff',
+          '1999-04-02',
+          t1,
+        );
+        expect(await (await use()).countUsers()).toBe(0);
+      });
+
+      describe('rejects input that cannot be a date of birth', () => {
+        const badDates: ReadonlyArray<readonly [string, unknown]> = [
+          ['a day that does not exist', '2026-02-30'],
+          ['a 29th of February in a non-leap year', '2025-02-29'],
+          ['unpadded parts', '1999-4-2'],
+          ['an ISO instant', '1999-04-02T00:00:00.000Z'],
+          ['a trailing time zone', '1999-04-02Z'],
+          ['surrounding whitespace', ' 1999-04-02 '],
+          ['an empty string', ''],
+          ['a Date object', new Date('1999-04-02T00:00:00.000Z')],
+          ['a number', 19_990_402],
+          ['null', null],
+        ];
+
+        it.each(badDates)('throws IdentityInputError for %s', async (_label, value) => {
+          const p = await port();
+          const userId = await createdUserId();
+
+          await expect(
+            p.recordDateOfBirth(userId, value as string, t1),
+          ).rejects.toBeInstanceOf(IdentityInputError);
+        });
+
+        it('stores nothing when the date was rejected', async () => {
+          const p = await port();
+          const userId = await createdUserId();
+
+          await expect(p.recordDateOfBirth(userId, '2026-02-30', t1)).rejects.toThrow();
+
+          expect((await p.findUserById(userId))?.dateOfBirth).toBeNull();
+        });
+
+        it('throws for an empty user id', async () => {
+          await expect(
+            (await port()).recordDateOfBirth('', '1999-04-02', t1),
+          ).rejects.toBeInstanceOf(IdentityInputError);
+        });
+
+        it('throws for an Invalid Date as `now`', async () => {
+          const p = await port();
+          const userId = await createdUserId();
+
+          await expect(
+            p.recordDateOfBirth(userId, '1999-04-02', new Date('not-a-date')),
+          ).rejects.toBeInstanceOf(IdentityInputError);
+        });
+      });
+
+      it('lets an infrastructure fault propagate instead of reporting a refusal', async () => {
+        // An adapter that turned an outage into `AlreadyRecorded` would tell
+        // somebody their profile is finished when nothing was written — and there
+        // is no second chance, because the endpoint refuses a second attempt.
+        const create = harness?.createFaultingPort;
+        if (create === undefined) {
+          throw new Error(
+            `harness "${options.label}" must provide createFaultingPort(): an adapter that ` +
+              'turns an outage into "already recorded" would lock somebody out of the one ' +
+              'write they are allowed.',
+          );
+        }
+        const faulting = await create.call(harness);
+        const outcome = await faulting
+          .recordDateOfBirth('019200ff-0000-7000-8000-00000000ffff', '1999-04-02', t1)
+          .then(
+            (value) => ({ kind: 'resolved' as const, value }),
+            (error: unknown) => ({ kind: 'rejected' as const, error }),
+          );
+
+        expect(outcome.kind).toBe('rejected');
+        expect(outcome.kind === 'rejected' && outcome.error).not.toBeInstanceOf(IdentityInputError);
+      });
+    });
+
     describe('lets an infrastructure fault propagate', () => {
       it('throws instead of quietly returning a user when the store is unreachable', async () => {
         const create = harness?.createFaultingPort;

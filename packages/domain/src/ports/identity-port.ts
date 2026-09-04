@@ -38,6 +38,35 @@ export interface User {
   readonly email: string | null;
   readonly avatarUrl: string | null;
   readonly role: GlobalUserRole;
+  /**
+   * The declared date of birth as `YYYY-MM-DD`, or `null` for "not declared yet".
+   *
+   * ## `null` is the profile-completion state, and there is no second one
+   *
+   * Story 1.2 creates a user at the moment of first login, before anybody has been
+   * asked anything, so the column cannot be `NOT NULL` without breaking every
+   * first sign-in. That absence is then the honest representation of "the profile
+   * is not finished" — and a `profileCompleted` flag beside it would be a second
+   * field describing the same fact, with nothing keeping the two in step.
+   *
+   * ## It is a STRING, not a `Date`
+   *
+   * A `Date` is an instant, and a date of birth is a day. Node's `pg` driver hands
+   * back a `date` column as a `Date` at LOCAL midnight, so the same row read on two
+   * machines in two zones produces two different days — the exact class of bug the
+   * UTC rule exists to prevent. The adapters therefore ask Postgres for text and
+   * `packages/domain` compares calendar days. See `policies/date-of-birth.ts`.
+   *
+   * ## It must not leave `apps/api`
+   *
+   * This is PII under the epic's own definition, and the release gate is "no PII
+   * in a log line". It is deliberately absent from `CurrentUser` in
+   * `packages/contracts`; what leaves the API is two booleans, never a date. Do
+   * not add it to a response body, to an audit row, or to anything that is logged
+   * — `audit_events` has no `DELETE` for any role, so a date of birth written
+   * there is unremovable for ever.
+   */
+  readonly dateOfBirth: string | null;
   readonly createdAt: Date;
   readonly updatedAt: Date;
 }
@@ -85,4 +114,60 @@ export interface IdentityPort {
 
   /** @throws {IdentityInputError} when `userId` is not a usable id. */
   findUserById(userId: string): Promise<User | null>;
+
+  /**
+   * Write the date of birth, once and only once.
+   *
+   * ## The write-once property belongs to the STATEMENT, not to a check
+   *
+   * The implementation must be a single conditional write —
+   * `UPDATE users SET date_of_birth = $2 WHERE id = $1 AND date_of_birth IS NULL`
+   * — and must decide the outcome from the number of rows it changed. Reading the
+   * row first and then writing is a race with a window in it: two requests for the
+   * same profile both see `NULL`, both take the "not set yet" branch, and the
+   * second one silently overwrites the first. A double-tapped submit button is
+   * enough to produce that, and the failure is invisible — both requests answer
+   * success and the stored value is whichever landed last.
+   *
+   * With the condition inside the write, Postgres decides who won: the second
+   * statement blocks on the first one's row lock, re-evaluates `IS NULL` against
+   * the committed value, and matches nothing. The in-memory adapter has to reach
+   * the same answer, which is what makes the shared contract suite worth running
+   * twice.
+   *
+   * ## A refusal is a return branch, never an exception
+   *
+   * "This profile already has a date of birth" is a normal outcome of a rule, not
+   * a fault, and the shape follows `SessionPort` (and the money ports arriving in
+   * Epic 3): the caller cannot forget to handle it, because the success value is
+   * not reachable without narrowing. A thrown refusal would be indistinguishable
+   * at the call site from the store being down.
+   *
+   * `dateOfBirth` must be `YYYY-MM-DD` and name a real calendar day. Whether it is
+   * PLAUSIBLE — not in the future, not before 1900 — is the caller's question,
+   * because answering it needs a clock and a port has none. `apps/api` asks
+   * `parseDateOfBirth` with its `ClockPort` before it gets here.
+   *
+   * @throws {IdentityInputError} when `userId`, `dateOfBirth` or `now` is unusable.
+   */
+  recordDateOfBirth(
+    userId: string,
+    dateOfBirth: string,
+    now: Date,
+  ): Promise<RecordDateOfBirthResult>;
 }
+
+/**
+ * Why the write did not happen. Both are ordinary answers, not faults.
+ *
+ * `AlreadyRecorded` is the story's whole point. `UserNotFound` is separate rather
+ * than folded into it because the two need different responses — one is "your
+ * profile is already complete", the other is "your session points at a profile
+ * that is gone", which is a `401` — and a single reason would make the caller
+ * guess which.
+ */
+export type RecordDateOfBirthRefusal = 'AlreadyRecorded' | 'UserNotFound';
+
+export type RecordDateOfBirthResult =
+  | { readonly ok: true; readonly user: User }
+  | { readonly ok: false; readonly reason: RecordDateOfBirthRefusal };

@@ -164,6 +164,29 @@ export class AuthController {
   }
 
   /**
+   * Story 1.4 — the first-login declaration.
+   *
+   * The body goes down as `unknown`, like the return-path proposal on `/start`
+   * and for the same reason: `AuthService` owns the verdict, through the shared
+   * `parseDateOfBirth` in `packages/contracts`. A controller that pre-checked the
+   * shape would be a second place where "is this a date of birth" is decided, and
+   * this file contains no decisions.
+   *
+   * `POST`, and there is no `PATCH` or `PUT` beside it. That is not an omission
+   * to be filled in later: the value is written once and changing it goes through
+   * support, so a route that could update one must not exist for somebody to
+   * find.
+   */
+  @RateLimited('auth_date_of_birth')
+  @Post('date-of-birth')
+  async recordDateOfBirth(
+    @Req() request: FastifyRequest,
+    @Res() reply: FastifyReply,
+  ): Promise<void> {
+    send(reply, await this.auth.recordDateOfBirth(request.headers.cookie, request.body));
+  }
+
+  /**
    * The same address and credential the guard counted this request against.
    *
    * Computed through the same two functions, deliberately: a failed sign-in has to

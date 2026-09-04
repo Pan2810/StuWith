@@ -3,11 +3,15 @@ import {
   AUTH_COOKIE_PATH,
   REFRESH_COOKIE_NAME,
   SESSION_COOKIE_NAME,
+  DATE_OF_BIRTH_ALREADY_SET_MESSAGE,
+  DATE_OF_BIRTH_FIELD,
+  DATE_OF_BIRTH_INVALID_MESSAGE,
   SIGN_IN_OUTCOME_QUERY_PARAM,
   SIGN_IN_PATHNAME,
   currentUserSchema,
   isAuthProvider,
   makeError,
+  parseDateOfBirth,
   parseInternalReturnPath,
   type AuthProvider,
   type ErrorEnvelope,
@@ -29,6 +33,8 @@ import {
   bruteForceCounterKey,
   bruteForceSubjectFor,
   bruteForceLockKey,
+  isAdult,
+  isProfileComplete,
 } from '@stuwith/domain';
 import { APP_CONFIG, type AppConfig } from '../config.token';
 import { RateLimitHealth } from '../rate-limit/rate-limit-health';
@@ -160,6 +166,24 @@ function unauthenticated(): ErrorEnvelope {
 
 function notFound(): ErrorEnvelope {
   return makeError('not_found', MESSAGES.notFound);
+}
+
+/**
+ * The two Story 1.4 refusals. Both sentences live in `packages/contracts`, for
+ * the same reason `RATE_LIMITED_MESSAGE` does: `apps/web` shows the first one
+ * beside the field without waiting for a round trip, so the two processes would
+ * otherwise each hold their own copy and one of them would be edited alone.
+ *
+ * Neither carries `details`. There is nothing a client could do with "the month
+ * was 13" that the sentence does not already cover, and every diagnostic in an
+ * error body is a diagnostic in somebody's screenshot.
+ */
+function invalidDateOfBirth(): ErrorEnvelope {
+  return makeError('validation_failed', DATE_OF_BIRTH_INVALID_MESSAGE);
+}
+
+function dateOfBirthAlreadySet(): ErrorEnvelope {
+  return makeError('conflict', DATE_OF_BIRTH_ALREADY_SET_MESSAGE);
 }
 
 /**
@@ -585,11 +609,113 @@ export class AuthService {
     return { kind: 'empty', status: 204, cookies: clearAllAuthCookies(jar) };
   }
 
-  /** `GET /v1/auth/me` */
+  /**
+   * `GET /v1/auth/me`
+   *
+   * It answers for a profile that has NOT declared a date of birth exactly as it
+   * does for one that has — the flags differ, the status does not. Refusing here
+   * would lock somebody out of the only endpoint that could tell them what is
+   * missing, and out of `/logout` by extension, which is the "do not lock people
+   * out of their own session" row of the story matrix.
+   */
   async me(cookieHeader: unknown): Promise<AuthOutcome> {
+    const user = await this.userFromSession(cookieHeader);
+    if (user === null) {
+      return { kind: 'json', status: 401, body: unauthenticated(), cookies: [] };
+    }
+
+    return { kind: 'json', status: 200, body: toCurrentUser(user, this.clock), cookies: [] };
+  }
+
+  /**
+   * `POST /v1/auth/date-of-birth` — the first-login declaration, written once.
+   *
+   * ## Order of the three answers, and why it is this order
+   *
+   * 1. **No usable session → 401.** Nothing about the body is looked at, so an
+   *    unauthenticated caller learns nothing by varying it.
+   * 2. **Unusable date → 400**, decided by the shared `parseDateOfBirth` with
+   *    this process's `ClockPort`. Nothing is written, and the message says what
+   *    to do without naming a format, a parser or the age threshold. Telling
+   *    somebody which side of eighteen they landed on is free calibration for
+   *    anybody who wants to be on the other side of it.
+   * 3. **The port decides.** `AlreadyRecorded` is a 409 that names no value —
+   *    not the stored one and not the submitted one; `UserNotFound` means the
+   *    session points at a profile that is gone, which is the same 401 as (1).
+   *
+   * ## What is deliberately absent
+   *
+   * No audit row. `audit_events` has no `DELETE` for any role, so anything
+   * written there is permanent, and its `action` column is a CHECK constraint
+   * duplicated by hand into a migration — adding a value is a three-place change
+   * that needs asking first. More importantly, the row that would be worth
+   * writing is the one carrying the date, and that is precisely the row that must
+   * never exist.
+   *
+   * Nothing is logged either. The value never reaches a logger call in this
+   * file, and `LOG_REDACT_PATHS` covers `req.body.date_of_birth` and
+   * `*.dateOfBirth` as the floor underneath that.
+   *
+   * There is also no way BACK. No endpoint updates a date of birth that is
+   * already set, by design: changing it goes through support, and that flow is
+   * not part of this epic.
+   */
+  async recordDateOfBirth(cookieHeader: unknown, body: unknown): Promise<AuthOutcome> {
+    const user = await this.userFromSession(cookieHeader);
+    if (user === null) {
+      return { kind: 'json', status: 401, body: unauthenticated(), cookies: [] };
+    }
+
+    // `unknown` all the way in: a JSON body is whatever the caller sent, and
+    // `parseDateOfBirth` is total over `unknown` for exactly this reason.
+    const submitted =
+      body !== null && typeof body === 'object'
+        ? (body as Record<string, unknown>)[DATE_OF_BIRTH_FIELD]
+        : undefined;
+    const dateOfBirth = parseDateOfBirth(submitted, this.clock.now());
+    if (dateOfBirth === null) {
+      return { kind: 'json', status: 400, body: invalidDateOfBirth(), cookies: [] };
+    }
+
+    const outcome = await this.identity.recordDateOfBirth(
+      user.id,
+      dateOfBirth,
+      this.clock.now(),
+    );
+    if (!outcome.ok) {
+      return outcome.reason === 'UserNotFound'
+        ? { kind: 'json', status: 401, body: unauthenticated(), cookies: [] }
+        : { kind: 'json', status: 409, body: dateOfBirthAlreadySet(), cookies: [] };
+    }
+
+    // The updated profile, through the same projection `/me` uses — so the client
+    // gets the new flags without a second round trip, and gets them from the one
+    // function that decides what may leave this process.
+    return {
+      kind: 'json',
+      status: 200,
+      body: toCurrentUser(outcome.user, this.clock),
+      cookies: [],
+    };
+  }
+
+  /**
+   * The person behind a session cookie, or `null` for every reason there is.
+   *
+   * Extracted because `/me` and the declaration endpoint have to authenticate
+   * IDENTICALLY. Written twice, the second copy is where a missing expiry check
+   * or a different hash eventually appears, and the difference would show up as
+   * one endpoint accepting a session the other rejects.
+   *
+   * It collapses "no cookie", "unknown or expired session" and "the session
+   * points at a user that no longer exists" into one `null` on purpose: all three
+   * are a 401 to the caller, and distinguishing them in the response tells
+   * somebody probing which of the three they achieved.
+   */
+  private async userFromSession(cookieHeader: unknown): Promise<User | null> {
     const presented = parseCookies(cookieHeader)[SESSION_COOKIE_NAME];
     if (presented === undefined) {
-      return { kind: 'json', status: 401, body: unauthenticated(), cookies: [] };
+      return null;
     }
 
     const read = await this.sessions.readByAccessTokenHash(
@@ -597,15 +723,10 @@ export class AuthService {
       this.clock.now(),
     );
     if (!read.ok) {
-      return { kind: 'json', status: 401, body: unauthenticated(), cookies: [] };
+      return null;
     }
 
-    const user = await this.identity.findUserById(read.session.userId);
-    if (user === null) {
-      return { kind: 'json', status: 401, body: unauthenticated(), cookies: [] };
-    }
-
-    return { kind: 'json', status: 200, body: toCurrentUser(user), cookies: [] };
+    return this.identity.findUserById(read.session.userId);
   }
 
   /**
@@ -1159,12 +1280,33 @@ function refreshFailureReason(reason: SessionRefusalReason): SignInFailureReason
  *
  * `email` is not in the output type at all. That is the point: the client has
  * never needed it, and a field that is never sent is a field that cannot leak.
+ *
+ * ## Story 1.4: two booleans, and never the date
+ *
+ * `date_of_birth` is deliberately absent from the object literal below AND from
+ * `currentUserSchema`, which is two independent reasons it cannot travel. The
+ * schema is the mechanical one: `.parse()` strips keys the object does not
+ * declare, so even a future edit that adds `date_of_birth: user.dateOfBirth`
+ * here would produce a body without it. That is the whole reason this function
+ * parses instead of returning a literal.
+ *
+ * What DOES travel is `isProfileComplete` and `isAdult`, both computed by
+ * `packages/domain`. The rule is not re-derived here and must not be: `apps/web`
+ * displays what this returns, Story 1.5's money gate will call the same domain
+ * function, and a second copy of "born before which day" is how the API and the
+ * guard eventually disagree about one person.
+ *
+ * The clock is a parameter rather than `new Date()` for the same reason it is one
+ * in the domain: a projection that reads the wall clock cannot be tested at a
+ * chosen instant, and the flow suite runs on a `FixedClock`.
  */
-export function toCurrentUser(user: User) {
+export function toCurrentUser(user: User, clock: ClockPort) {
   return currentUserSchema.parse({
     id: user.id,
     display_name: user.displayName,
     avatar_url: user.avatarUrl,
     role: user.role,
+    profile_completed: isProfileComplete(user),
+    is_over_18: isAdult(user, clock),
   });
 }

@@ -104,9 +104,15 @@ describe('the migration cannot lose the properties the story depends on', () => 
     expect(statement).not.toMatch(/UNIQUE \(\s*email\s*\)/i);
   });
 
-  it('does not add date_of_birth — that column belongs to Story 1.4', () => {
+  it('still does not create date_of_birth inline — it arrives in its own migration', () => {
     // COMMENT statements are excluded: one of them says, in prose, that the column
-    // arrives in 1.4. What must not exist is a DDL statement creating it.
+    // arrives in 1.4. What must not exist is a DDL statement creating it HERE.
+    //
+    // This is no longer "the column does not exist" — Story 1.4 added it, in
+    // `1788480100000_user-date-of-birth.js`, and the suite below reads that file.
+    // What is still true and still worth pinning is that this migration is not
+    // where it comes from: editing an already-applied migration is a change that
+    // runs on a fresh database and silently does not run on any existing one.
     const ddl = statements().filter((statement) => !statement.includes('COMMENT ON'));
     expect(ddl.join('\n')).not.toContain('date_of_birth');
   });
@@ -144,5 +150,93 @@ describe('the migration cannot lose the properties the story depends on', () => 
     for (const statement of statements().filter((s) => s.trimStart().startsWith('GRANT'))) {
       expect(statement, 'DELETE is never granted in this repo').not.toContain('DELETE');
     }
+  });
+});
+
+/**
+ * Story 1.4's migration, read the same way: run it against a fake `pgm` and look
+ * at the SQL it emits, rather than grepping the file for a word.
+ *
+ * The properties below are the ones that would each fail SILENTLY. A `NOT NULL`
+ * breaks every first sign-in, but only against a database that already has rows
+ * with no date of birth. A `DEFAULT` turns a catalogue-only change into a table
+ * rewrite, which is fine on a laptop and an outage on a real database. A GRANT to
+ * the wrong role hands the write to the process AD-8 says must never have it.
+ */
+const DATE_OF_BIRTH_MIGRATION = path.resolve(
+  __dirname,
+  '..',
+  'migrations',
+  '1788480100000_user-date-of-birth.js',
+);
+
+function dateOfBirthStatements(): string[] {
+  const collected: string[] = [];
+  const pgm: FakePgm = { sql: (statement) => void collected.push(statement) };
+  delete require.cache[require.resolve(DATE_OF_BIRTH_MIGRATION)];
+  const migration = require(DATE_OF_BIRTH_MIGRATION) as { up: (pgm: FakePgm) => void };
+  migration.up(pgm);
+  return collected;
+}
+
+describe('the date-of-birth migration (Story 1.4)', () => {
+  const ddl = (): string =>
+    dateOfBirthStatements()
+      .filter((statement) => !statement.includes('COMMENT ON'))
+      .join('\n');
+
+  it('adds the column to the existing users table', () => {
+    expect(ddl()).toContain('ALTER TABLE users');
+    expect(ddl()).toContain('date_of_birth');
+  });
+
+  it('stores a DAY, not an instant', () => {
+    // `timestamptz` would force every reader to choose a time zone before it could
+    // say which day somebody was born on — the "two readings of one value" class
+    // the UTC rule exists to close.
+    expect(ddl()).toMatch(/date_of_birth\s+date\b/);
+    expect(ddl()).not.toMatch(/date_of_birth\s+timestamptz/);
+  });
+
+  it('leaves the column NULLABLE, because NULL is the "not declared yet" state', () => {
+    // Story 1.2 inserts a users row at first login, before anybody has been asked.
+    // NOT NULL here fails every one of those inserts.
+    expect(ddl()).not.toMatch(/date_of_birth[^;]*NOT NULL/i);
+  });
+
+  it('adds no DEFAULT, so the change stays catalogue-only on a populated table', () => {
+    expect(ddl()).not.toMatch(/date_of_birth[^;]*DEFAULT/i);
+  });
+
+  it('adds no second column claiming to say the same thing', () => {
+    // One source of truth. A `profile_completed` flag beside the date is a second
+    // field describing one fact, with nothing keeping the two in step.
+    expect(ddl()).not.toContain('profile_completed');
+    expect(ddl()).not.toContain('is_over_18');
+  });
+
+  it('grants nothing new — privileges are per table and stuwith_api already writes users', () => {
+    for (const statement of dateOfBirthStatements()) {
+      expect(statement.trimStart().startsWith('GRANT')).toBe(false);
+    }
+  });
+
+  it('contains no DELETE anywhere, including in a comment', () => {
+    // AD-12's posture: no role holds DELETE on anything in this repository, and
+    // the word appearing in a migration is the first step towards one that does.
+    for (const statement of dateOfBirthStatements()) {
+      expect(statement).not.toContain('DELETE');
+    }
+  });
+
+  it('says in the schema itself that the column must not leave apps/api', () => {
+    // The one place a DBA reading `\d+ users` will see it. A rule that lives only
+    // in a TypeScript docblock is invisible to whoever is holding a psql prompt.
+    const comment = dateOfBirthStatements().find((statement) =>
+      statement.includes('COMMENT ON COLUMN users.date_of_birth'),
+    );
+    expect(comment).toBeDefined();
+    expect(comment).toContain('PII');
+    expect(comment).toContain('NULL');
   });
 });

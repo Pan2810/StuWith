@@ -1,7 +1,10 @@
 import { z } from 'zod';
 import { auditEventSchema } from './audit';
 import {
+  AUTH_DATE_OF_BIRTH_PATH,
+  DATE_OF_BIRTH_FIELD,
   MAX_SIGN_IN_RETURN_PATH_LENGTH,
+  MIN_DATE_OF_BIRTH_YEAR,
   SIGN_IN_OUTCOME_QUERY_PARAM,
   SIGN_IN_RETURN_PATH_QUERY_PARAM,
   currentUserSchema,
@@ -215,7 +218,12 @@ function authPaths(): Record<string, unknown> {
     },
     '/v1/auth/me': {
       get: {
-        summary: 'The signed-in profile — no email, no provider id',
+        summary: 'The signed-in profile — no email, no provider id, no date of birth',
+        description:
+          'Answers identically whether or not the profile has been completed; ' +
+          'the two booleans say which. Refusing an incomplete profile here would ' +
+          'lock somebody out of the only endpoint that can tell them what is ' +
+          'missing.',
         responses: {
           '200': {
             description: 'The signed-in user',
@@ -224,6 +232,82 @@ function authPaths(): Record<string, unknown> {
             },
           },
           '401': unauthenticated,
+        },
+      },
+    },
+    [AUTH_DATE_OF_BIRTH_PATH]: dateOfBirthPath(),
+  };
+}
+
+/**
+ * The first-login declaration, described here because a mobile client has the
+ * same step to complete and a route that exists only as a NestJS decorator is
+ * invisible to it (AD-13).
+ *
+ * Two things the document has to say that a schema cannot: that the write happens
+ * exactly ONCE, and that there is no endpoint to change it afterwards. An
+ * integrator who assumed a `PATCH` existed would build a settings screen around a
+ * route that will never be added.
+ */
+function dateOfBirthPath(): Record<string, unknown> {
+  return {
+    post: {
+      summary: 'Declare the date of birth — once, and only once',
+      description:
+        'Writes the date of birth on a profile that has none. A profile that ' +
+        'already has one is refused with 409 and the stored value is unchanged, ' +
+        'including when two requests arrive at the same moment: the write is a ' +
+        'single conditional UPDATE, so exactly one of them can win. There is ' +
+        'deliberately no endpoint that changes an existing value — that goes ' +
+        'through support. The date is never echoed back and never appears in any ' +
+        'response; what the caller gets is the same CurrentUser projection ' +
+        `${'`GET /v1/auth/me`'} returns, carrying the two booleans.`,
+      requestBody: {
+        required: true,
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              required: [DATE_OF_BIRTH_FIELD],
+              properties: {
+                [DATE_OF_BIRTH_FIELD]: {
+                  type: 'string',
+                  // Published so a client formats it the one accepted way rather
+                  // than sending `toISOString()` and being refused with a sentence
+                  // that deliberately does not explain formats.
+                  pattern: '^\\d{4}-\\d{2}-\\d{2}$',
+                  description:
+                    'A calendar day as YYYY-MM-DD. No time, no time zone, no ' +
+                    'surrounding whitespace. Must name a day that exists, must ' +
+                    `not be in the future, and must be in ${String(MIN_DATE_OF_BIRTH_YEAR)} or later.`,
+                  example: '1999-04-02',
+                },
+              },
+            },
+          },
+        },
+      },
+      responses: {
+        '200': {
+          description: 'Recorded; the updated profile, with no date of birth in it',
+          content: {
+            'application/json': { schema: { $ref: '#/components/schemas/CurrentUser' } },
+          },
+        },
+        '400': {
+          description: 'The value is not a usable date of birth. Nothing was written.',
+          content: {
+            'application/json': { schema: { $ref: '#/components/schemas/ErrorEnvelope' } },
+          },
+        },
+        '401': unauthenticated,
+        '409': {
+          description:
+            'The profile already has a date of birth. The stored value is ' +
+            'unchanged and is not disclosed.',
+          content: {
+            'application/json': { schema: { $ref: '#/components/schemas/ErrorEnvelope' } },
+          },
         },
       },
     },

@@ -25,9 +25,41 @@ export const LOG_REDACT_PATHS: readonly string[] = [
   'req.body.message',
   '*.email',
   '*.date_of_birth',
+  /**
+   * The camelCase half, and it was a real hole rather than symmetry.
+   *
+   * `*.date_of_birth` covered the WIRE spelling — the field name in a request
+   * body — while `User` in `packages/domain` carries `dateOfBirth`, and that is
+   * the object anything in `apps/api` would actually log. A single
+   * `logger.info({ user })` therefore wrote a date of birth to disk, past a
+   * redaction list that named the field twice in the wrong case.
+   *
+   * Every other pair in this list already comes in both spellings
+   * (`code_verifier`/`codeVerifier`, `id_token`/`idToken`) for exactly this
+   * reason; this one was missed when the domain type was written.
+   */
+  '*.dateOfBirth',
   '*.access_token',
   '*.refresh_token',
   '*.provider_id',
+  /**
+   * The other three halves of the same hole, closed at the same time.
+   *
+   * `*.dateOfBirth` was the one Story 1.4 went looking for, and finding it made
+   * the shape obvious: every value here crosses two vocabularies — snake_case on
+   * the wire, camelCase on the `packages/domain` types — and a list naming only
+   * one spelling protects only one of them. The handshake fields added in Story
+   * 1.2 already come in pairs (`code_verifier`/`codeVerifier`,
+   * `id_token`/`idToken`); these three predate that convention and were left
+   * behind by it.
+   *
+   * Patching only the reported example is the failure mode `AGENTS.md` records at
+   * length for the trusted-proxy list. `logging.test.ts` now asserts the pairing
+   * as a rule over the set, so a fifth field added in one spelling fails there.
+   */
+  '*.accessToken',
+  '*.refreshToken',
+  '*.providerId',
 
   // ── Story 1.2, the OAuth handshake ────────────────────────────────────────
   //

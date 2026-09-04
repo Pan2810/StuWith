@@ -27,6 +27,10 @@ describe('LOG_REDACT_PATHS (AD-15)', () => {
     'res.headers["set-cookie"]',
     '*.email',
     '*.date_of_birth',
+    // The camelCase half of the same field. `packages/domain`'s `User` carries
+    // `dateOfBirth`, so the snake_case path alone covered the request body and
+    // missed the object anything in `apps/api` would actually log.
+    '*.dateOfBirth',
     '*.access_token',
     '*.refresh_token',
     '*.provider_id',
@@ -34,6 +38,23 @@ describe('LOG_REDACT_PATHS (AD-15)', () => {
 
   it.each(required)('redacts %s', (path) => {
     expect(LOG_REDACT_PATHS).toContain(path);
+  });
+
+  it('covers each PII field in BOTH the wire spelling and the domain spelling', () => {
+    /**
+     * The class of hole `*.dateOfBirth` closed rather than the one example.
+     *
+     * A payload crosses two vocabularies: snake_case on the wire, camelCase on
+     * the `packages/domain` types. A redaction list that names only one of them
+     * protects only one of them, and the half it misses is usually the one
+     * `logger.info({ user })` actually writes.
+     */
+    const bothSpellings = ['date_of_birth', 'access_token', 'refresh_token', 'provider_id'];
+    for (const snake of bothSpellings) {
+      const camel = snake.replace(/_([a-z])/g, (_match, letter: string) => letter.toUpperCase());
+      expect(LOG_REDACT_PATHS, `no path covers ${snake}`).toContain(`*.${snake}`);
+      expect(LOG_REDACT_PATHS, `no path covers ${camel}`).toContain(`*.${camel}`);
+    }
   });
 
   it('covers every field the spine names as never-loggable', () => {

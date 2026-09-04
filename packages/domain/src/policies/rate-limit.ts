@@ -45,6 +45,16 @@ export const RATE_LIMIT_ACTIONS = [
   'auth_callback',
   'auth_refresh',
   'auth_me',
+  /**
+   * Story 1.4's declaration endpoint.
+   *
+   * It gets an action for the same reason every route but `logout` has one: the
+   * decorator's default is "no limit", so a route added without one is silently
+   * unlimited. This one is a WRITE reachable with a session cookie, and while the
+   * conditional UPDATE means a flood can only ever store one value, a flood still
+   * costs a database round trip each.
+   */
+  'auth_date_of_birth',
 ] as const;
 
 export type RateLimitAction = (typeof RATE_LIMIT_ACTIONS)[number];
@@ -67,6 +77,9 @@ export const RATE_LIMIT_ACTION_CHANNELS = {
   auth_callback: 'browser',
   auth_refresh: 'json',
   auth_me: 'json',
+  // Called with `fetch` from the declaration screen, by code that reads an
+  // envelope — so a refusal travels as JSON, not as a redirect.
+  auth_date_of_birth: 'json',
 } as const satisfies Record<RateLimitAction, 'browser' | 'json'>;
 
 export type RateLimitChannel = (typeof RATE_LIMIT_ACTION_CHANNELS)[RateLimitAction];

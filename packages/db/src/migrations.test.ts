@@ -283,14 +283,99 @@ suite('Story 1.2 — identity tables, ownership enforced by GRANT', () => {
     ]);
   });
 
-  it('has no date_of_birth column — that is Story 1.4', async () => {
+  /**
+   * Story 1.4. This example used to assert the column did NOT exist; it now
+   * asserts the three things about it that would each fail silently, against a
+   * real PostgreSQL rather than against the SQL text (which
+   * `identity-schema.test.ts` covers separately).
+   *
+   * `is_nullable` is the load-bearing one. Story 1.2 inserts a `users` row at
+   * first login, before anybody has been asked anything, so a `NOT NULL` here
+   * breaks every first sign-in — and it breaks it at INSERT time, in production,
+   * on a code path no schema test would otherwise execute.
+   */
+  it('adds date_of_birth to users as a NULLABLE date, and to nothing else', async () => {
+    const result = await withClient(pg2.connectionString, (client) =>
+      client.query<{
+        table_name: string;
+        data_type: string;
+        is_nullable: string;
+        column_default: string | null;
+      }>(
+        `SELECT table_name, data_type, is_nullable, column_default
+           FROM information_schema.columns
+          WHERE table_schema = 'public' AND column_name = 'date_of_birth'
+          ORDER BY table_name`,
+      ),
+    );
+
+    expect(result.rows).toEqual([
+      {
+        table_name: 'users',
+        // A DAY, not an instant: `timestamptz` would force every reader to pick a
+        // time zone before it could say which day somebody was born on.
+        data_type: 'date',
+        // NULL is the "declaration not made yet" state, and the only one.
+        is_nullable: 'YES',
+        // No default, which is also what keeps `ADD COLUMN` catalogue-only on a
+        // table that already has rows — the property this whole suite exists for.
+        column_default: null,
+      },
+    ]);
+  });
+
+  it('adds no second column claiming to say whether the profile is complete', async () => {
+    // One source of truth. Two columns describing one fact are two columns that
+    // can disagree, and nothing in this schema could keep them in step.
     const result = await withClient(pg2.connectionString, (client) =>
       client.query<{ column_name: string }>(
         `SELECT column_name FROM information_schema.columns
-          WHERE table_schema = 'public' AND column_name = 'date_of_birth'`,
+          WHERE table_schema = 'public'
+            AND column_name IN ('profile_completed', 'is_over_18', 'age')`,
       ),
     );
     expect(result.rows).toEqual([]);
+  });
+
+  it('lets stuwith_api write date_of_birth without a column grant of its own', async () => {
+    // Privileges are per TABLE in PostgreSQL, and `stuwith_api` already holds
+    // UPDATE on `users` from the Story 1.2 migration — so the 1.4 migration adds
+    // no GRANT at all. This is the example that proves the omission is correct
+    // rather than forgotten.
+    await expect(
+      withClient(apiUrl, async (client) => {
+        const user = await client.query<{ id: string }>(
+          `INSERT INTO users (display_name) VALUES ('Dob Writer') RETURNING id`,
+        );
+        const id = user.rows[0]?.id;
+        const updated = await client.query(
+          `UPDATE users SET date_of_birth = $2::date
+            WHERE id = $1 AND date_of_birth IS NULL`,
+          [id, '1999-04-02'],
+        );
+        return updated.rowCount;
+      }),
+    ).resolves.toBe(1);
+  });
+
+  it('gives stuwith_realtime no way to write it either', async () => {
+    // AD-8: a person's identity, and therefore their age, has exactly one writer.
+    const privileges = await withClient(pg2.connectionString, (client) =>
+      client.query<{ can_update: boolean }>(
+        `SELECT has_table_privilege('stuwith_realtime', 'users', 'UPDATE') AS can_update`,
+      ),
+    );
+    expect(privileges.rows[0]?.can_update).toBe(false);
+  });
+
+  it('refuses a date the column cannot represent, at the database', async () => {
+    // The `date` type is the floor under `parseDateOfBirth`: even a caller that
+    // bypassed the application rule cannot store the 30th of February.
+    await expect(
+      withClient(apiUrl, (client) =>
+        client.query(`UPDATE users SET date_of_birth = '2026-02-30'::date WHERE false`),
+      ),
+    ).rejects.toThrow();
   });
 
   it('lets stuwith_api write the identity tables', async () => {

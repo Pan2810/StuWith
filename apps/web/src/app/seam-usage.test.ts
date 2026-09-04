@@ -98,10 +98,17 @@ describe('every authenticated call goes through the seam', () => {
     expect(offending, `${file} must call the seam, not fetch`).toEqual([]);
   });
 
-  it('the login page asks the provider for the seam and for the API origin', () => {
-    // The other half of the same rule: not calling `fetch` is not enough if the
-    // page never asks for the wrapper either.
-    const source = withoutComments(readFileSync(join(APP_ROOT, 'dang-nhap', 'page.tsx'), 'utf8'));
+  /**
+   * The other half of the same rule: not calling `fetch` is not enough if a page
+   * never asks for the wrapper either. Every screen that talks to `/v1` is listed
+   * here — a new one that quietly reads `process.env` and builds its own call
+   * would satisfy the sweep above while opting out of the whole feature.
+   */
+  it.each([
+    [join('dang-nhap', 'page.tsx')],
+    [join('khai-ngay-sinh', 'page.tsx')],
+  ])('%s asks the provider for the seam and for the API origin', (file) => {
+    const source = withoutComments(readFileSync(join(APP_ROOT, file), 'utf8'));
 
     expect(source).toContain('useAuthorizedFetch()');
     expect(source).toContain('useApiBaseUrl()');
