@@ -3,11 +3,13 @@ import {
   AUTH_COOKIE_PATH,
   REFRESH_COOKIE_NAME,
   SESSION_COOKIE_NAME,
+  SIGN_IN_OUTCOME_QUERY_PARAM,
   currentUserSchema,
   isAuthProvider,
   makeError,
   type AuthProvider,
   type ErrorEnvelope,
+  type SignInOutcome,
 } from '@stuwith/contracts';
 import type {
   AuditPort,
@@ -53,7 +55,13 @@ import {
  * decisions rather than as reply plumbing.
  */
 export type AuthOutcome =
-  | { readonly kind: 'redirect'; readonly location: string; readonly cookies: readonly string[] }
+  | {
+      readonly kind: 'redirect';
+      readonly location: string;
+      /** Defaults to 302. 303 where the request may have been a POST — see `failedSignIn`. */
+      readonly status?: 302 | 303;
+      readonly cookies: readonly string[];
+    }
   | {
       readonly kind: 'json';
       readonly status: number;
@@ -81,10 +89,16 @@ interface OAuthStatePayload {
 }
 
 /**
- * User-facing strings are Story 1.3's job. These are placeholders that say
+ * The strings the JSON endpoints (`/me`, `/refresh`) answer with. They say
  * something true and nothing technical: no provider name, no provider error code,
  * no hint about which step failed. That last part is not laziness — telling an
  * attacker whether the `state` or the `code` was wrong is free information.
+ *
+ * The CALLBACK leg no longer has a message here at all. A person arriving on that
+ * URL got there by a browser redirect from a provider, so a JSON body is a wall of
+ * braces on a white page; Story 1.3 turned every callback outcome into a redirect
+ * back to the login page carrying a {@link SignInOutcome}, and the sentence they
+ * read lives in `apps/web`.
  */
 const MESSAGES = {
   unauthenticated: 'Phiên đăng nhập không hợp lệ. Hãy thử đăng nhập lại.',
@@ -208,16 +222,55 @@ export class AuthService {
     const now = this.clock.now();
     const jar = parseCookies(cookieHeader);
 
+    // The provider's own verdict, read BEFORE anything of ours.
+    //
+    // This is where "the user cancelled" is born. Until Story 1.3 the parameter
+    // was not read at all, so a refusal at the consent screen arrived with no
+    // `code`, fell through to `code_missing`, and was counted as a failure — the
+    // product telling someone who simply changed their mind that something broke.
+    //
+    // Checking it first is also the honest order: once the provider has said no,
+    // our `state` bookkeeping has nothing left to decide.
+    //
+    // `firstQueryValue`, not `typeof === 'string'`: a repeated `?error=a&error=b`
+    // reaches Fastify as an ARRAY, and a bare `typeof` check let it fall through
+    // to the `code` test below — reporting a cancellation as a technical failure,
+    // which is the exact confusion this branch exists to end. A present-but-empty
+    // `?error=` is a refusal too, so PRESENCE is the condition, not length.
+    const providerError = firstQueryValue(query['error']);
+    if (providerError !== undefined) {
+      return this.failedSignIn(
+        requestId,
+        provider,
+        isCancellation(providerError) ? 'user_cancelled' : 'provider_authorize_failed',
+        now,
+        jar,
+        this.attemptCookieFor(provider, query, jar),
+      );
+    }
+
     const stateCheck = this.readState(provider, query, jar, now);
     if (!stateCheck.ok) {
-      return this.failedSignIn(requestId, provider, stateCheck.reason, now, jar);
+      return this.failedSignIn(
+        requestId,
+        provider,
+        stateCheck.reason,
+        now,
+        jar,
+        stateCheck.cookieName,
+      );
     }
 
     const code = query['code'];
     if (typeof code !== 'string' || code.length === 0) {
-      // The user pressing "cancel" also lands here. Story 1.3 owns telling those
-      // two apart in what the person actually sees; the audit row already does.
-      return this.failedSignIn(requestId, provider, 'code_missing', now, jar);
+      return this.failedSignIn(
+        requestId,
+        provider,
+        'code_missing',
+        now,
+        jar,
+        stateCheck.cookieName,
+      );
     }
 
     let identity;
@@ -239,7 +292,7 @@ export class AuthService {
       // Both are "this login cannot complete", both used to be a silent 500.
       const reason =
         error instanceof IdentityInputError ? 'identity_rejected' : 'provider_exchange_failed';
-      return this.failedSignIn(requestId, provider, reason, now, jar);
+      return this.failedSignIn(requestId, provider, reason, now, jar, stateCheck.cookieName);
     }
 
     let resolved;
@@ -247,7 +300,14 @@ export class AuthService {
       resolved = await this.identity.findOrCreateByIdentity(identity, now);
     } catch (error) {
       if (error instanceof IdentityInputError) {
-        return this.failedSignIn(requestId, provider, 'identity_rejected', now, jar);
+        return this.failedSignIn(
+          requestId,
+          provider,
+          'identity_rejected',
+          now,
+          jar,
+          stateCheck.cookieName,
+        );
       }
       // A store FAULT is not a refusal. A database outage must not read to the
       // user as "your account was rejected" — that is the distinction the whole
@@ -450,60 +510,266 @@ export class AuthService {
     now: Date,
   ):
     | { ok: true; payload: OAuthStatePayload; cookieName: string }
-    | { ok: false; reason: SignInFailureReason } {
+    | { ok: false; reason: SignInFailureReason; cookieName?: string } {
     const presented = query['state'];
     if (typeof presented !== 'string' || presented.length === 0) {
       return { ok: false, reason: 'state_missing' };
     }
 
-    const candidates = oauthStateCookies(jar);
-    if (candidates.length === 0) {
+    if (oauthStateCookies(jar).length === 0) {
       return { ok: false, reason: 'state_missing' };
     }
 
-    // Tracks the best explanation across candidates, so a browser with one stale
-    // cookie and one good one still reports the good one's outcome.
-    let refusal: SignInFailureReason = 'state_mismatch';
+    const attempt = this.findAttempt(query, jar);
+    if (attempt === undefined) {
+      // Nothing the browser is carrying is both signed by us and about this
+      // `state`. There is no attempt to name, and so no cookie to clear.
+      return { ok: false, reason: 'state_mismatch' };
+    }
 
-    for (const [name, value] of candidates) {
+    if (attempt.payload.p !== provider) {
+      // A login started at one provider must not be completable at another — and
+      // it must not be DESTROYED at another either. The cookie name is withheld
+      // here on purpose: this attempt belongs to a different provider, so it is
+      // very likely a live handshake in another tab, and returning its name would
+      // hand the caller a cookie to clear. `/facebook/callback?state=<a Google
+      // attempt's state>` would then kill the Google tab's login on demand.
+      return { ok: false, reason: 'state_mismatch' };
+    }
+
+    // Past this point the attempt is identified AND is ours, so the refusal below
+    // can say which handshake died — which is what lets the caller clear one
+    // cookie instead of all of them.
+    if (typeof attempt.payload.x !== 'number' || attempt.payload.x * 1000 <= now.getTime()) {
+      return { ok: false, reason: 'state_expired', cookieName: attempt.name };
+    }
+    return { ok: true, payload: attempt.payload, cookieName: attempt.name };
+  }
+
+  /**
+   * The in-flight attempt this callback belongs to, located by verified CONTENT
+   * rather than by cookie name — see `readState`'s note. Two open tabs mean two
+   * cookies, and only the one whose signed `state` matches is this attempt.
+   *
+   * It is split out because the provider-said-no path needs the same answer
+   * BEFORE `readState` runs: even a cancelled handshake leaves a cookie to clean
+   * up, and cleaning up the other tab's would break a login still in progress.
+   */
+  private findAttempt(
+    query: Readonly<Record<string, unknown>>,
+    jar: Record<string, string>,
+  ): { name: string; payload: OAuthStatePayload } | undefined {
+    const presented = query['state'];
+    if (typeof presented !== 'string' || presented.length === 0) {
+      return undefined;
+    }
+    for (const [name, value] of oauthStateCookies(jar)) {
       const payload = verifyPayload<OAuthStatePayload>(this.config.SESSION_COOKIE_SECRET, value);
       if (payload === null) {
         continue;
       }
       // Constant time: `state` is the CSRF defence for the whole flow, and `===`
       // leaks the length of the matching prefix.
-      if (!safeEquals(presented, payload.s)) {
-        continue;
+      if (safeEquals(presented, payload.s)) {
+        return { name, payload };
       }
-      if (payload.p !== provider) {
-        // A login started at one provider must not be completable at another.
-        refusal = 'state_mismatch';
-        continue;
-      }
-      if (typeof payload.x !== 'number' || payload.x * 1000 <= now.getTime()) {
-        refusal = 'state_expired';
-        continue;
-      }
-      return { ok: true, payload, cookieName: name };
     }
-    return { ok: false, reason: refusal };
+    return undefined;
   }
 
+  /**
+   * This attempt's cookie, but only if the attempt is actually THIS provider's.
+   *
+   * The provider check is the whole point. `state` is matched across every state
+   * cookie the browser holds, so without it `/v1/auth/facebook/callback?
+   * error=access_denied&state=<a Google attempt's state>` clears the Google
+   * handshake and ends a login happening in another tab — a URL anyone can build
+   * once they have seen their own `state` go past.
+   */
+  private attemptCookieFor(
+    provider: AuthProvider,
+    query: Readonly<Record<string, unknown>>,
+    jar: Record<string, string>,
+  ): string | undefined {
+    const attempt = this.findAttempt(query, jar);
+    return attempt?.payload.p === provider ? attempt.name : undefined;
+  }
+
+  /**
+   * Handshake cookies that cannot possibly belong to a live login: past their
+   * expiry, or not signed by us at all (a rotated `SESSION_COOKIE_SECRET` leaves
+   * exactly that).
+   *
+   * Somebody has to sweep these. `start()` mints one per attempt under a random
+   * handle with no cap, and a person who opens the login page repeatedly and
+   * finishes nothing accumulates one cookie per attempt until each `Max-Age`
+   * runs out — the browser sends them all, on every `/v1/auth` request, and a
+   * large enough pile is answered with a 431 rather than a login page. Clearing
+   * every state cookie would be the easy sweep and is wrong: it kills whatever
+   * the other tab is in the middle of. Dead ones only.
+   */
+  private deadAttemptCookies(jar: Record<string, string>, now: Date): string[] {
+    const dead: string[] = [];
+    for (const [name, value] of oauthStateCookies(jar)) {
+      const payload = verifyPayload<OAuthStatePayload>(this.config.SESSION_COOKIE_SECRET, value);
+      if (
+        payload === null ||
+        typeof payload.x !== 'number' ||
+        payload.x * 1000 <= now.getTime()
+      ) {
+        dead.push(name);
+      }
+    }
+    return dead;
+  }
+
+  /**
+   * How every callback that does not end in a session ends instead.
+   *
+   * A 401 with a JSON envelope used to live here, and it was wrong for the one
+   * reason that matters: nobody reaches this URL with `fetch`. The provider sends
+   * the BROWSER here, so the JSON body *is* the screen — a page of braces where a
+   * person expected to be back in the app. The outcome now travels as a redirect
+   * to the login page carrying one word from a closed public vocabulary.
+   *
+   * Two things are deliberately not done here:
+   *
+   * - the internal `reason` is not forwarded. It goes into the audit row and stops
+   *   there; {@link publicOutcomeFor} is the only bridge, and it is many-to-few.
+   * - the session and refresh cookies are not cleared. A new login that fails is
+   *   no reason to sign someone out of a session they already had.
+   *
+   * What IS cleared: this attempt's handshake cookie, plus any handshake cookie
+   * that is already dead (see {@link deadAttemptCookies}). Live attempts belonging
+   * to other tabs are left exactly where they are.
+   *
+   * `303`, not `302`. Apple delivers its callback as a cross-site form POST, and
+   * a 302 answer to a POST only means "repeat the request over there" — browsers
+   * downgrade it to GET in practice, but that is convention rather than the spec.
+   * 303 says the downgrade explicitly, and the destination is a page to look at
+   * rather than a resource to re-submit to.
+   */
   private async failedSignIn(
     requestId: string,
     provider: AuthProvider,
     reason: SignInFailureReason,
     now: Date,
     jar: Record<string, string>,
+    stateCookieName: string | undefined,
   ): Promise<AuthOutcome> {
+    // One row per attempt, cancellations included. "Not an error" is a statement
+    // about the interface, not about traceability.
     await recordSignInFailed(this.audit, { requestId, provider, reason, occurredAt: now });
+
+    const location = new URL(`${this.config.WEB_BASE_URL}/dang-nhap`);
+    location.searchParams.set(SIGN_IN_OUTCOME_QUERY_PARAM, publicOutcomeFor(reason));
+
+    // A Set keeps this attempt's cookie from being cleared twice when it is also
+    // the expired one — two identical `Set-Cookie` headers for the same name.
+    const doomed = new Set(this.deadAttemptCookies(jar, now));
+    if (stateCookieName !== undefined) {
+      doomed.add(stateCookieName);
+    }
+
     return {
-      kind: 'json',
-      status: 401,
-      body: unauthenticated(),
-      // Whatever half-finished handshake was in flight is now dead.
-      cookies: clearAllAuthCookies(jar),
+      kind: 'redirect',
+      status: 303,
+      location: location.toString(),
+      cookies: [...doomed].map((name) => clearCookie(name, AUTH_COOKIE_PATH)),
     };
+  }
+}
+
+/**
+ * One query parameter's value, whatever shape the parser produced.
+ *
+ * Fastify turns a repeated `?error=a&error=b` into an array, and code that only
+ * accepts a `string` silently ignores it — here that meant a cancellation being
+ * recorded and shown as a technical failure. First value wins, matching what
+ * `URLSearchParams.get` does and what every provider means by a repeated key.
+ */
+function firstQueryValue(value: unknown): string | undefined {
+  if (typeof value === 'string') {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    const first = value.find((entry) => typeof entry === 'string');
+    return typeof first === 'string' ? first : undefined;
+  }
+  return undefined;
+}
+
+/**
+ * The provider error codes that mean "the person said no", as opposed to "the
+ * person could not be served".
+ *
+ * `access_denied` is RFC 6749's word and what Google, Facebook and Microsoft send;
+ * `user_cancelled_authorize` is Apple's. Everything else a provider can put in
+ * `error` — `server_error`, `temporarily_unavailable`, a misconfigured client — is
+ * a failure, and the person is told so in the same words as every other failure.
+ */
+const PROVIDER_CANCELLATION_ERRORS: readonly string[] = [
+  'access_denied',
+  'user_cancelled_authorize',
+];
+
+function isCancellation(providerError: string): boolean {
+  return PROVIDER_CANCELLATION_ERRORS.includes(providerError);
+}
+
+/**
+ * Internal reason to the word the outside world gets. The heart of this story.
+ *
+ * The tempting version is `return reason` — one line, and it hands out
+ * `provider_exchange_failed`, `state_expired` and `identity_rejected` to anyone
+ * willing to fail a login on purpose. Together those say which part of our
+ * infrastructure is unwell and what is being refused, which is precisely what the
+ * acceptance criterion ("no error code, no failing provider's name") forbids.
+ *
+ * So the collapse is many-to-few, it lives in exactly ONE place, and it is
+ * exhaustive. Adding an internal reason and forgetting to classify it is then a
+ * red typecheck rather than a quiet disclosure: with no `default` branch and a
+ * declared return type, a missing case makes this function fall off the end.
+ *
+ * ## Which of these actually reaches a browser today
+ *
+ * Only the callback leg calls `failedSignIn`, so only the callback reasons ever
+ * become a URL. The six labels in the second group below are reached by no caller
+ * right now: `provider_start_failed` answers JSON 502 from `start()`, and the four
+ * refresh reasons answer JSON 401 from `refresh()` — those are `fetch` callers who
+ * can read an envelope, not people staring at a redirect.
+ *
+ * They stay listed anyway, and not out of tidiness. The exhaustiveness is the
+ * mechanism that makes forgetting impossible, and it only works over the WHOLE
+ * type; carving the unreachable ones out would mean the day one of those legs
+ * starts redirecting too — Story 1.3's deferred AC4, or the same fix applied to
+ * the start leg — the compiler says nothing and a reason with no classification
+ * ships. The grouping records which are live so the next reader is not misled
+ * about how much of this vocabulary is on the wire.
+ */
+function publicOutcomeFor(reason: SignInFailureReason): SignInOutcome {
+  switch (reason) {
+    // Reachable: the callback leg, which is the only caller of `failedSignIn`.
+    case 'user_cancelled':
+      return 'da-huy';
+    case 'provider_authorize_failed':
+    case 'state_missing':
+    case 'state_mismatch':
+    case 'state_expired':
+    case 'code_missing':
+    case 'provider_exchange_failed':
+    case 'identity_rejected':
+      return 'that-bai';
+
+    // Not reachable from here today — see the note above. Classified in advance
+    // so that connecting one of these legs is a code change, not a disclosure.
+    case 'provider_start_failed':
+    case 'refresh_cookie_missing':
+    case 'refresh_token_unknown':
+    case 'refresh_token_expired':
+    case 'session_revoked':
+    case 'session_reuse_detected':
+      return 'that-bai';
   }
 }
 

@@ -105,3 +105,44 @@ export const AUTH_COOKIE_PATH = '/v1/auth';
 
 /** The session cookie is needed by every authenticated endpoint, not just `/v1/auth`. */
 export const SESSION_COOKIE_PATH = '/';
+
+/**
+ * How the last sign-in attempt ended, in the vocabulary the login page is allowed
+ * to read.
+ *
+ * AD-13: this crosses a process boundary — `apps/api` puts it in a redirect and
+ * `apps/web` reads it back out of the URL — so it is declared once, here, and
+ * never redeclared in either app.
+ *
+ * The set is deliberately TINY, and much smaller than the set of things that can
+ * actually go wrong. The internal reasons (`apps/api/src/auth/audit.ts`) include
+ * `provider_exchange_failed`, `state_expired` and `identity_rejected`; strung
+ * together they tell a stranger which piece of our infrastructure is broken and
+ * what is being refused. Collapsing many internal reasons onto two public ones is
+ * what keeps "no error code, no failing provider's name" true as the internal list
+ * grows.
+ *
+ * `da-huy` is not a failure. The person changed their mind at the consent screen,
+ * and presenting that as an error is both untrue and mildly accusing.
+ *
+ * The closed enum is also the injection defence: this value arrives from a URL the
+ * visitor controls, so the login page matches it against this list and renders a
+ * string of its own. Nothing from the URL is ever echoed to the screen.
+ */
+export const SIGN_IN_OUTCOMES = ['that-bai', 'da-huy'] as const;
+
+export const signInOutcomeSchema = z.enum(SIGN_IN_OUTCOMES);
+export type SignInOutcome = z.infer<typeof signInOutcomeSchema>;
+
+export function isSignInOutcome(value: unknown): value is SignInOutcome {
+  return typeof value === 'string' && (SIGN_IN_OUTCOMES as readonly string[]).includes(value);
+}
+
+/**
+ * The query parameter the outcome rides in, on the way back to `/dang-nhap`.
+ *
+ * Vietnamese, like the route it belongs to: the URL is a user-facing surface in a
+ * product whose default locale is Vietnamese, and a `?result=` bolted onto
+ * `/dang-nhap` reads as somebody else's plumbing showing through.
+ */
+export const SIGN_IN_OUTCOME_QUERY_PARAM = 'ket-qua';

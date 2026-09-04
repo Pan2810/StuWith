@@ -86,3 +86,19 @@ Việc đã được xác nhận là thật nhưng cố ý hoãn. Mỗi mục gh
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-2-dang-nhap-bang-bon-provider.md`
   summary: Không có kiểm tra Origin/Sec-Fetch-Site tường minh cho POST /v1/auth/refresh và /v1/auth/logout; SameSite=Lax là phòng tuyến CSRF duy nhất và không test nào khẳng định điều đó.
   evidence: refresh xoay credential và logout thu hồi cả chuỗi — hai thao tác đổi trạng thái. SameSite=Lax thực tế chặn POST cross-site, nên đây là quyết định hợp lệ, nhưng nó đang ngầm định thay vì được ghi lại và ghim bằng test.
+
+- source_spec: none
+  summary: AC3 của Story 1.3 — rate limit theo IP và theo user, khoá brute-force đăng nhập, kèm đếm ngược thật bằng giây.
+  evidence: Tách khỏi Story 1.3 ngày 2026-09-04 theo quyết định của con người. Ship độc lập được: thuần backend, không đụng khối hiển thị kết quả trên trang đăng nhập. Cần thêm một client Valkey (VALKEY_URL đã validate ở packages/config/src/schema.ts:121 nhưng chưa gì kết nối tới). Đây là lớp bảo vệ duy nhất chống dò đăng nhập ở tầng ứng dụng, nên đừng để trôi quá lâu.
+
+- source_spec: none
+  summary: AC4 của Story 1.3 — phiên hết hạn giữa buổi thì hiện dialog đăng nhập lại và quay về đúng chỗ đang đứng, không đá người dùng ra ngoài.
+  evidence: Tách khỏi Story 1.3 ngày 2026-09-04 theo quyết định của con người. Chủ yếu ở client, ship độc lập được. Con người đã chốt hướng: dựng cơ chế tổng quát (lưu vị trí + khôi phục sau khi đăng nhập lại) để màn phòng live của Epic 2 cắm vào, chứ không dựng riêng cho phòng học. Ràng buộc bảo mật bắt buộc: chỉ khôi phục đường dẫn same-origin, không bao giờ nhận URL tuyệt đối — nếu không đây là một lỗ open-redirect nằm ngay trong luồng đăng nhập.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-3-trang-thai-loi-dang-nhap.md`
+  summary: Chặng start (GET /v1/auth/:provider/start) vẫn trả JSON 502 thẳng vào trình duyệt khi discovery của provider hỏng — đúng khiếm khuyết mà Story 1.3 sửa cho chặng callback, chỉ lệch một chặng.
+  evidence: Người dùng tới URL này bằng cách bấm nút đăng nhập, nên thân JSON CHÍNH LÀ màn hình họ thấy. Nằm ngoài khối đóng băng của spec 1.3 (Matrix chỉ phủ chặng callback) nên không sửa trong story này. Cơ chế đã có sẵn: failedSignIn giờ redirect kèm mã kết quả, chặng start chỉ việc dùng lại — nhưng cần một mã kết quả mới vì "provider đang hỏng" không phải "đăng nhập thất bại".
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-3-trang-thai-loi-dang-nhap.md`
+  summary: Người lạ không cần xác thực vẫn ghi được dòng auth.sign_in_failed vào audit_events, mà không role nào có DELETE để dọn.
+  evidence: Có từ Story 1.2 (state_missing đã như vậy), Story 1.3 thêm một đường nữa qua ?error=. audit_events append-only theo AD-12 nên bảng chỉ lớn lên, không co lại. Đây chính là lý do mục AC3 (rate limit) ở trên không nên trôi lâu — hai việc này phải đọc cùng nhau: rate limit là thứ duy nhất chặn một vòng lặp curl bơm phình bảng audit. Khi làm AC3, nhớ phủ luôn cả hai chặng callback chứ không chỉ đường đăng nhập thành công.

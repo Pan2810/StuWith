@@ -88,9 +88,14 @@ describe('the Apple client secret', () => {
 
     // ECDSA signatures are randomised, so the tokens differ — what must match is
     // that BOTH verify against the same public key.
+    // Both tokens were minted against the injected clock, so they must be
+    // verified against it too. Verifying against the real clock made this test
+    // a time bomb: the pair carries a 5-minute lifetime starting at the instant
+    // below, so the suite was green until that instant passed and red every run
+    // afterwards, for a reason that has nothing to do with the code under test.
     const key = await importSPKI(publicKey, 'ES256');
-    await expect(jwtVerify(fromRaw, key)).resolves.toBeTruthy();
-    await expect(jwtVerify(fromEscaped, key)).resolves.toBeTruthy();
+    await expect(jwtVerify(fromRaw, key, { currentDate: now() })).resolves.toBeTruthy();
+    await expect(jwtVerify(fromEscaped, key, { currentDate: now() })).resolves.toBeTruthy();
   });
 
   it('re-signs once the cached token nears expiry, rather than serving a stale one', async () => {

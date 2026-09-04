@@ -9,6 +9,7 @@ import {
   createAuthHarness,
   type AuthHarness,
 } from './auth/__testing__/auth-harness';
+import { SIGN_IN_FAILURE_REASONS } from './auth/audit';
 import { buildLoggerParams } from './logging';
 
 /**
@@ -245,5 +246,81 @@ describe('a real login leaks nothing into a real pino (AD-15)', () => {
     // the test above would also pass against a logger that writes nothing at all.
     expect(output).toContain('/v1/auth/google/callback?<redacted>');
     expect(output).toContain('request_id');
+  });
+});
+/**
+ * Story 1.3's half of the same claim. The callback leg now has two outcomes that
+ * did not exist before — the provider refusing, and the person cancelling — and
+ * both arrive with a `?error=...` in the URL.
+ *
+ * That is the shape no field-level redaction can reach: `req.url` is one string
+ * carrying the provider's error code, and pino cannot redact inside a string. What
+ * closes it is `sanitizeLoggedUrl` dropping the query entirely, and this suite is
+ * what proves it still does — for the failure path as well as the happy one.
+ *
+ * The second assertion is the internal vocabulary: `provider_authorize_failed`
+ * and friends belong in `audit_events` and nowhere else. A log line is read by
+ * more people, kept in more places and pasted into more tickets than an audit row
+ * ever is.
+ */
+describe('a failed and a cancelled login leak nothing into a real pino (AD-15)', () => {
+  let harness: AuthHarness;
+  let output: string;
+
+  beforeAll(async () => {
+    harness = await createAuthHarness({ captureLogs: true });
+
+    // 1. A technical failure: the provider sent the browser back with an error.
+    const failing = new CookieJar();
+    const startedFailing = await harness.request('/v1/auth/google/start', { jar: failing });
+    const failingCallback = new URL(startedFailing.headers.get('location') ?? '');
+    await harness.request(
+      `/v1/auth/google/callback?state=${failingCallback.searchParams.get('state') ?? ''}` +
+        '&error=server_error&error_description=Google%20is%20unwell',
+      { jar: failing },
+    );
+
+    // 2. A cancellation at the consent screen.
+    const cancelling = new CookieJar();
+    const startedCancel = await harness.request('/v1/auth/google/start', { jar: cancelling });
+    const cancelCallback = new URL(startedCancel.headers.get('location') ?? '');
+    await harness.request(
+      `/v1/auth/google/callback?state=${cancelCallback.searchParams.get('state') ?? ''}` +
+        '&error=access_denied',
+      { jar: cancelling },
+    );
+
+    output = harness.logLines.join('\n');
+  }, 60_000);
+
+  afterAll(async () => {
+    await harness?.close();
+  });
+
+  it('actually logged both callbacks — otherwise every assertion below is vacuous', () => {
+    expect(harness.logLines.length).toBeGreaterThan(0);
+    // The path survives; only the query string is dropped.
+    expect(output).toContain('/v1/auth/google/callback?<redacted>');
+  });
+
+  it.each([
+    'server_error',
+    'access_denied',
+    'error=',
+    // The ENCODED form. The suite sends `error_description=Google%20is%20unwell`,
+    // so the decoded sentence is not a string that could ever appear in a log
+    // line — asserting on it was a row that could not fail.
+    'Google%20is%20unwell',
+    'error_description',
+  ])('never writes the provider error detail %s', (fragment) => {
+    expect(output).not.toContain(fragment);
+  });
+
+  it.each([...SIGN_IN_FAILURE_REASONS])('never writes the internal reason %s', (reason) => {
+    expect(output).not.toContain(reason);
+  });
+
+  it('never writes the state, which rides in the same URL as the error', () => {
+    expect(output).not.toContain('state=');
   });
 });

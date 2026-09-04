@@ -28,23 +28,46 @@ import type { AuditPort } from '@stuwith/domain';
  * legs of the flow and on refresh. That completeness is the point: an outcome with
  * no reason in this list is an outcome that leaves no audit row, and "the login
  * just did nothing" is the hardest possible incident to investigate.
+ *
+ * It is a runtime array and not only a type union so that a test can walk it. The
+ * assertion that matters — no value in here ever reaches a URL, a response body or
+ * a log line — is worthless if it is written against a hand-copied list that
+ * quietly falls behind this one.
+ *
+ * Two of these are Story 1.3's, and neither is an error in the user's sense:
+ *
+ * - `user_cancelled` — the person said no at the consent screen. The interface
+ *   must not call that a failure, but the trail still has to show the attempt:
+ *   "half of everyone abandoned Facebook consent since yesterday" is a signal you
+ *   only get if abandonment is written down.
+ * - `provider_authorize_failed` — the provider itself refused before we ever got a
+ *   `code` (`server_error`, `temporarily_unavailable`, a configuration mistake in
+ *   their console). Distinct from `provider_exchange_failed`, which is the later
+ *   leg. The provider's own error code is deliberately NOT stored: this table is
+ *   permanent and uncorrectable, and a third party's vocabulary in it is how that
+ *   vocabulary eventually reaches a user-facing message.
  */
-export type SignInFailureReason =
+export const SIGN_IN_FAILURE_REASONS = [
   // Start leg.
-  | 'provider_start_failed'
+  'provider_start_failed',
   // Callback leg.
-  | 'state_missing'
-  | 'state_mismatch'
-  | 'state_expired'
-  | 'code_missing'
-  | 'provider_exchange_failed'
-  | 'identity_rejected'
+  'user_cancelled',
+  'provider_authorize_failed',
+  'state_missing',
+  'state_mismatch',
+  'state_expired',
+  'code_missing',
+  'provider_exchange_failed',
+  'identity_rejected',
   // Refresh leg.
-  | 'refresh_cookie_missing'
-  | 'refresh_token_unknown'
-  | 'refresh_token_expired'
-  | 'session_revoked'
-  | 'session_reuse_detected';
+  'refresh_cookie_missing',
+  'refresh_token_unknown',
+  'refresh_token_expired',
+  'session_revoked',
+  'session_reuse_detected',
+] as const;
+
+export type SignInFailureReason = (typeof SIGN_IN_FAILURE_REASONS)[number];
 
 export interface SignedInInput {
   readonly requestId: string;
