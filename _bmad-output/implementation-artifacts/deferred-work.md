@@ -62,3 +62,27 @@ Việc đã được xác nhận là thật nhưng cố ý hoãn. Mỗi mục gh
 - source_spec: `spec-1-1-dung-khung-monorepo-va-bon-cong-ci.md`
   summary: `epic-1-context.md` khẳng định dự án không có PRD — sai.
   evidence: `docs/prd.md` tồn tại (31KB, đủ NFR và epic S0–S4). Bước biên soạn epic context chỉ quét `planning-artifacts/` nên bỏ sót, vì config đặt `project_knowledge` = `docs/`. Tài liệu này là thứ các story sau của Epic 1 biên dịch từ đó, nên câu sai sẽ lan. Sửa bằng cách chạy lại compile-epic-context với đường dẫn đúng.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-2-dang-nhap-bang-bon-provider.md`
+  summary: Trang đăng nhập luôn hiện đủ bốn provider, không đọc AUTH_ENABLED_PROVIDERS, nên provider chưa bật cho ra nút dẫn tới 404.
+  evidence: Không có endpoint GET /v1/auth/providers và không có schema cho nó trong packages/contracts. Chưa chặn phát hành vì trang này là khung trần sẽ được dựng lại ở Story 1.6, và câu chữ trạng thái lỗi thuộc Story 1.3 — nhưng khi chưa cắm credential thật thì cả bốn nút đều 404.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-2-dang-nhap-bang-bon-provider.md`
+  summary: ProductionRuntime.close() không được gắn vào vòng đời NestJS nên pool pg không bao giờ được rút cạn lúc tắt process.
+  evidence: main.ts gọi app.enableShutdownHooks() nhưng AuthModule không khai OnModuleDestroy hay hook nào gọi close(). Chính docblock ghi "Epic 2 sẽ dùng" — tức là đang ghi nhận khoảng trống chứ không đóng nó.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-2-dang-nhap-bang-bon-provider.md`
+  summary: Hồ sơ đổi ở provider (tên hiển thị, avatar, email) không bao giờ đồng bộ về hàng users sau lần đăng nhập đầu.
+  evidence: findOrCreateByIdentity trả về User cũ nguyên vẹn ở mọi lần đăng nhập sau; không lệnh UPDATE users nào tồn tại trong diff, và users.updated_at đứng yên từ lúc INSERT. Có thể là chủ ý, nhưng không được nêu trong Boundaries của spec lẫn ghim bằng test.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-2-dang-nhap-bang-bon-provider.md`
+  summary: test:unit không còn thuần unit — project api và realtime-gateway nay dựng server thật kèm OIDC server trong process, với hook timeout 60 giây.
+  evidence: test:unit là cổng CI nhanh; auth.flow.test.ts và logging.test.ts boot NestJS + Fastify trên cổng thật. Tên script, chú thích project trong vitest.config.mts và fileParallelism đều chưa được xem lại, và nhiều suite đang tranh cổng trống trong cùng một project.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-2-dang-nhap-bang-bon-provider.md`
+  summary: OpenAPI sinh ra không khai securitySchemes, nên client đọc tài liệu không biết cái gì xác thực /v1/auth/me và /v1/auth/refresh.
+  evidence: authPaths() thêm response 401 nhưng toOpenApiDocument() không có components.securitySchemes (ví dụ apiKey in: cookie cho stuwith_session) và không operation nào mang security. Lý do AD-13 đặt các path này ở packages/contracts chính là để app phone dùng lại được.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-2-dang-nhap-bang-bon-provider.md`
+  summary: Không có kiểm tra Origin/Sec-Fetch-Site tường minh cho POST /v1/auth/refresh và /v1/auth/logout; SameSite=Lax là phòng tuyến CSRF duy nhất và không test nào khẳng định điều đó.
+  evidence: refresh xoay credential và logout thu hồi cả chuỗi — hai thao tác đổi trạng thái. SameSite=Lax thực tế chặn POST cross-site, nên đây là quyết định hợp lệ, nhưng nó đang ngầm định thay vì được ghi lại và ghim bằng test.

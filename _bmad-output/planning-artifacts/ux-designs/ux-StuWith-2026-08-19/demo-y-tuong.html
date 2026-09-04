@@ -1,0 +1,626 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>StuWith</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;800&display=swap">
+<style>
+/* StuWith — ban demo y tuong.
+   Token lay nguyen tu DESIGN.md (he "Cam trai"). Khong tu che mau moi. */
+
+:root{
+  --base:#F3F0FF; --raised:#FFFFFF; --sunken:#E7E1FB;
+  --ink:#211A3D; --ink2:#5A5375; --ink3:#9A93B5;
+  --bink:#211A3D; --bdec:#DCD5F5;
+  --primary:#6C4CF0; --onp:#FFFFFF;
+  --ok:#0C6B46; --okc:#DFF7EC;
+  --warn:#97301A; --warnc:#FFE8E2;
+  --danger:#A32020; --dangerc:#FCEDED;
+  --coin:#7E5200; --coinc:#FFF3D6; --coinf:#F5A623;
+  --coral:#FF6F52;
+  --tvid:#A895F5; --tav:#FFF3D6;
+  --shadow:4px 4px 0 var(--bink);
+  --shadow-sm:3px 3px 0 var(--bink);
+  --r-lg:22px; --r-md:16px; --r-sm:12px;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --base:#121020; --raised:#1C1833; --sunken:#0B0917;
+    --ink:#EDE9FF; --ink2:#A9A2C9; --ink3:#6E678F;
+    --bink:#7268B5; --bdec:#332C57;
+    --primary:#A78BFA; --onp:#14092E;
+    --ok:#4FDDA6; --okc:#102E22;
+    --warn:#FF9878; --warnc:#331A14;
+    --danger:#FF8B8B; --dangerc:#2B1616;
+    --coin:#FFC85C; --coinc:#33290F; --coinf:#FFC85C;
+    --coral:#FF9878;
+    --tvid:#3A2E6B; --tav:#33290F;
+  }
+}
+:root[data-theme="dark"]{
+  --base:#121020; --raised:#1C1833; --sunken:#0B0917;
+  --ink:#EDE9FF; --ink2:#A9A2C9; --ink3:#6E678F;
+  --bink:#7268B5; --bdec:#332C57;
+  --primary:#A78BFA; --onp:#14092E;
+  --ok:#4FDDA6; --okc:#102E22;
+  --warn:#FF9878; --warnc:#331A14;
+  --danger:#FF8B8B; --dangerc:#2B1616;
+  --coin:#FFC85C; --coinc:#33290F; --coinf:#FFC85C;
+  --coral:#FF9878;
+  --tvid:#3A2E6B; --tav:#33290F;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--base); color:var(--ink);
+  font:500 15.5px/1.6 "Be Vietnam Pro",Roboto,"Segoe UI",system-ui,sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+h1,h2,h3,h4{margin:0; font-weight:800; text-wrap:balance; letter-spacing:-.015em}
+p{margin:0}
+ul,ol{margin:0; padding-left:1.15em}
+li{margin-bottom:.4em}
+li::marker{color:var(--primary)}
+strong{font-weight:800}
+a{color:var(--primary)}
+code{font-family:ui-monospace,"Cascadia Mono",Consolas,monospace;font-size:.88em;
+  background:var(--sunken);border:1px solid var(--bdec);border-radius:6px;padding:1px 5px}
+.num{font-variant-numeric:tabular-nums}
+
+.shell{max-width:1120px;margin:0 auto;padding:0 24px}
+section{padding:64px 0;border-top:2px solid var(--bdec)}
+.cap{font-size:11.5px;letter-spacing:.14em;text-transform:uppercase;font-weight:800;
+  color:var(--primary);margin-bottom:12px}
+h2{font-size:27px;line-height:1.2;margin-bottom:10px}
+.lede{color:var(--ink2);font-size:16.5px;max-width:64ch;font-weight:500}
+.stack{display:flex;flex-direction:column;gap:18px}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:18px}
+.grid3{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:18px}
+.mt{margin-top:32px}
+.mt-s{margin-top:18px}
+
+.card{background:var(--raised);border:2px solid var(--bink);border-radius:var(--r-lg);padding:22px}
+.card h3{font-size:18px;margin-bottom:8px;line-height:1.3}
+.card p{color:var(--ink2);font-size:14.5px}
+.card.pop{box-shadow:var(--shadow)}
+
+.chip{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:800;
+  padding:5px 12px;border-radius:9999px;border:2px solid var(--bink);
+  background:var(--raised);color:var(--ink);white-space:nowrap}
+.chip.ok{background:var(--okc);color:var(--ok)}
+.chip.warn{background:var(--warnc);color:var(--warn)}
+.chip.coin{background:var(--coinc);color:var(--coin)}
+.chip.pri{background:var(--primary);color:var(--onp)}
+.chiprow{display:flex;flex-wrap:wrap;gap:8px}
+
+.nav{position:sticky;top:0;z-index:50;background:var(--base);
+  border-bottom:2px solid var(--bdec);padding:11px 0}
+.nav .shell{display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+.brand{font-weight:800;font-size:17px;letter-spacing:-.02em;white-space:nowrap}
+.brand span{color:var(--primary)}
+.navlinks{display:flex;gap:7px;flex-wrap:wrap;margin-left:auto}
+.navlinks a{font-size:12.5px;font-weight:700;text-decoration:none;color:var(--ink2);
+  padding:5px 11px;border-radius:9999px;border:2px solid transparent}
+.navlinks a:hover{color:var(--ink);border-color:var(--bdec);background:var(--raised)}
+.navlinks a:focus-visible{outline:3px solid var(--primary);outline-offset:2px}
+
+.hero{padding:72px 0 56px}
+.hero h1{font-size:clamp(31px,5vw,50px);line-height:1.1;max-width:19ch}
+.hero .thesis{margin-top:22px;font-size:17.5px;color:var(--ink2);max-width:62ch;font-weight:500}
+.hero .thesis b{color:var(--ink);font-weight:800}
+.herogrid{display:grid;grid-template-columns:1.15fr .85fr;gap:40px;align-items:center}
+@media(max-width:860px){.herogrid{grid-template-columns:1fr;gap:30px}}
+
+.screen{background:var(--raised);border:2px solid var(--bink);border-radius:var(--r-lg);
+  overflow:hidden;box-shadow:var(--shadow)}
+.screen .bar{display:flex;align-items:center;justify-content:space-between;gap:10px;
+  padding:11px 16px;border-bottom:2px solid var(--bink);background:var(--sunken);font-size:12.5px;font-weight:800}
+.screen .body{padding:18px;display:flex;flex-direction:column;gap:14px}
+.scap{font-size:12px;font-weight:700;color:var(--ink2);margin-top:10px}
+
+.tiles{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.tile{aspect-ratio:4/3;border:2px solid var(--bink);border-radius:var(--r-sm);
+  background:var(--tvid);display:flex;align-items:center;justify-content:center;
+  position:relative;font-weight:800;font-size:19px;color:var(--ink)}
+.tile.av{background:var(--tav)}
+.tile .nm{position:absolute;left:6px;bottom:6px;font-size:10.5px;font-weight:800;
+  background:var(--raised);border:2px solid var(--bink);border-radius:9999px;padding:2px 8px;color:var(--ink)}
+.tile .pc{position:absolute;right:6px;top:6px;font-size:10px;font-weight:800;
+  background:var(--coinc);color:var(--coin);border:2px solid var(--bink);border-radius:9999px;padding:2px 7px}
+
+.modes{display:grid;grid-template-columns:repeat(3,1fr);gap:9px}
+.mode{border:2px solid var(--bink);border-radius:var(--r-sm);background:var(--raised);
+  padding:11px 8px;text-align:center;font-size:12.5px;font-weight:800}
+.mode.on{border-width:3px;border-color:var(--primary);color:var(--primary);box-shadow:var(--shadow-sm);padding:10px 7px}
+.mode small{display:block;font-weight:600;color:var(--ink2);font-size:10.5px;margin-top:3px}
+
+.banner{border:2px solid var(--bink);border-radius:var(--r-md);padding:10px 14px;
+  font-size:13px;font-weight:800;background:var(--warnc);color:var(--warn)}
+.banner.ok{background:var(--okc);color:var(--ok)}
+
+.meter{border:2px solid var(--bink);border-radius:var(--r-md);background:var(--coinc);
+  padding:14px 16px;display:flex;align-items:baseline;justify-content:space-between;gap:14px;flex-wrap:wrap}
+.meter .big{font-size:31px;font-weight:800;color:var(--coin);font-variant-numeric:tabular-nums;line-height:1}
+.meter .lbl{font-size:12px;font-weight:800;color:var(--coin);text-transform:uppercase;letter-spacing:.1em}
+
+.rowline{display:flex;justify-content:space-between;gap:16px;font-size:13.5px;
+  padding:9px 0;border-bottom:2px solid var(--bdec);color:var(--ink2);font-weight:600}
+.rowline:last-child{border-bottom:0}
+.rowline b{color:var(--ink);font-weight:800;font-variant-numeric:tabular-nums}
+
+.tablewrap{overflow-x:auto;border:2px solid var(--bink);border-radius:var(--r-md);background:var(--raised)}
+table{border-collapse:collapse;width:100%;min-width:560px;font-size:14px}
+th,td{text-align:left;padding:12px 15px;border-bottom:2px solid var(--bdec);vertical-align:top}
+th{font-weight:800;font-size:12px;text-transform:uppercase;letter-spacing:.09em;
+  color:var(--ink2);background:var(--sunken);white-space:nowrap}
+tr:last-child td{border-bottom:0}
+.tnum{font-variant-numeric:tabular-nums;white-space:nowrap}
+
+.ladder{display:grid;grid-template-columns:repeat(auto-fit,minmax(212px,1fr));gap:14px}
+.rung{border:2px solid var(--bink);border-radius:var(--r-md);padding:16px;background:var(--raised);
+  display:flex;flex-direction:column;gap:8px}
+.rung .lv{font-size:11.5px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3)}
+.rung h4{font-size:16px}
+.rung p{font-size:13px;color:var(--ink2)}
+.rung.r3{background:var(--warnc)}
+.rung.r4{background:var(--dangerc)}
+.rung.r3 h4,.rung.r3 .lv{color:var(--warn)}
+.rung.r4 h4,.rung.r4 .lv{color:var(--danger)}
+
+.flow{display:flex;flex-direction:column}
+.step{display:grid;grid-template-columns:44px 1fr;gap:16px;padding:15px 0;border-bottom:2px solid var(--bdec)}
+.step:last-child{border-bottom:0}
+.step .n{width:36px;height:36px;border-radius:11px;border:2px solid var(--bink);
+  background:var(--primary);color:var(--onp);display:flex;align-items:center;justify-content:center;
+  font-weight:800;font-size:15px;font-variant-numeric:tabular-nums}
+.step h4{font-size:15.5px;margin-bottom:3px}
+.step p{font-size:14px;color:var(--ink2)}
+.step.peak .n{background:var(--coinf);color:#211A3D;border-color:var(--bink)}
+.step.peak h4{color:var(--coin)}
+
+.scope{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+@media(max-width:760px){.scope{grid-template-columns:1fr}}
+.scope li{font-size:14px;color:var(--ink2)}
+.scope li b{color:var(--ink)}
+
+.tier{border:2px solid var(--bink);border-radius:var(--r-lg);background:var(--raised);padding:20px;
+  display:flex;flex-direction:column;gap:9px}
+.tier.mid{box-shadow:var(--shadow);border-width:3px;border-color:var(--primary)}
+.tier .tn{font-size:19px;font-weight:800}
+.tier .cnt{font-size:33px;font-weight:800;color:var(--primary);font-variant-numeric:tabular-nums;line-height:1}
+.tier .cnt small{font-size:13px;color:var(--ink2);font-weight:700}
+.tier p{font-size:13.5px;color:var(--ink2)}
+
+.callout{border:2px solid var(--bink);border-radius:var(--r-lg);padding:22px;background:var(--coinc);
+  box-shadow:var(--shadow)}
+.callout h3{font-size:18px;color:var(--coin);margin-bottom:8px}
+.callout p{color:var(--ink);font-size:14.5px}
+
+.foot{padding:44px 0 66px;border-top:2px solid var(--bdec);color:var(--ink2);font-size:13.5px}
+.filelist{display:flex;flex-direction:column;gap:7px;margin-top:14px}
+.filelist div{font-family:ui-monospace,"Cascadia Mono",Consolas,monospace;font-size:12.5px;
+  background:var(--sunken);border:2px solid var(--bdec);border-radius:9px;padding:8px 12px;color:var(--ink)}
+
+@media (prefers-reduced-motion:no-preference){
+  .card,.tier{transition:transform .16s ease}
+  .card.pop:hover,.tier:hover{transform:translate(-1px,-1px)}
+}
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="shell">
+    <div class="brand">Stu<span>With</span></div>
+    <div class="navlinks">
+      <a href="#luan-diem">Luận điểm</a>
+      <a href="#luong">Luồng chính</a>
+      <a href="#coin">Coin</a>
+      <a href="#mang">Mạng yếu</a>
+      <a href="#uy-tin">Uy tín</a>
+      <a href="#an-toan">An toàn</a>
+      <a href="#goi">Gói</a>
+      <a href="#pham-vi">Phạm vi</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="shell herogrid">
+    <div>
+      <p class="cap">Nền tảng phòng học live</p>
+      <h1>Học cùng người lạ mà không phải lộ mặt.</h1>
+      <p class="thesis">Rất nhiều người muốn học cùng người khác nhưng không dám, vì học cùng người lạ đồng nghĩa với <b>lộ mặt, lộ trình độ, lộ chỗ mình đang dốt</b>. StuWith tách <b>sự hiện diện</b> khỏi <b>danh tính</b> — ẩn mặt hoàn toàn mà vẫn tích được uy tín thật, đã xác minh.</p>
+      <div class="chiprow mt-s">
+        <span class="chip pri">Ẩn mặt xử lý ngay trên máy</span>
+        <span class="chip coin">Hỏi riêng trả coin theo phút</span>
+        <span class="chip ok">Audio không bao giờ bị hy sinh</span>
+      </div>
+    </div>
+
+    <div>
+      <div class="screen">
+        <div class="bar"><span>Pre-join · Ôn Giải tích 1</span><span class="chip ok">Mạng tốt</span></div>
+        <div class="body">
+          <div class="tile av" style="aspect-ratio:16/10;font-size:30px">TR<span class="nm">Xem trước — chỉ bạn thấy</span></div>
+          <div class="modes">
+            <div class="mode">Để nguyên<small>camera thật</small></div>
+            <div class="mode on">Ẩn mặt<small>avatar chữ</small></div>
+            <div class="mode">Filter<small>biến đổi</small></div>
+          </div>
+          <div class="banner ok">Buổi học không được ghi lại.</div>
+        </div>
+      </div>
+      <p class="scap">Quyết định lộ mặt xảy ra <b>trước</b> khi có bất kỳ ai nhìn thấy.</p>
+    </div>
+  </div>
+</header>
+
+<section id="luan-diem">
+  <div class="shell">
+    <p class="cap">Thứ sản phẩm đặt cược</p>
+    <h2>Ba hệ quả — mọi thứ khác phải phục tùng chúng</h2>
+    <p class="lede">Nếu một trong ba điều dưới đây không giữ được, luận điểm sụp và sản phẩm phải xoay hướng.</p>
+
+    <div class="grid3 mt">
+      <div class="card pop">
+        <h3>Ẩn danh không được là hạng hai</h3>
+        <p>Ẩn mặt phải mượt bằng để nguyên. Uy tín và huy hiệu vẫn tích được khi ẩn mặt. Nếu ẩn danh làm người dùng mất thứ gì, cả luận điểm sụp.</p>
+      </div>
+      <div class="card pop">
+        <h3>Uy tín phải thật thì ẩn danh mới an toàn</h3>
+        <p>Huy hiệu học vấn đã xác minh, báo cáo mạnh, chặn hành vi có tiền với người dưới 18. Đây không phải tính năng phụ — chúng là đối trọng giữ ẩn danh khỏi biến thành nơi trú ẩn.</p>
+      </div>
+      <div class="card pop">
+        <h3>Coin để việc hỏi khả thi, không phải để thu tiền người học</h3>
+        <p>Người ngại thường không dám chiếm thời gian người khác; trả coin làm việc hỏi trở nên sòng phẳng. Nếu thiết kế biến thành ép tiêu coin, luận điểm cũng sụp.</p>
+      </div>
+    </div>
+
+    <div class="mt">
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Ai dùng</th><th>Cần gì</th><th>Ràng buộc họ đặt lên sản phẩm</th></tr></thead>
+          <tbody>
+            <tr><td><b>Người học ngại</b><br><span style="color:var(--ink2);font-size:13px">nhóm chính</span></td><td>Học cùng người khác mà không lộ mặt hay lộ chỗ mình dốt</td><td>Pre-join bắt buộc trước khi camera bật · ẩn mặt xử lý client-side, mặt gốc không rời máy · vẫn tích uy tín khi ẩn mặt</td></tr>
+            <tr><td><b>Người học chủ động</b></td><td>Tìm đúng lớp, hỏi được ngay khi kẹt</td><td>AI match theo nguyện vọng · hỏi cả phòng miễn phí · hỏi riêng trả coin</td></tr>
+            <tr><td><b>Gia sư / người tạo lớp</b></td><td>Mở phòng, thu coin khi được hỏi, xây uy tín</td><td>Tự đặt giá trong khung · huy hiệu học vấn đã xác minh · phiên nhiều người để tăng thu mà không tăng giờ</td></tr>
+            <tr><td><b>Tổ chức / giáo viên</b><br><span style="color:var(--ink2);font-size:13px">gói Campus</span></td><td>Tổ chức lớp, event đông người</td><td>Trần 45–100 người · đăng nhập Microsoft cho tài khoản tổ chức · lưới dày cho lớp đông</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="luong">
+  <div class="shell">
+    <p class="cap">Luồng chính</p>
+    <h2>23h, phòng trọ, hôm trước ngày thi Giải tích</h2>
+    <p class="lede">Trâm, sinh viên năm hai, wifi chập chờn, đang kẹt ở một câu tích phân từng phần. Đây là con đường sản phẩm phải làm cho trơn.</p>
+
+    <div class="grid2 mt" style="align-items:start">
+      <div class="stack">
+        <div class="flow card">
+          <div class="step">
+            <div class="n">1</div>
+            <div><h4>Đăng nhập, không có mật khẩu nào để nghĩ</h4><p>Bốn nút: Google, Facebook, Apple, Microsoft. Không form mật khẩu.</p></div>
+          </div>
+          <div class="step">
+            <div class="n">2</div>
+            <div><h4>Ô lớn nhất màn hình không phải thanh tìm kiếm</h4><p>Nó là ô nguyện vọng: “Bạn đang muốn học gì?” Trâm gõ “tích phân từng phần, mai thi”.</p></div>
+          </div>
+          <div class="step">
+            <div class="n">3</div>
+            <div><h4>AI match trả lớp khớp nhất</h4><p>Nguyện vọng và mô tả lớp cùng được embedding hoá, so khớp bằng cosine similarity. Mỗi lớp hiện host kèm huy hiệu học vấn đã xác minh.</p></div>
+          </div>
+          <div class="step peak">
+            <div class="n">4</div>
+            <div><h4>Cao trào nhỏ: Trâm bấm “Ẩn mặt”</h4><p>Cô nhìn khuôn mặt mình lúc 11 giờ đêm, chưa gội đầu. Ô xem trước lập tức thành avatar chữ “TR”. Không ai từng thấy khuôn mặt đó.</p></div>
+          </div>
+          <div class="step">
+            <div class="n">5</div>
+            <div><h4>Vào phòng dưới 5 giây</h4><p>Mục tiêu p90 dưới 5s trên 4G phổ thông. Lưới 6 người — một nửa cũng là avatar.</p></div>
+          </div>
+          <div class="step">
+            <div class="n">6</div>
+            <div><h4>Nghe giảng 20 phút, vẫn vướng đúng chỗ của mình</h4><p>Cả phòng đang bàn câu khác. Trâm nhìn ô của Minh Anh: dưới tên có huy hiệu Thạc sĩ Toán, góc trên có chip <b>120 coin/phút</b>.</p></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="stack">
+        <div>
+          <div class="screen">
+            <div class="bar"><span>Phòng học live · 6 người</span><span class="chip ok">Mạng tốt</span></div>
+            <div class="body">
+              <div class="tiles">
+                <div class="tile av">MA<span class="nm">Minh Anh</span><span class="pc">120/phút</span></div>
+                <div class="tile">HD<span class="nm">Hải Đăng</span></div>
+                <div class="tile av">TR<span class="nm">Trâm</span></div>
+                <div class="tile">NL<span class="nm">Ngọc Lan</span></div>
+                <div class="tile av">QB<span class="nm">Quốc Bảo</span></div>
+                <div class="tile av">TH<span class="nm">Thu Hà</span></div>
+              </div>
+              <p style="font-size:12.5px;color:var(--ink2);font-weight:600">Chip giá chỉ tồn tại vì Minh Anh đã bật nhận hỏi riêng. Ai chưa bật thì không có nút, không có lời mời, không có thông báo.</p>
+            </div>
+          </div>
+          <p class="scap">Ba trên sáu người đang ẩn mặt — và đó là trạng thái bình thường, không phải ngoại lệ.</p>
+        </div>
+
+        <div>
+          <div class="screen">
+            <div class="bar"><span>Thẻ xác nhận · trước khi trừ coin</span><span class="chip coin">Ví: 1.000.000</span></div>
+            <div class="body">
+              <div>
+                <div class="rowline"><span>Đơn giá</span><b>120 coin / phút</b></div>
+                <div class="rowline"><span>Độ dài block</span><b>1 phút</b></div>
+                <div class="rowline"><span>Số dư hiện tại</span><b>1.000.000 coin</b></div>
+                <div class="rowline"><span>Ước tính</span><b>khoảng 8.333 phút</b></div>
+              </div>
+              <div class="banner">Nếu mạng yếu, video sẽ tắt nhưng phiên vẫn tính coin vì tiếng vẫn thông. Phiên chỉ dừng khi mất hẳn kết nối.</div>
+            </div>
+          </div>
+          <p class="scap">Luật khó chịu nhất được nói ra <b>trước</b>, không phải sau khi đã trừ tiền.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid2 mt">
+      <div>
+        <div class="screen">
+          <div class="bar"><span>Phiên hỏi riêng đang chạy</span><span class="chip warn">Mạng yếu</span></div>
+          <div class="body">
+            <div class="meter">
+              <div><div class="lbl">Thời gian còn lại</div><div class="big">8.329:12</div></div>
+              <div style="text-align:right"><div class="lbl">Đã dùng</div><div class="big" style="font-size:22px">4 phút</div></div>
+            </div>
+            <div class="banner">Mạng yếu — đã tắt video để giữ tiếng. Âm thanh vẫn thông suốt.</div>
+            <p style="font-size:12.5px;color:var(--ink2);font-weight:600">Đồng hồ đếm <b>thời gian còn lại</b>, không đếm tiền đã tiêu. Nếu người dùng cảm thấy bị đồng hồ đuổi, họ sẽ hỏi vội và không quay lại.</p>
+          </div>
+        </div>
+      </div>
+      <div>
+        <div class="screen">
+          <div class="bar"><span>Thẻ tổng kết</span><span class="chip ok">Đã dừng 23:14</span></div>
+          <div class="body">
+            <div>
+              <div class="rowline"><span>Thời lượng</span><b>4 phút</b></div>
+              <div class="rowline"><span>Đã trừ</span><b>480 coin</b></div>
+              <div class="rowline"><span>Số dư còn</span><b>999.520 coin</b></div>
+            </div>
+            <p style="font-size:12.5px;color:var(--ink2);font-weight:600">Thẻ này cũng xuất hiện trong Ví coin, đọc lại được mãi. Snackbar không bao giờ là nơi duy nhất người dùng biết mình bị trừ tiền.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="coin">
+  <div class="shell">
+    <p class="cap">Cơ chế coin</p>
+    <h2>Không một đồng coin nào rời ví trong sự bất ngờ</h2>
+    <p class="lede">Coin tồn tại để việc hỏi trở nên sòng phẳng, không để moi tiền người học. Mọi luật dưới đây phục vụ đúng mục đích đó.</p>
+
+    <div class="grid2 mt">
+      <div class="card pop">
+        <h3>Khung giá 10–500 coin/phút</h3>
+        <p>Người được hỏi tự đặt giá, nhưng phải nằm trong khung. Khung hiện ngay trên ô nhập giá cùng lý do — “để tránh đặt giá lừa đảo” — chứ không phải chỉ là lỗi validation khi nhập sai.</p>
+      </div>
+      <div class="card pop">
+        <h3>Tính theo block 1 phút</h3>
+        <p>Trừ coin liên tục, đồng hồ đếm ngược theo số dư. Thoát giữa một block đang tính thì block đó đã trả, không hoàn. Số dư không bao giờ âm — phiên dừng ở ranh giới block.</p>
+      </div>
+      <div class="card pop">
+        <h3>Phiên tối đa 3 người, mỗi người trả đủ đơn giá</h3>
+        <p>Hai người hỏi ở giá 120 thì người được hỏi nhận <span class="num">240</span>/phút. Mỗi người một đồng hồ độc lập; hết coin thì chỉ người đó rời, phiên tiếp tục. Người thứ ba phải được <b>cả hai</b> người trong phiên đồng ý mới vào được.</p>
+      </div>
+      <div class="card pop">
+        <h3>Trạng thái bận không được rò rỉ hai thứ</h3>
+        <p>Không nêu <b>đang hỏi riêng với ai</b> — lộ chuyện người kia đang trả coin. Không nêu <b>còn bao lâu nữa</b> — thời gian còn lại chia cho đơn giá chính là số dư coin. Chỉ được nói: người này đang bận, và bạn làm gì tiếp.</p>
+      </div>
+    </div>
+
+    <div class="callout mt">
+      <h3>Coin trong bản thử nghiệm không phải tiền</h3>
+      <p>Mỗi tài khoản được cấp sẵn <span class="num">1.000.000</span> coin, tiêu trong ứng dụng. Giao diện không hứa hẹn bất cứ điều gì về quy đổi — không có chữ “giá trị”, “VNĐ”, hay “rút” ở bất cứ đâu. Việc rút và quy đổi coin ra tiền thật cần giấy phép trung gian thanh toán, và đang được giữ ngoài phạm vi cho tới khi xong pháp lý.</p>
+    </div>
+  </div>
+</section>
+
+<section id="mang">
+  <div class="shell">
+    <p class="cap">Thang suy giảm mạng</p>
+    <h2>Mạng yếu là trạng thái vận hành, không phải nhánh lỗi</h2>
+    <p class="lede">Người dùng mục tiêu học từ phòng trọ với wifi chập chờn. Bốn bậc dưới đây được thiết kế như trạng thái chính thức — bậc 3 phải đẹp bằng bậc 1. Xuyên suốt bốn bậc, <b>âm thanh không bao giờ bị hy sinh</b>.</p>
+
+    <div class="ladder mt">
+      <div class="rung">
+        <div class="lv">Bậc 1</div><h4>Tốt</h4>
+        <p>Video simulcast độ phân giải cao, Opus đầy đủ.</p>
+        <span class="chip ok">Chip “Mạng tốt”</span>
+      </div>
+      <div class="rung">
+        <div class="lv">Bậc 2</div><h4>Giảm</h4>
+        <p>Video tự tụt xuống lớp thấp, audio Opus + DTX.</p>
+        <span class="chip ok">Không báo gì — người dùng không cần biết</span>
+      </div>
+      <div class="rung r3">
+        <div class="lv">Bậc 3</div><h4>Nhẹ</h4>
+        <p>Video <b>tắt</b>, thay bằng avatar. Audio Opus + DTX/RED, tiếng không gián đoạn.</p>
+        <span class="chip warn">Chip “Mạng yếu” + banner một dòng</span>
+      </div>
+      <div class="rung r4">
+        <div class="lv">Bậc 4</div><h4>Mất</h4>
+        <p>Mất cả audio. Lưới đóng băng, thử lại 30 giây. Đồng hồ <b>dừng</b>, chỉ tính đến block cuối đã dùng.</p>
+        <span class="chip warn">Banner “Mất kết nối — đang thử lại”</span>
+      </div>
+    </div>
+
+    <div class="card pop mt">
+      <h3>Luật quan trọng nhất của thang này</h3>
+      <p>Khi mạng hồi phục, hệ thống <b>không tự bật lại camera</b> cho người đã bị đẩy xuống bậc 3 — thay vào đó hiện nút “Bật lại camera”. Người dùng đang ẩn mặt; tự bật lại camera thay họ là vi phạm nghiêm trọng chính giá trị cốt lõi của sản phẩm.</p>
+    </div>
+  </div>
+</section>
+
+<section id="uy-tin">
+  <div class="shell">
+    <p class="cap">Uy tín</p>
+    <h2>Ba trục, mỗi trục một ý nghĩa riêng</h2>
+    <p class="lede">Đây là thứ khiến ẩn danh vẫn có giá trị lâu dài — và là nền cho hồ sơ dạng CV mà nhà tuyển dụng có thể tham khảo ở giai đoạn sau.</p>
+
+    <div class="grid3 mt">
+      <div class="card pop">
+        <h3>Uy tín / Nỗ lực</h3>
+        <p>Hạng động theo mùa, reset định kỳ, thưởng hàng tháng. Đo sự có mặt và đóng góp thật, tích được cả khi đang ẩn mặt.</p>
+      </div>
+      <div class="card pop">
+        <h3>Học vấn</h3>
+        <p>Huy hiệu tĩnh, <b>đã xác minh</b> — cử nhân, kỹ sư, thạc sĩ. Đây là thứ khiến người lạ dám tin một avatar không mặt.</p>
+      </div>
+      <div class="card pop">
+        <h3>Kỹ năng / lĩnh vực</h3>
+        <p>Badge theo chủ đề học. Cho biết người này mạnh ở đâu, không chỉ mạnh đến mức nào.</p>
+      </div>
+    </div>
+
+    <div class="card mt">
+      <h3>Thước đo quan trọng nhất của bản MVP</h3>
+      <p style="color:var(--ink2)"><b>Tỉ lệ phiên ẩn mặt</b> trên tổng số lượt vào phòng. Nếu gần như không ai chọn ẩn mặt, luận điểm sai và sản phẩm cần xoay hướng. Ba thước đo còn lại: tỉ lệ quay lại 7 ngày · tỉ lệ phiên hỏi riêng kết thúc bởi người hỏi chứ không phải vì hết coin · tỉ lệ người ẩn mặt có được ít nhất một huy hiệu hoặc điểm uy tín.</p>
+    </div>
+  </div>
+</section>
+
+<section id="an-toan">
+  <div class="shell">
+    <p class="cap">Đối trọng</p>
+    <h2>Ẩn danh là tính năng cốt lõi, nên nó cũng là bề mặt tấn công</h2>
+    <p class="lede">Bốn luật dưới đây tồn tại để ẩn danh không biến thành nơi trú ẩn.</p>
+
+    <div class="grid2 mt">
+      <div class="card pop">
+        <h3>Không ghi lại gì cả — và được phép nói thẳng</h3>
+        <p>Không bản ghi buổi học, không retention, không có endpoint nào nhận tệp. Không có object store trong hệ thống. Đây là cam kết riêng tư <b>mạnh hơn</b> phương án “ghi có consent”, nên nó được nói ra ngay ở pre-join, đúng lúc người dùng đang quyết định lộ mặt hay không.</p>
+      </div>
+      <div class="card pop">
+        <h3>Khuôn mặt không rời máy người dùng</h3>
+        <p>Chế độ ẩn và filter xử lý hoàn toàn client-side. Máy chủ không bao giờ nhận khung hình gốc — vừa bảo vệ riêng tư, vừa giảm tải hạ tầng.</p>
+      </div>
+      <div class="card pop">
+        <h3>Dưới 18 tuổi: chặn mọi hành vi có tiền</h3>
+        <p>Không bật được nhận hỏi riêng, không đặt giá, không nhận coin — nhưng vẫn học, vẫn hỏi cả phòng, vẫn trả coin để hỏi người khác. Nút không hiện ở trạng thái mờ rồi báo lỗi; nút đơn giản là không tồn tại. Tuổi là dữ liệu cá nhân, không bao giờ hiện trên hồ sơ công khai.</p>
+      </div>
+      <div class="card pop">
+        <h3>Báo cáo luôn trong tầm với, một bước</h3>
+        <p>Menu ngữ cảnh trên mọi người, mọi phòng, mọi tin nhắn. Người báo cáo không bao giờ bị lộ danh tính với người bị báo cáo. Với hành vi nhạy cảm — đặt giá hỏi riêng, nhận coin — hệ thống yêu cầu xác minh danh tính nhẹ trước.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="goi">
+  <div class="shell">
+    <p class="cap">Gói dịch vụ</p>
+    <h2>Ba mức, chia theo số người trong một phòng</h2>
+
+    <div class="grid3 mt">
+      <div class="tier">
+        <div class="tn">Study Buddy</div>
+        <div class="cnt">6 <small>người / phòng</small></div>
+        <p><b>Miễn phí.</b> Đủ cho một nhóm học nhỏ hoặc một buổi ôn thi giữa bạn bè.</p>
+      </div>
+      <div class="tier mid">
+        <div class="tn">Study Circle</div>
+        <div class="cnt">25 <small>người / phòng</small></div>
+        <p><b>Phí theo năm.</b> Dành cho gia sư và người tạo lớp thường xuyên.</p>
+      </div>
+      <div class="tier">
+        <div class="tn">Campus</div>
+        <div class="cnt">45<small> mặc định · trần 100</small></div>
+        <p><b>Cho tổ chức.</b> Lớp và event; phần vượt mặc định ở chế độ chỉ xem. Đăng nhập Microsoft cho tài khoản tổ chức.</p>
+      </div>
+    </div>
+    <p class="scap">Trần 100 người tương tác nằm trong khả năng của hạ tầng truyền media đã chọn.</p>
+  </div>
+</section>
+
+<section id="pham-vi">
+  <div class="shell">
+    <p class="cap">Phạm vi</p>
+    <h2>Bản MVP làm gì, và cố ý chưa làm gì</h2>
+    <p class="lede">MVP chứng minh đúng một vòng giá trị: đăng nhập → vào phòng học live → học ẩn danh → hỏi cả phòng hoặc hỏi riêng bằng coin → tích uy tín.</p>
+
+    <div class="scope mt">
+      <div class="card pop">
+        <h3>Trong MVP</h3>
+        <ul>
+          <li>Đăng nhập <b>4 provider</b>: Google, Facebook, Apple, Microsoft</li>
+          <li>Tạo, tìm, vào lớp; <b>AI match</b> theo nguyện vọng</li>
+          <li>Phòng học <b>live</b>, audio ưu tiên, video tự tụt bậc</li>
+          <li>Ba chế độ khuôn mặt, xử lý <b>client-side</b></li>
+          <li>Hỏi cả phòng miễn phí; <b>hỏi riêng trả coin</b> theo block</li>
+          <li><b>Ví coin</b> nội bộ, cấp sẵn 1.000.000 coin</li>
+          <li>Hạng uy tín theo mùa + huy hiệu học vấn đã xác minh</li>
+          <li>Báo cáo mạnh + xác minh danh tính nhẹ</li>
+          <li>Khai tuổi bắt buộc, chặn hành vi có tiền với người dưới 18</li>
+          <li>Web trước, <b>để sẵn đầu chờ</b> cho app điện thoại</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Cố ý để ngoài</h3>
+        <ul>
+          <li><b>Ghi hình buổi học</b> — gỡ khỏi MVP. Khi quay lại ở giai đoạn sau phải dựng lại luồng đồng thuận từ đầu, không được bật lén như một cải tiến</li>
+          <li><b>Rút và quy đổi coin ra tiền thật</b> — chờ giấy phép trung gian thanh toán</li>
+          <li><b>Trang hồ sơ cho nhà tuyển dụng</b> — nền đã có sẵn ở hệ uy tín ba trục; hiển thị sẽ phải là opt-in</li>
+          <li><b>App điện thoại native</b> — kiến trúc đã tách sẵn để không phải viết lại</li>
+          <li><b>Giao diện kiểm duyệt</b> — MVP xử lý thủ công</li>
+          <li><b>Phụ đề trực tiếp</b> cho người khiếm thính</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="card pop mt">
+      <h3>Ba điều kiện kỹ thuật bắt buộc đạt trước khi mở cho người dùng thật</h3>
+      <div class="mt-s">
+        <div class="rowline"><span>Vào phòng trên 4G phổ thông</span><b>p90 &lt; 5 giây</b></div>
+        <div class="rowline"><span>Giao dịch coin, tính cho từng người trong phiên</span><b>chính xác 100%</b></div>
+        <div class="rowline"><span>Rò rỉ thông tin đăng nhập hoặc dữ liệu cá nhân trong log</span><b>0 sự cố</b></div>
+      </div>
+      <p style="font-size:13px;color:var(--ink2);margin-top:12px;font-weight:600">Cả ba là điều kiện cần, không phải thước đo thành công — chúng có thể xanh hoàn toàn ở một sản phẩm không ai dùng.</p>
+    </div>
+
+    <div class="grid2 mt">
+      <div class="card">
+        <h3>Nền tảng kỹ thuật</h3>
+        <p>Viết theo hướng cloud-native nhưng chạy được trọn vẹn trên một máy. Tách <b>API</b> và <b>cổng realtime</b> thành hai tiến trình riêng ngay từ đầu — đó là “đầu chờ” để app điện thoại sau này chỉ là một client khác, không phải một lần viết lại.</p>
+      </div>
+      <div class="card">
+        <h3>Tiếp cận và ngôn ngữ</h3>
+        <p>Giao diện <b>tiếng Việt và tiếng Anh</b>, chế độ sáng và tối ngang hàng nhau, đạt chuẩn tiếp cận WCAG 2.1 AA: đi được toàn bộ bằng bàn phím, vùng chạm tối thiểu 44px, bố cục không vỡ ở màn hình hẹp.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer class="foot">
+  <div class="shell">
+    <p class="cap">Tài liệu kèm theo</p>
+    <p>Bốn màn hình trên được dựng lại thu gọn trong trang này. Bản mockup đầy đủ — có cả trạng thái sáng/tối, trạng thái trình duyệt chặn camera, phòng đầy, hết coin — nằm cùng thư mục với file này:</p>
+    <div class="filelist">
+      <div>mockups/pre-join.html — chọn chế độ khuôn mặt, thử mic, xử lý khi trình duyệt chặn quyền</div>
+      <div>mockups/phong-hoc-live.html — lưới người tham gia, chip giá, thang mạng</div>
+      <div>mockups/kham-pha-ai-match.html — ô nguyện vọng và kết quả AI match</div>
+      <div>mockups/xac-nhan-hoi-rieng.html — thẻ xác nhận trước khi trừ coin</div>
+      <div>validation-report.html — báo cáo kiểm định UX</div>
+    </div>
+    <p style="margin-top:20px">Nội dung trang này lấy từ <b>docs/prd.md</b>, <b>docs/brief.md</b>, <b>DESIGN.md</b> và <b>EXPERIENCE.md</b>. Màu và kiểu chữ dùng nguyên hệ thiết kế “Cắm trại”.</p>
+  </div>
+</footer>
+
+</body>
+</html>

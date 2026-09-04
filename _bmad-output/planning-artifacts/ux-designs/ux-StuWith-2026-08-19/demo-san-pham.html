@@ -1,0 +1,1390 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Demo sản phẩm StuWith</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@500;600;800&display=swap">
+<style>
+/* =========================================================================
+   StuWith — Demo sản phẩm · hệ thiết kế "Cắm trại"
+   Token lấy nguyên văn từ DESIGN.md. Spine thắng khi xung đột với file này.
+   ========================================================================= */
+
+:root{
+  --base:#F3F0FF; --raised:#FFFFFF; --sunken:#E7E1FB;
+  --ink:#211A3D; --ink2:#5A5375; --ink3:#9A93B5;
+  --bink:#211A3D; --bdec:#DCD5F5;
+  --primary:#6C4CF0; --onp:#FFFFFF;
+  --ok:#0C6B46; --okc:#DFF7EC;
+  --warn:#97301A; --warnc:#FFE8E2;
+  --coin:#7E5200; --coinc:#FFF3D6; --coinf:#F5A623;
+  --danger:#A32020; --dangerc:#FCEDED;
+  --coral:#FF6F52;
+  --tvid:#A895F5; --tvid2:#8E77E8; --tav:#FFF3D6;
+  --scrim:rgba(33,26,61,.62);
+
+  --sh1:3px 3px 0 var(--bink);
+  --sh2:4px 4px 0 var(--bink);
+  --sh3:6px 6px 0 var(--bink);
+
+  --deck:#E7E1FB; --deck-ink:#211A3D; --deck-ink2:#5A5375;
+
+  --r-sm:14px; --r-md:20px; --r-lg:22px; --r-xl:28px; --r-full:9999px;
+  --dur:200ms; --ease:cubic-bezier(.2,0,0,1);
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --base:#121020; --raised:#1C1833; --sunken:#0B0917;
+    --ink:#EDE9FF; --ink2:#A9A2C9; --ink3:#6E678F;
+    --bink:#7268B5; --bdec:#332C57;
+    --primary:#A78BFA; --onp:#14092E;
+    --ok:#4FDDA6; --okc:#102E22;
+    --warn:#FF9878; --warnc:#331A14;
+    --coin:#FFC85C; --coinc:#33290F; --coinf:#FFC85C;
+    --danger:#FF8B8B; --dangerc:#2B1616;
+    --coral:#FF9878;
+    --tvid:#3A2E6B; --tvid2:#2A1F52; --tav:#33290F;
+    --scrim:rgba(11,9,23,.72);
+    --sh1:2px 2px 0 var(--bink); --sh2:3px 3px 0 var(--bink); --sh3:4px 4px 0 var(--bink);
+    --deck:#0B0917; --deck-ink:#EDE9FF; --deck-ink2:#A9A2C9;
+  }
+}
+:root[data-theme="dark"]{
+  --base:#121020; --raised:#1C1833; --sunken:#0B0917;
+  --ink:#EDE9FF; --ink2:#A9A2C9; --ink3:#6E678F;
+  --bink:#7268B5; --bdec:#332C57;
+  --primary:#A78BFA; --onp:#14092E;
+  --ok:#4FDDA6; --okc:#102E22;
+  --warn:#FF9878; --warnc:#331A14;
+  --coin:#FFC85C; --coinc:#33290F; --coinf:#FFC85C;
+  --danger:#FF8B8B; --dangerc:#2B1616;
+  --coral:#FF9878;
+  --tvid:#3A2E6B; --tvid2:#2A1F52; --tav:#33290F;
+  --scrim:rgba(11,9,23,.72);
+  --sh1:2px 2px 0 var(--bink); --sh2:3px 3px 0 var(--bink); --sh3:4px 4px 0 var(--bink);
+  --deck:#0B0917; --deck-ink:#EDE9FF; --deck-ink2:#A9A2C9;
+}
+
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  font:500 15px/1.55 "Be Vietnam Pro",Roboto,"Segoe UI",system-ui,sans-serif;
+  background:var(--deck); color:var(--deck-ink);
+  -webkit-font-smoothing:antialiased;
+}
+button{font:inherit;cursor:pointer}
+:focus-visible{outline:3px solid var(--primary);outline-offset:2px;border-radius:4px}
+.tnum{font-variant-numeric:tabular-nums}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+
+/* ============ KHUNG TRÌNH BÀY ============ */
+.deck{min-height:100vh;display:flex;flex-direction:column}
+.deck-top{
+  display:flex;align-items:center;gap:20px;flex-wrap:wrap;
+  padding:14px clamp(16px,2.5vw,32px);
+  border-bottom:2px solid var(--bink); background:var(--base);
+}
+.brand{font-weight:800;font-size:19px;letter-spacing:-.02em;color:var(--ink);white-space:nowrap}
+.brand span{color:var(--primary)}
+.tagline{font-size:12.5px;font-weight:600;color:var(--ink2);max-width:60ch}
+.deck-top .spacer{flex:1}
+.themeswitch{display:flex;border:2px solid var(--bink);border-radius:var(--r-full);overflow:hidden;background:var(--raised)}
+.themeswitch button{border:0;background:transparent;color:var(--ink);font-size:12.5px;font-weight:800;padding:9px 15px;min-height:40px}
+.themeswitch button+button{border-left:2px solid var(--bink)}
+.themeswitch button[aria-pressed="true"]{background:var(--primary);color:var(--onp)}
+
+.deck-body{flex:1;display:grid;grid-template-columns:266px minmax(0,1fr);align-items:start}
+
+.rail{
+  position:sticky;top:0;align-self:stretch;
+  border-right:2px solid var(--bink);background:var(--base);
+  padding:16px 12px 32px;display:flex;flex-direction:column;gap:4px;
+  max-height:100vh;overflow-y:auto;
+}
+.rail .grp{font-size:11px;font-weight:800;letter-spacing:.09em;text-transform:uppercase;color:var(--ink3);margin:16px 0 5px 8px}
+.rail .grp:first-child{margin-top:2px}
+.navbtn{
+  display:grid;grid-template-columns:22px 1fr;gap:10px;text-align:left;
+  width:100%;border:2px solid transparent;background:transparent;color:var(--ink);
+  border-radius:var(--r-sm);padding:9px 10px;min-height:44px;transition:background var(--dur) var(--ease);
+}
+.navbtn .n{font-size:12px;font-weight:800;color:var(--ink3);font-variant-numeric:tabular-nums;padding-top:1px}
+.navbtn .t{font-size:13.5px;font-weight:800;line-height:1.3}
+.navbtn .s{grid-column:2;font-size:11.5px;font-weight:600;color:var(--ink2);margin-top:2px;line-height:1.35}
+.navbtn:hover{background:var(--sunken)}
+.navbtn[aria-current="true"]{background:var(--raised);border-color:var(--bink);box-shadow:var(--sh1)}
+.navbtn[aria-current="true"] .n{color:var(--primary)}
+
+.viewport{padding:clamp(14px,2vw,26px) clamp(14px,2.5vw,32px) 48px;min-width:0}
+.vp-head{display:flex;align-items:flex-end;gap:18px;flex-wrap:wrap;margin-bottom:14px}
+.vp-head h1{font-size:22px;font-weight:800;line-height:1.25;margin:0;letter-spacing:-.01em;text-wrap:balance}
+.vp-head p{margin:5px 0 0;font-size:13px;font-weight:600;color:var(--deck-ink2);max-width:76ch}
+.vp-head .refs{display:flex;gap:6px;flex-wrap:wrap;margin-left:auto}
+.ref{font-size:11px;font-weight:800;letter-spacing:.04em;padding:5px 10px;border-radius:var(--r-full);
+  border:2px solid var(--bink);background:var(--raised);color:var(--ink);white-space:nowrap}
+
+.demobar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+  border:2px dashed var(--bink);border-radius:var(--r-md);padding:10px 14px;margin-bottom:14px;background:var(--base)}
+.demobar .lbl{font-size:11px;font-weight:800;letter-spacing:.09em;text-transform:uppercase;color:var(--ink2);
+  display:flex;align-items:center;gap:7px}
+.demobar .lbl::before{content:"";width:9px;height:9px;border-radius:2px;background:var(--coral);border:2px solid var(--bink)}
+.seg{display:flex;border:2px solid var(--bink);border-radius:var(--r-full);overflow:hidden;background:var(--raised)}
+.seg button{border:0;background:transparent;color:var(--ink);font-size:12.5px;font-weight:800;padding:8px 14px;min-height:40px;white-space:nowrap}
+.seg button+button{border-left:2px solid var(--bink)}
+.seg button[aria-pressed="true"]{background:var(--primary);color:var(--onp)}
+
+/* ============ VỎ ỨNG DỤNG ============ */
+.app{border:2px solid var(--bink);border-radius:var(--r-xl);overflow:hidden;
+  background:var(--base);color:var(--ink);box-shadow:var(--sh3)}
+.appbar{display:flex;align-items:center;gap:14px;padding:12px 18px;
+  background:var(--raised);border-bottom:2px solid var(--bink);flex-wrap:wrap}
+.appbar .logo{font-weight:800;font-size:16px;letter-spacing:-.02em}
+.appbar .logo span{color:var(--primary)}
+.applinks{display:flex;gap:2px;margin-left:6px;flex-wrap:wrap}
+.applinks a{font-size:13px;font-weight:800;color:var(--ink2);text-decoration:none;padding:8px 12px;border-radius:var(--r-full)}
+.applinks a[aria-current="page"]{background:var(--sunken);color:var(--ink)}
+.appbar .push{flex:1}
+.who{display:flex;align-items:center;gap:9px}
+.who .ava{width:34px;height:34px;border-radius:var(--r-full);background:var(--tav);border:2px solid var(--bink);
+  display:grid;place-items:center;font-size:12.5px;font-weight:800;color:var(--ink)}
+
+.chip{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600;padding:7px 13px;
+  border-radius:var(--r-full);border:2px solid var(--bink);background:var(--raised);color:var(--ink);white-space:nowrap}
+.chip .dot{width:8px;height:8px;border-radius:var(--r-full);background:currentColor;flex:none}
+.chip.ok{background:var(--okc);color:var(--ok)}
+.chip.warn{background:var(--warnc);color:var(--warn)}
+.chip.coin{background:var(--coinc);color:var(--coin);font-variant-numeric:tabular-nums}
+.chip.sunk{background:var(--sunken);color:var(--ink)}
+
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:48px;padding:12px 20px;
+  border-radius:var(--r-full);border:2px solid var(--bink);background:var(--raised);color:var(--ink);
+  font-size:15px;font-weight:800;transition:transform var(--dur) var(--ease)}
+.btn:hover{transform:translate(-1px,-1px)}
+.btn:active{transform:translate(1px,1px)}
+.btn.pri{background:var(--primary);color:var(--onp);box-shadow:var(--sh1)}
+.btn.dan{background:var(--dangerc);color:var(--danger)}
+.btn.sm{min-height:44px;padding:10px 16px;font-size:13.5px}
+.btn.wide{width:100%}
+.btn[disabled]{opacity:.45;cursor:not-allowed;transform:none}
+
+.card{background:var(--raised);border:2px solid var(--bink);border-radius:var(--r-md);padding:18px}
+.card.pop{box-shadow:var(--sh2)}
+.coincard{background:var(--coinc);border:2px solid var(--bink);border-radius:var(--r-md);padding:18px;box-shadow:var(--sh2)}
+.eyebrow{font-size:11.5px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--ink2)}
+h3.hd{font-size:17px;font-weight:800;line-height:1.3;margin:0}
+h4.hd{font-size:15px;font-weight:800;line-height:1.3;margin:0}
+.meta{font-size:12.5px;font-weight:600;color:var(--ink2);line-height:1.45}
+.body{font-size:14px;font-weight:500;line-height:1.55}
+.field{width:100%;border:2px dashed var(--bdec);border-radius:var(--r-sm);background:var(--raised);
+  color:var(--ink);font:500 15px/1.5 inherit;padding:13px 15px}
+.field::placeholder{color:var(--ink3)}
+.field:focus{border-style:solid;border-color:var(--primary);outline:none}
+
+.tile{position:relative;aspect-ratio:4/3;border-radius:var(--r-lg);overflow:hidden;
+  border:2px solid var(--bink);background:var(--raised);display:grid;place-items:center}
+.tile.live{background:radial-gradient(120% 120% at 30% 20%,var(--tvid) 0%,var(--tvid2) 100%)}
+.tile.speaking{box-shadow:0 0 0 4px var(--primary)}
+.tile.frozen{filter:grayscale(.55);opacity:.72}
+.tile .av{width:56px;height:56px;border-radius:var(--r-lg);background:var(--tav);border:2px solid var(--bink);
+  display:grid;place-items:center;font-size:16px;font-weight:800;color:var(--ink);transform:rotate(-3deg)}
+.tile .name{position:absolute;left:8px;bottom:8px;display:flex;align-items:center;gap:5px;flex-wrap:wrap;max-width:calc(100% - 16px)}
+.tile .name b{font-size:11.5px;font-weight:800;background:var(--raised);color:var(--ink);
+  padding:4px 10px;border-radius:var(--r-full);border:2px solid var(--bink)}
+.tile .tl{position:absolute;left:8px;top:8px}
+.tile .tr{position:absolute;right:8px;top:8px;display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end;max-width:calc(100% - 16px)}
+.badge{font-size:10.5px;font-weight:800;padding:3px 8px;border-radius:var(--r-full);
+  background:var(--raised);color:var(--ink);border:2px solid var(--bink);white-space:nowrap}
+.badge.warn{background:var(--warnc);color:var(--warn)}
+.badge.coin{background:var(--coinc);color:var(--coin);font-variant-numeric:tabular-nums}
+.badge.sunk{background:var(--sunken);color:var(--ink)}
+.badge.pri{background:var(--primary);color:var(--onp)}
+
+.controls{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;
+  padding:14px 18px;border-top:2px dashed var(--bdec);background:var(--raised)}
+
+.banner{display:flex;align-items:center;gap:10px;padding:12px 18px;font-size:13.5px;font-weight:800;border-bottom:2px solid var(--bink)}
+.banner.warn{background:var(--warnc);color:var(--warn)}
+.banner.ok{background:var(--okc);color:var(--ok)}
+.banner .grow{flex:1}
+
+.count{font-size:44px;font-weight:800;line-height:1;letter-spacing:-.02em;color:var(--ink);font-variant-numeric:tabular-nums}
+.count.low{color:var(--warn)}
+.pbar{height:12px;border-radius:var(--r-full);background:var(--raised);border:2px solid var(--bink);overflow:hidden}
+.pbar i{display:block;height:100%;background:var(--coinf);transition:width 1s linear}
+
+.txn{display:grid;grid-template-columns:1fr auto;gap:14px;align-items:center;padding:13px 16px;border-bottom:2px solid var(--bdec);background:var(--raised)}
+.txn:last-child{border-bottom:0}
+.txn .t{font-size:14px;font-weight:800}
+.txn .d{font-size:12.5px;font-weight:600;color:var(--ink2);margin-top:2px}
+.txn .amt{font-size:15px;font-weight:800;font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
+.txn .amt small{display:block;font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--ink2);margin-top:2px}
+
+.stagewrap{position:relative}
+.scrim{position:absolute;inset:0;background:var(--scrim);display:grid;place-items:center;padding:24px;z-index:5}
+.dialog{width:100%;max-width:480px;background:var(--raised);border:2px solid var(--bink);
+  border-radius:var(--r-xl);box-shadow:var(--sh3);padding:22px}
+.dialog.narrow{max-width:420px}
+
+/* bảng chế độ khuôn mặt */
+.modes{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.mode{border:2px solid var(--bink);border-radius:var(--r-sm);background:var(--raised);color:var(--ink);
+  padding:12px 10px;text-align:center;min-height:88px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px}
+.mode .ic{font-size:22px;line-height:1}
+.mode .lb{font-size:13px;font-weight:800}
+.mode .sb{font-size:11.5px;font-weight:600;color:var(--ink2)}
+.mode[aria-checked="true"]{border-width:3px;border-color:var(--primary);background:var(--sunken)}
+
+/* đo mic */
+.miclevel{display:flex;gap:4px;align-items:flex-end;height:26px}
+.miclevel i{width:7px;background:var(--bdec);border:2px solid var(--bink);border-radius:3px;height:35%}
+.miclevel i.on{background:var(--ok)}
+.miclevel i:nth-child(1){height:35%}.miclevel i:nth-child(2){height:55%}.miclevel i:nth-child(3){height:75%}
+.miclevel i:nth-child(4){height:95%}.miclevel i:nth-child(5){height:75%}.miclevel i:nth-child(6){height:55%}
+.miclevel i:nth-child(7){height:40%}.miclevel i:nth-child(8){height:60%}
+
+/* chat */
+.msg{display:flex;flex-direction:column;gap:2px}
+.msg .au{font-size:12.5px;font-weight:800;color:var(--primary)}
+.msg .tx{font-size:14px;font-weight:500;line-height:1.5}
+.msg.sys .au{color:var(--ink2)}
+.msg.sys .tx{color:var(--ink2);font-weight:600;font-size:13px}
+
+/* thẻ phòng ở Khám phá */
+.roomcard{display:flex;flex-direction:column;gap:12px;background:var(--raised);border:2px solid var(--bink);
+  border-radius:var(--r-md);padding:16px;box-shadow:var(--sh2)}
+.roomcard .hd2{font-size:16px;font-weight:800;line-height:1.3;text-wrap:balance}
+.facepile{display:flex}
+.facepile span{width:30px;height:30px;border-radius:var(--r-full);background:var(--tav);border:2px solid var(--bink);
+  display:grid;place-items:center;font-size:11px;font-weight:800;color:var(--ink);margin-left:-8px}
+.facepile span:first-child{margin-left:0}
+
+/* gói dịch vụ */
+.plan{display:flex;flex-direction:column;gap:14px;background:var(--raised);border:2px solid var(--bink);
+  border-radius:var(--r-md);padding:20px}
+.plan.on{box-shadow:var(--sh2);border-width:3px;border-color:var(--primary)}
+.plan ul{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px;font-size:13.5px;font-weight:600;color:var(--ink2)}
+
+.stack{display:flex;flex-direction:column}
+.row{display:flex;align-items:center;flex-wrap:wrap}
+.g4{gap:4px}.g6{gap:6px}.g8{gap:8px}.g10{gap:10px}.g12{gap:12px}.g14{gap:14px}.g16{gap:16px}.g20{gap:20px}.g24{gap:24px}
+.pad{padding:20px}
+.pad-lg{padding:clamp(20px,2.2vw,30px)}
+.hidden{display:none !important}
+hr.sep{border:0;border-top:2px solid var(--bdec);margin:0}
+.dl{display:grid;grid-template-columns:1fr auto;gap:9px 16px;font-size:14px;margin:0}
+.dl dt{font-weight:600;color:var(--ink2);margin:0}
+.dl dd{margin:0;font-weight:800;font-variant-numeric:tabular-nums;text-align:right}
+.grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.grid4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}
+.split{display:grid;grid-template-columns:minmax(0,1fr) 330px;align-items:start}
+.split-h{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:clamp(20px,2.4vw,34px);align-items:center}
+.rail-r{border-left:2px solid var(--bink);background:var(--raised);align-self:stretch;display:flex;flex-direction:column}
+
+@media (max-width:1180px){
+  .deck-body{grid-template-columns:1fr}
+  .rail{position:static;max-height:none;flex-direction:row;flex-wrap:wrap;border-right:0;border-bottom:2px solid var(--bink)}
+  .rail .grp{width:100%;margin:8px 0 2px 8px}
+  .navbtn{width:auto}
+  .navbtn .s{display:none}
+  .split,.split-h{grid-template-columns:1fr}
+  .rail-r{border-left:0;border-top:2px solid var(--bink)}
+  .grid4{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media (max-width:720px){
+  .grid3,.grid4{grid-template-columns:1fr}
+  .modes{grid-template-columns:1fr}
+}
+@media (prefers-reduced-motion:reduce){
+  *{animation:none !important;transition:none !important}
+}
+</style>
+</head>
+<body>
+<div class="deck">
+
+<header class="deck-top">
+  <div class="brand">Stu<span>With</span></div>
+  <p class="tagline">Demo tương tác chín bề mặt sản phẩm. Mọi màu, viền và bóng lấy nguyên từ <b>DESIGN.md</b>; mọi câu chữ lấy từ <b>EXPERIENCE.md</b>.</p>
+  <div class="spacer"></div>
+  <div class="themeswitch" role="group" aria-label="Chế độ hiển thị">
+    <button type="button" data-theme-set="light" aria-pressed="true">Sáng</button>
+    <button type="button" data-theme-set="dark" aria-pressed="false">Tối</button>
+  </div>
+</header>
+
+<div class="deck-body">
+
+  <!-- ============ RAIL CHỈ MỤC ============ -->
+  <nav class="rail" aria-label="Chín bề mặt sản phẩm">
+    <p class="grp">Vào sản phẩm</p>
+    <button type="button" class="navbtn" data-goto="dangnhap" aria-current="true">
+      <span class="n">01</span><span class="t">Đăng nhập</span><span class="s">4 provider · lỗi · rate-limit</span></button>
+    <button type="button" class="navbtn" data-goto="khampha">
+      <span class="n">02</span><span class="t">Khám phá &amp; AI match</span><span class="s">Nguyện vọng bằng câu đầy đủ</span></button>
+
+    <p class="grp">Vào phòng học</p>
+    <button type="button" class="navbtn" data-goto="prejoin">
+      <span class="n">03</span><span class="t">Pre-join</span><span class="s">Quyết định lộ mặt trước khi ai thấy</span></button>
+    <button type="button" class="navbtn" data-goto="phong">
+      <span class="n">04</span><span class="t">Phòng học live</span><span class="s">Thang suy giảm mạng bốn bậc</span></button>
+
+    <p class="grp">Hỏi riêng &amp; coin</p>
+    <button type="button" class="navbtn" data-goto="xacnhan">
+      <span class="n">05</span><span class="t">Xác nhận hỏi riêng</span><span class="s">Trước khi trừ đồng coin đầu tiên</span></button>
+    <button type="button" class="navbtn" data-goto="phien">
+      <span class="n">06</span><span class="t">Phiên đang chạy</span><span class="s">Đồng hồ server · xin tham gia</span></button>
+    <button type="button" class="navbtn" data-goto="vi">
+      <span class="n">07</span><span class="t">Ví coin</span><span class="s">Sổ cái đọc lại được</span></button>
+
+    <p class="grp">Danh tính &amp; gói</p>
+    <button type="button" class="navbtn" data-goto="hoso">
+      <span class="n">08</span><span class="t">Hồ sơ &amp; huy hiệu</span><span class="s">Ba trục uy tín · cổng tuổi</span></button>
+    <button type="button" class="navbtn" data-goto="goi">
+      <span class="n">09</span><span class="t">Gói &amp; nạp coin</span><span class="s">Ba trạng thái khi quay lại</span></button>
+  </nav>
+
+  <!-- ============ VIEWPORT ============ -->
+  <main class="viewport">
+    <div class="vp-head">
+      <div>
+        <h1 id="vpTitle">Đăng nhập</h1>
+        <p id="vpNote">Bốn provider mạng xã hội. Lỗi kỹ thuật không bao giờ lộ ra giao diện — người dùng thấy điều gì đã xảy ra và làm gì tiếp theo.</p>
+      </div>
+      <div class="refs" id="vpRefs"></div>
+    </div>
+
+    <!-- ---------- dải điều khiển demo ---------- -->
+    <div class="demobar">
+      <span class="lbl">Bấm thử</span>
+
+      <div class="seg ctl" data-ctl="dangnhap" role="group" aria-label="Trạng thái đăng nhập">
+        <button type="button" data-login="idle" aria-pressed="true">Bình thường</button>
+        <button type="button" data-login="fail" aria-pressed="false">Thất bại</button>
+        <button type="button" data-login="cancel" aria-pressed="false">Huỷ cấp quyền</button>
+        <button type="button" data-login="limit" aria-pressed="false">Bị rate-limit</button>
+      </div>
+
+      <div class="seg ctl hidden" data-ctl="khampha" role="group" aria-label="Kết quả tìm kiếm">
+        <button type="button" data-disc="has" aria-pressed="true">Có kết quả</button>
+        <button type="button" data-disc="empty" aria-pressed="false">Chưa có lớp nào</button>
+      </div>
+
+      <div class="seg ctl hidden" data-ctl="prejoin" role="group" aria-label="Quyền thiết bị">
+        <button type="button" data-perm="ok" aria-pressed="true">Có quyền camera/mic</button>
+        <button type="button" data-perm="blocked" aria-pressed="false">Trình duyệt chặn</button>
+      </div>
+
+      <div class="seg ctl hidden" data-ctl="phong" role="group" aria-label="Bậc mạng">
+        <button type="button" data-net="1" aria-pressed="true">Bậc 1 · Tốt</button>
+        <button type="button" data-net="3" aria-pressed="false">Bậc 3 · Yếu</button>
+        <button type="button" data-net="4" aria-pressed="false">Bậc 4 · Mất</button>
+      </div>
+
+      <div class="seg ctl hidden" data-ctl="xacnhan" role="group" aria-label="Biến thể hộp thoại">
+        <button type="button" data-ask="confirm" aria-pressed="true">Thẻ xác nhận</button>
+        <button type="button" data-ask="busy" aria-pressed="false">Người kia đang bận</button>
+      </div>
+
+      <div class="seg ctl hidden" data-ctl="phien" role="group" aria-label="Trạng thái phiên">
+        <button type="button" data-ses="run" aria-pressed="true">Đang chạy</button>
+        <button type="button" data-ses="low" aria-pressed="false">Còn 2 phút</button>
+        <button type="button" data-ses="end" aria-pressed="false">Đã dừng</button>
+      </div>
+
+      <div class="seg ctl hidden" data-ctl="hoso" role="group" aria-label="Tuổi tài khoản">
+        <button type="button" data-age="adult" aria-pressed="true">Đủ 18</button>
+        <button type="button" data-age="minor" aria-pressed="false">Dưới 18</button>
+      </div>
+
+      <div class="seg ctl hidden" data-ctl="goi" role="group" aria-label="Trạng thái quay lại từ cổng thanh toán">
+        <button type="button" data-pay="none" aria-pressed="true">Chọn gói</button>
+        <button type="button" data-pay="ok" aria-pressed="false">Thành công</button>
+        <button type="button" data-pay="pending" aria-pressed="false">Đang xử lý</button>
+        <button type="button" data-pay="fail" aria-pressed="false">Không hoàn tất</button>
+      </div>
+    </div>
+
+    <!-- ================= 01 · ĐĂNG NHẬP ================= -->
+    <section class="app scr" id="scr-dangnhap">
+      <div class="split-h pad-lg">
+        <div class="stack g16">
+          <span class="eyebrow">Nền tảng phòng học live</span>
+          <h2 style="font-size:34px;font-weight:800;line-height:1.15;letter-spacing:-.02em;margin:0;text-wrap:balance">
+            Học cùng người lạ mà không phải lộ mặt.</h2>
+          <p class="body" style="max-width:52ch;color:var(--ink2);font-weight:600">
+            Sự hiện diện tách khỏi danh tính: bạn ẩn mặt hoàn toàn mà vẫn tích được uy tín thật, đã xác minh.</p>
+          <div class="row g8">
+            <span class="chip"><span class="dot" style="background:var(--primary)"></span>Ẩn mặt xử lý ngay trên máy</span>
+            <span class="chip coin">◈ Hỏi riêng trả coin theo phút</span>
+            <span class="chip ok"><span class="dot"></span>Audio không bao giờ bị hy sinh</span>
+          </div>
+          <div class="card" style="border-style:dashed;border-color:var(--bdec);background:transparent">
+            <p class="meta" style="margin:0">Buổi học <b style="color:var(--ink)">không được ghi lại</b>. Không bản ghi, không retention, không luồng đồng thuận ghi hình.</p>
+          </div>
+        </div>
+
+        <div class="card pop" style="max-width:460px;width:100%;justify-self:end">
+          <div class="stack g16">
+            <div class="stack g4">
+              <h3 class="hd">Vào StuWith</h3>
+              <p class="meta">Chọn một cách đăng nhập. Lần đầu, hệ thống tự tạo hồ sơ cho bạn.</p>
+            </div>
+
+            <div id="loginAlert" class="hidden" style="border:2px solid var(--bink);border-radius:var(--r-sm);padding:13px 15px">
+              <p id="loginAlertText" style="margin:0;font-size:14px;font-weight:800;line-height:1.5"></p>
+            </div>
+
+            <div class="stack g10" id="loginProviders">
+              <button type="button" class="btn wide"><span aria-hidden="true">G</span> Tiếp tục với Google</button>
+              <button type="button" class="btn wide"><span aria-hidden="true">f</span> Tiếp tục với Facebook</button>
+              <button type="button" class="btn wide"><span aria-hidden="true">&#63743;</span> Tiếp tục với Apple</button>
+              <button type="button" class="btn wide"><span aria-hidden="true">&#9635;</span> Tiếp tục với Microsoft</button>
+              <p class="meta" style="text-align:center">Tài khoản tổ chức đi qua Azure AD / Entra.</p>
+            </div>
+
+            <hr class="sep">
+            <p class="meta">Bằng việc tiếp tục, bạn đồng ý với Điều khoản và Chính sách riêng tư. Ngày sinh sẽ được hỏi ở bước tạo hồ sơ — đây là thông tin bắt buộc và không hiện công khai.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= 02 · KHÁM PHÁ ================= -->
+    <section class="app scr hidden" id="scr-khampha">
+      <div class="appbar">
+        <div class="logo">Stu<span>With</span></div>
+        <nav class="applinks"><a href="#" aria-current="page">Khám phá</a><a href="#">Lớp đã học</a><a href="#">Ví coin</a><a href="#">Hồ sơ</a></nav>
+        <div class="push"></div>
+        <span class="chip coin">◈ 1.000.000</span>
+        <div class="who"><span class="ava">TR</span></div>
+      </div>
+
+      <div class="pad-lg stack g20">
+        <div class="card pop">
+          <div class="stack g12">
+            <div class="stack g4">
+              <h3 class="hd">Bạn đang cần học gì?</h3>
+              <p class="meta">Mô tả bằng một câu đầy đủ. AI đọc nguyện vọng, không đọc từ khoá.</p>
+            </div>
+            <textarea class="field" rows="2" aria-label="Nguyện vọng học">Mai thi Giải tích 1, mình đang kẹt ở tích phân từng phần và muốn học cùng người giải được dạng này.</textarea>
+            <div class="row g10">
+              <button type="button" class="btn pri">Tìm bạn học bằng AI</button>
+              <button type="button" class="btn">Vào ngẫu nhiên theo AI</button>
+              <div class="push" style="flex:1"></div>
+              <input class="field" style="width:230px" placeholder="hoặc tìm theo từ khoá" aria-label="Tìm theo từ khoá">
+            </div>
+          </div>
+        </div>
+
+        <div id="discHas" class="stack g14">
+          <div class="row g10">
+            <span class="eyebrow">4 lớp khớp nguyện vọng</span>
+            <div style="flex:1"></div>
+            <span class="chip sunk">Đang mở</span>
+            <span class="chip sunk">Có host đã xác minh</span>
+          </div>
+          <div class="grid4">
+
+            <article class="roomcard">
+              <div class="row g6"><span class="chip ok" style="padding:5px 11px"><span class="dot"></span>Đang học</span><span class="chip sunk" style="padding:5px 11px">Circle · 6/25</span></div>
+              <h4 class="hd2">Ôn Giải tích 1 — Tích phân từng phần</h4>
+              <p class="meta">Minh Anh chủ phòng</p>
+              <div class="row g4"><span class="badge">🎓 Thạc sĩ Toán</span><span class="badge">▲ Hạng Bạc</span></div>
+              <div class="row g10"><div class="facepile"><span>MA</span><span>TR</span><span>HK</span><span>+3</span></div><div style="flex:1"></div><span class="chip coin" style="padding:5px 11px">◈ 120/ph</span></div>
+              <button type="button" class="btn pri sm wide" data-goto="prejoin">Xem trước &amp; vào</button>
+            </article>
+
+            <article class="roomcard">
+              <div class="row g6"><span class="chip ok" style="padding:5px 11px"><span class="dot"></span>Đang học</span><span class="chip sunk" style="padding:5px 11px">Buddy · 4/6</span></div>
+              <h4 class="hd2">Chuỗi số &amp; hội tụ — làm bài tập cùng nhau</h4>
+              <p class="meta">Duy chủ phòng</p>
+              <div class="row g4"><span class="badge">● Giải tích</span><span class="badge">▲ Hạng Đồng</span></div>
+              <div class="row g10"><div class="facepile"><span>DU</span><span>NL</span><span>PT</span><span>+1</span></div><div style="flex:1"></div><span class="chip sunk" style="padding:5px 11px">Không nhận hỏi riêng</span></div>
+              <button type="button" class="btn sm wide" data-goto="prejoin">Xem trước &amp; vào</button>
+            </article>
+
+            <article class="roomcard">
+              <div class="row g6"><span class="chip sunk" style="padding:5px 11px">Bắt đầu 23:30</span><span class="chip sunk" style="padding:5px 11px">Circle · 0/25</span></div>
+              <h4 class="hd2">Đêm trước ngày thi — phòng học im lặng</h4>
+              <p class="meta">Ngọc Lan chủ phòng</p>
+              <div class="row g4"><span class="badge">🎓 Cử nhân Sư phạm</span><span class="badge">+2</span></div>
+              <div class="row g10"><div class="facepile"><span>NL</span></div><div style="flex:1"></div><span class="chip coin" style="padding:5px 11px">◈ 80/ph</span></div>
+              <button type="button" class="btn sm wide" data-goto="prejoin">Xem trước &amp; vào</button>
+            </article>
+
+            <article class="roomcard">
+              <div class="row g6"><span class="chip ok" style="padding:5px 11px"><span class="dot"></span>Đang học</span><span class="chip sunk" style="padding:5px 11px">Campus · 52/100</span></div>
+              <h4 class="hd2">CLB Toán ĐH Bách Khoa — buổi ôn cuối kỳ</h4>
+              <p class="meta">Khoa Toán Tin chủ phòng</p>
+              <div class="row g4"><span class="badge">🎓 Tổ chức đã xác minh</span></div>
+              <div class="row g10"><div class="facepile"><span>BK</span><span>TL</span><span>VA</span><span>+49</span></div><div style="flex:1"></div><span class="chip sunk" style="padding:5px 11px">Lưới dày</span></div>
+              <button type="button" class="btn sm wide" data-goto="prejoin">Xem trước &amp; vào</button>
+            </article>
+
+          </div>
+        </div>
+
+        <div id="discEmpty" class="card pop hidden" style="text-align:center;padding:44px 24px">
+          <div class="stack g14" style="align-items:center">
+            <h3 class="hd">Chưa có lớp nào khớp.</h3>
+            <p class="meta" style="max-width:46ch">Thử mô tả nguyện vọng bằng câu đầy đủ, hoặc vào ngẫu nhiên theo AI — thường có người khác cùng học chủ đề này.</p>
+            <div class="row g10" style="justify-content:center">
+              <button type="button" class="btn pri">Vào ngẫu nhiên theo AI</button>
+              <button type="button" class="btn">Sửa nguyện vọng</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= 03 · PRE-JOIN ================= -->
+    <section class="app scr hidden" id="scr-prejoin">
+      <div class="appbar">
+        <div class="logo">Stu<span>With</span></div>
+        <span class="chip sunk">Pre-join</span>
+        <div class="push"></div>
+        <span class="chip coin">◈ 1.000.000</span>
+        <div class="who"><span class="ava">TR</span></div>
+      </div>
+
+      <div class="split-h pad-lg">
+        <div class="stack g12">
+          <div class="tile live" style="aspect-ratio:16/10" id="preTile">
+            <div class="av hidden" id="preAvatar" style="width:78px;height:78px;font-size:22px">TR</div>
+            <span class="tr"><span class="badge pri" id="preModeBadge">Camera thật</span></span>
+            <span class="name"><b>Xem trước — chỉ bạn thấy</b></span>
+          </div>
+          <div id="preOk" class="row g14">
+            <div class="row g10"><span class="eyebrow">Micro</span>
+              <div class="miclevel" aria-hidden="true"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i><i></i><i></i></div>
+              <span class="meta">Nghe thấy bạn.</span>
+            </div>
+            <div style="flex:1"></div>
+            <button type="button" class="btn sm">Đổi thiết bị</button>
+          </div>
+          <div id="preBlocked" class="card hidden" style="background:var(--warnc);border-color:var(--bink)">
+            <div class="stack g10">
+              <h4 class="hd" style="color:var(--warn)">Trình duyệt đang chặn camera và micro.</h4>
+              <p class="body" style="color:var(--warn);font-weight:600">Bấm biểu tượng ổ khoá bên trái thanh địa chỉ → <b>Quyền</b> → bật Camera và Micro, rồi tải lại trang.</p>
+              <div class="row g10">
+                <button type="button" class="btn sm" data-goto="phong">Vào phòng chỉ để nghe</button>
+                <button type="button" class="btn sm">Hướng dẫn cho trình duyệt của tôi</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="stack g16">
+          <div class="stack g6">
+            <span class="eyebrow">Sắp vào phòng</span>
+            <h3 class="hd" style="font-size:22px">Ôn Giải tích 1 — Tích phân từng phần</h3>
+            <div class="row g6"><span class="meta">Minh Anh chủ phòng</span><span class="badge">🎓 Thạc sĩ Toán</span><span class="badge">▲ Hạng Bạc</span></div>
+          </div>
+
+          <div class="card">
+            <div class="stack g12">
+              <div class="stack g4">
+                <h4 class="hd">Bạn muốn hiện lên thế nào?</h4>
+                <p class="meta">Đổi được bất cứ lúc nào trong phòng. Ẩn mặt và Filter xử lý ngay trên máy bạn — khung hình gốc không rời máy.</p>
+              </div>
+              <div class="modes" role="radiogroup" aria-label="Chế độ khuôn mặt">
+                <button type="button" class="mode" role="radio" aria-checked="true" data-mode="raw" data-badge="Camera thật">
+                  <span class="ic" aria-hidden="true">🙂</span><span class="lb">Để nguyên</span><span class="sb">camera thật</span></button>
+                <button type="button" class="mode" role="radio" aria-checked="false" data-mode="hidden" data-badge="Ẩn mặt">
+                  <span class="ic" aria-hidden="true">🙈</span><span class="lb">Ẩn mặt</span><span class="sb">avatar chữ cái</span></button>
+                <button type="button" class="mode" role="radio" aria-checked="false" data-mode="filter" data-badge="🐱 Mèo">
+                  <span class="ic" aria-hidden="true">🐱</span><span class="lb">Filter</span><span class="sb">biến đổi khuôn mặt</span></button>
+              </div>
+              <p class="meta" id="preExposure" style="border-left:3px solid var(--primary);padding-left:12px">
+                Người trong phòng sẽ thấy <b style="color:var(--ink)">khuôn mặt thật</b> của bạn và tên hiển thị “Trâm”.</p>
+            </div>
+          </div>
+
+          <div class="card" style="background:var(--okc);border-color:var(--bink)">
+            <p class="body" style="margin:0;color:var(--ok);font-weight:800">Buổi học không được ghi lại.</p>
+            <p class="meta" style="color:var(--ok);margin-top:4px">Không bản ghi, không retention. Không ai xem lại được buổi này.</p>
+          </div>
+
+          <div class="row g10">
+            <button type="button" class="btn pri" data-goto="phong">Vào phòng</button>
+            <button type="button" class="btn" data-goto="khampha">Quay lại</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= 04 · PHÒNG HỌC LIVE ================= -->
+    <section class="app scr hidden" id="scr-phong">
+      <div class="appbar">
+        <div class="stack g4" style="min-width:0">
+          <h3 class="hd">Ôn Giải tích 1 — Tích phân từng phần</h3>
+          <p class="meta">Minh Anh · 🎓 Thạc sĩ Toán · Study Circle · 6/25</p>
+        </div>
+        <div class="push"></div>
+        <span class="chip ok" id="netChip"><span class="dot"></span>Mạng tốt</span>
+        <span class="chip coin">◈ 1.000.000</span>
+      </div>
+
+      <div id="netBanner" class="banner warn hidden">
+        <span id="netBannerText">Mạng yếu — đã tắt video để giữ tiếng.</span>
+        <span class="grow"></span>
+        <button type="button" class="btn sm" id="netBannerCta">Bật lại camera</button>
+      </div>
+
+      <div class="split">
+        <div class="stack">
+          <div class="pad" style="position:relative">
+            <div class="grid3" id="roomGrid">
+              <div class="tile live speaking" data-av="MA"><span class="tr"><span class="badge pri">Đang nói</span></span><span class="name"><b>Minh Anh</b><span class="badge">🎓 Thạc sĩ Toán</span></span></div>
+              <div class="tile live" data-av="TR"><span class="name"><b>Trâm · bạn</b></span></div>
+              <div class="tile" data-av="HK"><div class="av">HK</div><span class="tr"><span class="badge">Ẩn mặt</span><span class="badge coin">◈ 90/ph</span></span><span class="name"><b>Khang</b><span class="badge">▲ Hạng Đồng</span></span></div>
+              <div class="tile live" data-av="DU"><span class="tr"><span class="badge">🐱 Mèo</span></span><span class="name"><b>Duy</b></span></div>
+              <div class="tile" data-av="NL"><div class="av">NL</div><span class="tl"><span class="badge warn">Mic tắt</span></span><span class="tr"><span class="badge sunk">🔒 Đang hỏi riêng</span></span><span class="name"><b>Ngọc Lan</b><span class="badge">🎓 Cử nhân Sư phạm</span></span></div>
+              <div class="tile live" data-av="PT"><span class="tr"><span class="badge coin">◈ 120/ph</span></span><span class="name"><b>Phương Thảo</b><span class="badge">● Giải tích</span></span></div>
+            </div>
+
+            <!-- bảng chế độ khuôn mặt -->
+            <div id="facePanel" class="hidden" style="position:absolute;left:50%;transform:translateX(-50%);bottom:-8px;z-index:6;width:min(430px,92%);background:var(--raised);border:2px solid var(--bink);border-radius:var(--r-md);box-shadow:var(--sh2);padding:16px">
+              <div class="stack g12">
+                <div class="row g10">
+                  <div class="tile live" style="width:82px;aspect-ratio:4/3;border-radius:var(--r-sm)" id="fpPreview">
+                    <div class="av hidden" id="fpAvatar" style="width:36px;height:36px;font-size:12px">TR</div>
+                  </div>
+                  <div class="stack g4"><h4 class="hd">Xem trước chính bạn</h4><p class="meta">Đổi có hiệu lực ngay, không cần xác nhận.</p></div>
+                </div>
+                <div class="modes" role="radiogroup" aria-label="Chế độ khuôn mặt trong phòng">
+                  <button type="button" class="mode" role="radio" aria-checked="true" data-mode="raw" data-badge="Camera thật"><span class="ic" aria-hidden="true">🙂</span><span class="lb">Để nguyên</span></button>
+                  <button type="button" class="mode" role="radio" aria-checked="false" data-mode="hidden" data-badge="Ẩn mặt"><span class="ic" aria-hidden="true">🙈</span><span class="lb">Ẩn mặt</span></button>
+                  <button type="button" class="mode" role="radio" aria-checked="false" data-mode="filter" data-badge="🐱 Mèo"><span class="ic" aria-hidden="true">🐱</span><span class="lb">Filter</span></button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="controls">
+            <button type="button" class="btn">🎤 Micro</button>
+            <button type="button" class="btn">📷 Camera</button>
+            <button type="button" class="btn pri" id="faceToggle" aria-expanded="false">🙈 Khuôn mặt</button>
+            <button type="button" class="btn">✋ Giơ tay</button>
+            <button type="button" class="btn" data-goto="xacnhan">Hỏi riêng · ◈ 120/ph</button>
+            <button type="button" class="btn dan" data-goto="khampha">Rời phòng</button>
+          </div>
+        </div>
+
+        <aside class="rail-r">
+          <div class="row g10" style="padding:14px 16px;border-bottom:2px solid var(--bdec)">
+            <h4 class="hd">Hỏi cả phòng</h4><div style="flex:1"></div><span class="chip sunk" style="padding:5px 11px">Miễn phí</span>
+          </div>
+          <div class="stack g14" style="padding:16px;flex:1;min-height:280px" id="chatLog">
+            <div class="msg sys"><span class="au">Hệ thống</span><span class="tx">Buổi học không được ghi lại.</span></div>
+            <div class="msg"><span class="au">Minh Anh</span><span class="tx">Mọi người mở bài 4 trang 62 nhé, mình chữa dạng ∫u dv trước.</span></div>
+            <div class="msg"><span class="au">Khang</span><span class="tx">Cho mình hỏi chọn u thế nào cho đúng ạ?</span></div>
+            <div class="msg"><span class="au">Minh Anh</span><span class="tx">Ưu tiên theo LIATE — log, nghịch đảo lượng giác, đa thức, mũ, lượng giác.</span></div>
+            <div class="msg sys"><span class="au">Hệ thống</span><span class="tx">Ngọc Lan đang trong phiên hỏi riêng, có thể chưa đọc ngay.</span></div>
+          </div>
+          <div style="padding:14px 16px;border-top:2px solid var(--bdec)">
+            <form class="row g8" id="chatForm">
+              <input class="field" style="flex:1;min-width:0" id="chatInput" placeholder="Nhắn cả phòng…" aria-label="Nhắn cả phòng">
+              <button type="submit" class="btn sm pri">Gửi</button>
+            </form>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <!-- ================= 05 · XÁC NHẬN HỎI RIÊNG ================= -->
+    <section class="app scr hidden" id="scr-xacnhan">
+      <div class="appbar">
+        <div class="stack g4">
+          <h3 class="hd">Ôn Giải tích 1 — Tích phân từng phần</h3>
+          <p class="meta">Minh Anh · 🎓 Thạc sĩ Toán · Study Circle · 6/25</p>
+        </div>
+        <div class="push"></div>
+        <span class="chip ok"><span class="dot"></span>Mạng tốt</span>
+        <span class="chip coin">◈ 1.000.000</span>
+      </div>
+
+      <div class="stagewrap">
+        <div class="pad">
+          <div class="grid3">
+            <div class="tile live speaking"><span class="name"><b>Minh Anh</b></span></div>
+            <div class="tile live"><span class="name"><b>Trâm · bạn</b></span></div>
+            <div class="tile"><div class="av">HK</div><span class="name"><b>Khang</b></span></div>
+            <div class="tile live"><span class="name"><b>Duy</b></span></div>
+            <div class="tile"><div class="av">NL</div><span class="name"><b>Ngọc Lan</b></span></div>
+            <div class="tile live"><span class="name"><b>Phương Thảo</b></span></div>
+          </div>
+        </div>
+
+        <!-- thẻ xác nhận -->
+        <div class="scrim" id="askConfirm">
+          <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="askTitle">
+            <div class="stack g16">
+              <div class="stack g6">
+                <span class="eyebrow">Xác nhận hỏi riêng</span>
+                <h3 class="hd" id="askTitle" style="font-size:22px">Hỏi riêng Minh Anh</h3>
+                <div class="row g6"><span class="badge">🎓 Thạc sĩ Toán</span><span class="badge">▲ Hạng Bạc</span></div>
+              </div>
+
+              <div class="coincard">
+                <dl class="dl">
+                  <dt>Đơn giá</dt><dd>120 coin / phút</dd>
+                  <dt>Độ dài block</dt><dd>1 phút</dd>
+                  <dt>Số dư hiện tại</dt><dd>1.000.000 coin</dd>
+                  <dt>Ước tính tối đa</dt><dd>8.333 phút</dd>
+                </dl>
+                <hr class="sep" style="margin:14px 0;border-color:var(--bink)">
+                <p class="meta" style="color:var(--coin)">Coin bị trừ theo từng block 1 phút đã bắt đầu. Nếu mất mạng mà tiếng vẫn thông, phiên vẫn tính. Chỉ khi mất hẳn tiếng, phiên tạm dừng và chỉ tính đến block cuối đã dùng. Số dư không bao giờ âm.</p>
+              </div>
+
+              <div class="row g10">
+                <button type="button" class="btn pri" data-goto="phien">Bắt đầu phiên</button>
+                <button type="button" class="btn" data-goto="phong">Để sau</button>
+              </div>
+              <p class="meta">Đồng hồ chỉ chạy sau khi bạn bấm “Bắt đầu phiên”.</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- dialog đang bận -->
+        <div class="scrim hidden" id="askBusy">
+          <div class="dialog narrow" role="dialog" aria-modal="true" aria-labelledby="busyTitle">
+            <div class="stack g14">
+              <h3 class="hd" id="busyTitle">Ngọc Lan đang trong một phiên hỏi riêng</h3>
+              <p class="body" style="color:var(--ink2);font-weight:600">Phiên riêng là kênh tách biệt nên bạn chưa vào được. Bạn có thể đợi, hoặc hỏi cả phòng — thường có người khác cùng học chủ đề này.</p>
+              <div class="stack g10">
+                <button type="button" class="btn pri wide">Báo tôi khi rảnh</button>
+                <button type="button" class="btn wide" data-goto="phong">Hỏi cả phòng</button>
+                <button type="button" class="btn wide" data-goto="phong" style="border-style:dashed">Để sau</button>
+              </div>
+              <p class="meta">Hộp thoại này cố ý không nói đang hỏi riêng với ai, cũng không nói còn bao lâu — cả hai đều làm rò rỉ thông tin của người khác.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= 06 · PHIÊN ĐANG CHẠY ================= -->
+    <section class="app scr hidden" id="scr-phien">
+      <div class="appbar">
+        <div class="stack g4">
+          <h3 class="hd">Phiên hỏi riêng · Minh Anh</h3>
+          <p class="meta">Kênh tách biệt khỏi phòng học. Phòng vẫn giữ chỗ cho bạn.</p>
+        </div>
+        <div class="push"></div>
+        <span class="chip ok"><span class="dot"></span>Mạng tốt</span>
+        <span class="chip coin" id="sesBalance">◈ 999.640</span>
+      </div>
+
+      <div class="split">
+        <div class="stack">
+          <div class="pad">
+            <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px">
+              <div class="tile live speaking" style="aspect-ratio:16/10"><span class="tr"><span class="badge pri">Đang nói</span></span><span class="name"><b>Minh Anh</b><span class="badge">🎓 Thạc sĩ Toán</span></span></div>
+              <div class="tile" style="aspect-ratio:16/10"><div class="av" style="width:72px;height:72px;font-size:20px">TR</div><span class="tr"><span class="badge">Ẩn mặt</span></span><span class="name"><b>Trâm · bạn</b></span></div>
+            </div>
+          </div>
+          <div class="controls">
+            <button type="button" class="btn">🎤 Micro</button>
+            <button type="button" class="btn">📷 Camera</button>
+            <button type="button" class="btn pri">🙈 Khuôn mặt</button>
+            <button type="button" class="btn dan" id="sesStop">Dừng phiên</button>
+          </div>
+        </div>
+
+        <aside class="rail-r">
+          <div class="stack g16 pad" style="flex:1">
+
+            <div class="coincard" id="sesLive">
+              <div class="stack g4">
+                <span class="eyebrow" style="color:var(--coin)">Thời gian còn lại</span>
+                <p class="count" id="sesCount">08:20</p>
+                <p class="meta" style="color:var(--coin)" id="sesExplain">Tính theo số dư 999.640 coin ÷ 120 coin/phút, làm tròn xuống block 1 phút.</p>
+              </div>
+              <div class="pbar" style="margin-top:14px"><i id="sesBar" style="width:68%"></i></div>
+              <hr class="sep" style="margin:14px 0;border-color:var(--bink)">
+              <dl class="dl">
+                <dt>Đơn giá</dt><dd>120 coin / phút</dd>
+                <dt>Đã trừ</dt><dd id="sesSpent">360 coin</dd>
+                <dt>Bắt đầu lúc</dt><dd>23:08</dd>
+              </dl>
+              <p class="meta hidden" id="sesWarn" style="color:var(--warn);margin-top:12px;font-weight:800">Còn dưới 2 phút. Nạp thêm coin để phiên không dừng ở block tới.</p>
+              <button type="button" class="btn sm wide hidden" id="sesTopup" style="margin-top:10px" data-goto="goi">Nạp coin ngay</button>
+            </div>
+
+            <div class="card hidden" id="sesSummary">
+              <div class="stack g12">
+                <h4 class="hd">Phiên đã dừng</h4>
+                <dl class="dl">
+                  <dt>Dừng lúc</dt><dd>23:14</dd>
+                  <dt>Đã dùng</dt><dd>6 phút</dd>
+                  <dt>Đã trừ</dt><dd>720 coin</dd>
+                  <dt>Số dư còn</dt><dd>999.280 coin</dd>
+                </dl>
+                <p class="meta">Một thẻ giao dịch đã được ghi vào Ví coin. Bạn đọc lại được vĩnh viễn.</p>
+                <div class="row g10">
+                  <button type="button" class="btn sm pri" data-goto="phong">Về phòng học</button>
+                  <button type="button" class="btn sm" data-goto="vi">Xem ví coin</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="card" style="padding:14px 16px">
+              <div class="stack g10">
+                <p class="eyebrow">Xin tham gia phiên</p>
+                <div class="row g10">
+                  <span class="body" style="flex:1;min-width:120px;font-weight:800">Khang muốn tham gia</span>
+                  <button type="button" class="btn sm">Đồng ý</button>
+                  <button type="button" class="btn sm">Bỏ qua</button>
+                </div>
+                <p class="meta">Cần cả hai người trong phiên đồng ý. Tự hết hạn sau 30 giây; không phản hồi là từ chối.</p>
+              </div>
+            </div>
+
+            <div class="card" style="padding:14px 16px;border-style:dashed;border-color:var(--bdec)">
+              <p class="meta" style="margin:0">Có <b style="color:var(--ink)">2</b> người muốn hỏi bạn khi nãy. Xem sau khi phiên kết thúc — không popup, không âm thanh khi bạn đang trả coin theo phút.</p>
+            </div>
+
+            <p class="sr" role="status" aria-live="polite" id="sesStatus"></p>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <!-- ================= 07 · VÍ COIN ================= -->
+    <section class="app scr hidden" id="scr-vi">
+      <div class="appbar">
+        <div class="logo">Stu<span>With</span></div>
+        <nav class="applinks"><a href="#">Khám phá</a><a href="#">Lớp đã học</a><a href="#" aria-current="page">Ví coin</a><a href="#">Hồ sơ</a></nav>
+        <div class="push"></div>
+        <div class="who"><span class="ava">TR</span></div>
+      </div>
+
+      <div class="split-h pad-lg" style="align-items:start">
+        <div class="stack g14">
+          <div class="row g10">
+            <h3 class="hd" style="font-size:19px">Lịch sử giao dịch</h3>
+            <div style="flex:1"></div>
+            <span class="chip sunk">Tất cả</span><span class="chip sunk">Phiên hỏi riêng</span><span class="chip sunk">Nạp coin</span>
+          </div>
+          <div class="card" style="padding:0;overflow:hidden">
+            <div class="txn"><div><p class="t">Phiên hỏi riêng · Minh Anh</p><p class="d">23:08 → 23:14 · 6 phút × 120 coin/phút</p></div>
+              <p class="amt">−720<small>Đã trừ</small></p></div>
+            <div class="txn"><div><p class="t">Hoàn coin · block chưa dùng</p><p class="d">23:14 · phiên dừng ở ranh giới block</p></div>
+              <p class="amt">+0<small>Không phát sinh</small></p></div>
+            <div class="txn"><div><p class="t">Phiên hỏi riêng · Ngọc Lan</p><p class="d">Hôm qua 21:40 → 21:43 · 3 phút × 80 coin/phút</p></div>
+              <p class="amt">−240<small>Đã trừ</small></p></div>
+            <div class="txn"><div><p class="t">Nạp coin · gói 50.000</p><p class="d">Hôm qua 21:12 · biên nhận #TX-4821</p></div>
+              <p class="amt">+50.000<small>Đã cộng</small></p></div>
+            <div class="txn"><div><p class="t">Thưởng uy tín · hạng Đồng lên Bạc</p><p class="d">18/08 09:00 · hệ thống cấp</p></div>
+              <p class="amt">+2.000<small>Đã cộng</small></p></div>
+            <div class="txn"><div><p class="t">Số dư khởi tạo bản thử</p><p class="d">15/08 14:22 · hệ thống cấp</p></div>
+              <p class="amt">+1.000.000<small>Đã cộng</small></p></div>
+          </div>
+          <p class="meta">Mọi thay đổi số dư đều sinh một hàng ở đây, kể cả hoàn coin. Không có thay đổi nào chỉ tồn tại trong một thông báo biến mất.</p>
+        </div>
+
+        <div class="stack g14" style="max-width:400px;width:100%;justify-self:end">
+          <div class="coincard">
+            <span class="eyebrow" style="color:var(--coin)">Số dư</span>
+            <p class="count" style="margin:8px 0 4px">999.280</p>
+            <p class="meta" style="color:var(--coin)">coin · cập nhật lúc 23:14</p>
+            <div class="row g10" style="margin-top:16px">
+              <button type="button" class="btn pri sm" data-goto="goi">Nạp coin</button>
+              <button type="button" class="btn sm">Tải sao kê</button>
+            </div>
+          </div>
+          <div class="card">
+            <div class="stack g10">
+              <h4 class="hd">Tháng này</h4>
+              <dl class="dl">
+                <dt>Đã tiêu cho hỏi riêng</dt><dd>2.880 coin</dd>
+                <dt>Đã nhận từ người hỏi</dt><dd>0 coin</dd>
+                <dt>Hệ thống cấp</dt><dd>1.002.000 coin</dd>
+                <dt>Số phiên</dt><dd>7</dd>
+              </dl>
+            </div>
+          </div>
+          <div class="card" style="border-style:dashed;border-color:var(--bdec)">
+            <p class="meta" style="margin:0">Coin dùng trong StuWith để việc hỏi trở nên khả thi. Bản thử chưa có quy đổi ra tiền thật.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= 08 · HỒ SƠ ================= -->
+    <section class="app scr hidden" id="scr-hoso">
+      <div class="appbar">
+        <div class="logo">Stu<span>With</span></div>
+        <nav class="applinks"><a href="#">Khám phá</a><a href="#">Lớp đã học</a><a href="#">Ví coin</a><a href="#" aria-current="page">Hồ sơ</a></nav>
+        <div class="push"></div>
+        <div class="who"><span class="ava">TR</span></div>
+      </div>
+
+      <div class="pad-lg stack g20">
+        <div class="row g16">
+          <div class="tile" style="width:104px;aspect-ratio:1;border-radius:var(--r-lg)"><div class="av" style="width:62px;height:62px;font-size:20px">TR</div></div>
+          <div class="stack g6" style="min-width:0">
+            <h3 class="hd" style="font-size:26px">Trâm</h3>
+            <p class="meta">Tham gia từ 15/08/2026 · 42 giờ học · 7 phiên hỏi riêng</p>
+            <div class="row g6"><span class="badge">🎓 Sinh viên năm hai — đã xác minh</span><span class="badge">▲ Hạng Bạc · mùa Thu 2026</span><span class="badge">● Giải tích</span></div>
+          </div>
+          <div style="flex:1"></div>
+          <button type="button" class="btn">Chỉnh sửa hồ sơ</button>
+        </div>
+
+        <div class="grid3">
+          <div class="card pop">
+            <div class="stack g12">
+              <span class="eyebrow">Trục 1 · Hạng uy tín mùa</span>
+              <h4 class="hd" style="font-size:19px">Hạng Bạc</h4>
+              <div class="pbar"><i style="width:64%;background:var(--primary)"></i></div>
+              <p class="meta">2.480 / 3.900 điểm nỗ lực để lên hạng Vàng. Mùa Thu 2026 kết thúc sau 46 ngày.</p>
+              <hr class="sep">
+              <dl class="dl">
+                <dt>Giờ học tuần này</dt><dd>6,5 giờ</dd>
+                <dt>Chuỗi ngày liên tiếp</dt><dd>12</dd>
+              </dl>
+            </div>
+          </div>
+
+          <div class="card pop">
+            <div class="stack g12">
+              <span class="eyebrow">Trục 2 · Huy hiệu học vấn</span>
+              <div class="stack g10">
+                <div class="row g10" style="padding:11px 13px;border:2px solid var(--bink);border-radius:var(--r-sm);background:var(--okc)">
+                  <span style="font-size:18px" aria-hidden="true">🎓</span>
+                  <div class="stack" style="flex:1;min-width:0"><b style="font-size:14px;color:var(--ok)">Sinh viên năm hai</b><span class="meta" style="color:var(--ok)">Đã xác minh 16/08/2026</span></div>
+                </div>
+                <div class="row g10" style="padding:11px 13px;border:2px dashed var(--bdec);border-radius:var(--r-sm)">
+                  <div class="stack" style="flex:1;min-width:0"><b style="font-size:14px;color:var(--ink2)">Chưa xác minh</b><span class="meta">Huy hiệu chỉ hiện sau khi xác minh. Không có bản mờ chờ duyệt.</span></div>
+                </div>
+              </div>
+              <button type="button" class="btn sm wide">Xác minh danh tính</button>
+            </div>
+          </div>
+
+          <div class="card pop">
+            <div class="stack g12">
+              <span class="eyebrow">Trục 3 · Badge kỹ năng</span>
+              <div class="row g6">
+                <span class="badge">● Giải tích</span><span class="badge">● Đại số tuyến tính</span><span class="badge">● Tiếng Anh học thuật</span>
+              </div>
+              <p class="meta">Badge kỹ năng đến từ đánh giá của người từng học cùng, không tự khai được.</p>
+              <hr class="sep">
+              <dl class="dl"><dt>Lời cảm ơn nhận được</dt><dd>18</dd><dt>Báo cáo bị lập</dt><dd>0</dd></dl>
+            </div>
+          </div>
+        </div>
+
+        <!-- nhận hỏi riêng: đủ 18 / dưới 18 -->
+        <div class="card pop" id="hosoAdult">
+          <div class="stack g14">
+            <div class="row g10">
+              <div class="stack g4" style="flex:1;min-width:220px">
+                <h4 class="hd">Nhận hỏi riêng</h4>
+                <p class="meta">Khi bật, ô của bạn trong phòng hiện đơn giá và người khác bấm hỏi riêng được.</p>
+              </div>
+              <span class="chip ok"><span class="dot"></span>Đang bật</span>
+            </div>
+            <div class="row g14" style="align-items:flex-end">
+              <div class="stack g6">
+                <label class="eyebrow" for="priceInput">Đơn giá của bạn</label>
+                <div class="row g8">
+                  <input class="field" id="priceInput" style="width:140px" value="120" inputmode="numeric">
+                  <span class="meta">coin / phút</span>
+                </div>
+              </div>
+              <p class="meta" style="flex:1;min-width:260px;border-left:3px solid var(--coinf);padding-left:12px">
+                Giá phải nằm trong khung <b style="color:var(--ink)">10 – 500 coin/phút</b>, để tránh đặt giá lừa đảo.</p>
+              <button type="button" class="btn sm pri">Lưu đơn giá</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card pop hidden" id="hosoMinor">
+          <div class="stack g10">
+            <h4 class="hd">Nhận hỏi riêng</h4>
+            <p class="body" style="color:var(--ink2);font-weight:600;max-width:70ch">
+              Tài khoản của bạn chưa đủ 18 tuổi, nên phần đặt giá và nhận coin từ người khác không có trên hồ sơ này.
+              Bạn vẫn học, vẫn hỏi cả phòng, và vẫn dùng coin để hỏi riêng người khác như bình thường.</p>
+            <p class="meta" style="border-left:3px solid var(--coral);padding-left:12px">
+              Nút không tồn tại chứ không hiện mờ rồi báo lỗi. Chặn thật nằm ở tầng API — gọi thẳng endpoint cũng bị từ chối. Ngày sinh không bao giờ hiện trên hồ sơ công khai.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= 09 · GÓI & NẠP COIN ================= -->
+    <section class="app scr hidden" id="scr-goi">
+      <div class="appbar">
+        <div class="logo">Stu<span>With</span></div>
+        <nav class="applinks"><a href="#">Khám phá</a><a href="#">Lớp đã học</a><a href="#">Ví coin</a><a href="#">Hồ sơ</a></nav>
+        <div class="push"></div>
+        <span class="chip coin">◈ 999.280</span>
+        <div class="who"><span class="ava">TR</span></div>
+      </div>
+
+      <div class="pad-lg stack g24">
+
+        <!-- ba trạng thái quay lại từ cổng thanh toán -->
+        <div class="card pop hidden" id="payOk" style="background:var(--okc);border-color:var(--bink)">
+          <div class="stack g10">
+            <h4 class="hd" style="color:var(--ok)">Đã cộng 50.000 coin lúc 23:19.</h4>
+            <p class="body" style="color:var(--ok);font-weight:600">Số dư mới: 1.049.280 coin. Biên nhận #TX-4930 đã lưu trong Ví coin.</p>
+            <div class="row g10"><button type="button" class="btn sm" data-goto="vi">Xem biên nhận</button></div>
+          </div>
+        </div>
+        <div class="card pop hidden" id="payPending" style="background:var(--coinc);border-color:var(--bink)">
+          <div class="stack g10">
+            <h4 class="hd" style="color:var(--coin)">Giao dịch đang được xử lý.</h4>
+            <p class="body" style="color:var(--coin);font-weight:600">Ngân hàng đã nhận lệnh lúc 23:19 nhưng chưa xác nhận xong. Coin sẽ được cộng khi có xác nhận; bạn không cần thanh toán lại.</p>
+            <div class="row g10"><button type="button" class="btn sm">Kiểm tra lại</button><button type="button" class="btn sm" data-goto="vi">Về ví coin</button></div>
+          </div>
+        </div>
+        <div class="card pop hidden" id="payFail" style="background:var(--warnc);border-color:var(--bink)">
+          <div class="stack g10">
+            <h4 class="hd" style="color:var(--warn)">Chưa trừ tiền của bạn.</h4>
+            <p class="body" style="color:var(--warn);font-weight:600">Giao dịch không hoàn tất lúc 23:19. Số dư giữ nguyên 999.280 coin. Bạn thử lại được ngay.</p>
+            <div class="row g10"><button type="button" class="btn sm">Thử lại</button><button type="button" class="btn sm" data-goto="vi">Về ví coin</button></div>
+          </div>
+        </div>
+
+        <div class="stack g14">
+          <div class="stack g4">
+            <span class="eyebrow">Gói dịch vụ</span>
+            <h3 class="hd" style="font-size:22px">Gói quyết định trần người trong phòng bạn mở</h3>
+          </div>
+          <div class="grid3">
+            <div class="plan on">
+              <div class="row g10"><h4 class="hd">Study Buddy</h4><div style="flex:1"></div><span class="chip ok"><span class="dot"></span>Đang dùng</span></div>
+              <p class="count" style="font-size:30px">Miễn phí</p>
+              <ul><li>Tối đa 6 người mỗi phòng</li><li>Đầy đủ ba chế độ khuôn mặt</li><li>Hỏi riêng và ví coin</li><li>Chat cả phòng</li></ul>
+              <button type="button" class="btn wide" disabled>Gói hiện tại</button>
+            </div>
+            <div class="plan">
+              <h4 class="hd">Study Circle</h4>
+              <p class="count" style="font-size:30px">99.000<span style="font-size:14px;font-weight:600;color:var(--ink2)"> / tháng</span></p>
+              <ul><li>Tối đa 25 người mỗi phòng</li><li>Mọi thứ của Study Buddy</li><li>Phòng riêng có mật khẩu</li><li>Lịch buổi học lặp lại</li></ul>
+              <button type="button" class="btn pri wide">Nâng lên Study Circle</button>
+            </div>
+            <div class="plan">
+              <h4 class="hd">Campus</h4>
+              <p class="count" style="font-size:30px">Liên hệ</p>
+              <ul><li>45 – 100 người mỗi phòng</li><li>Lưới dày cho lớp đông</li><li>Quản trị viên tổ chức</li><li>Huy hiệu tổ chức đã xác minh</li></ul>
+              <button type="button" class="btn wide">Nói chuyện với chúng tôi</button>
+            </div>
+          </div>
+        </div>
+
+        <hr class="sep">
+
+        <div class="stack g14">
+          <div class="stack g4">
+            <span class="eyebrow">Nạp coin</span>
+            <h3 class="hd" style="font-size:22px">Chọn số coin muốn nạp</h3>
+            <p class="meta">Coin dùng để hỏi riêng người khác. Bản thử chưa có quy đổi ngược ra tiền.</p>
+          </div>
+          <div class="grid4">
+            <div class="coincard"><span class="eyebrow" style="color:var(--coin)">Gói nhỏ</span><p class="count" style="font-size:28px;margin:8px 0 2px">10.000</p><p class="meta" style="color:var(--coin)">coin · 29.000 ₫</p><button type="button" class="btn sm wide" style="margin-top:14px">Chọn</button></div>
+            <div class="coincard"><span class="eyebrow" style="color:var(--coin)">Phổ biến</span><p class="count" style="font-size:28px;margin:8px 0 2px">50.000</p><p class="meta" style="color:var(--coin)">coin · 129.000 ₫</p><button type="button" class="btn sm pri wide" style="margin-top:14px">Chọn</button></div>
+            <div class="coincard"><span class="eyebrow" style="color:var(--coin)">Gói lớn</span><p class="count" style="font-size:28px;margin:8px 0 2px">150.000</p><p class="meta" style="color:var(--coin)">coin · 349.000 ₫</p><button type="button" class="btn sm wide" style="margin-top:14px">Chọn</button></div>
+            <div class="coincard"><span class="eyebrow" style="color:var(--coin)">Tuỳ chọn</span><input class="field" style="margin:8px 0 2px;background:transparent" placeholder="Nhập số coin" aria-label="Số coin tuỳ chọn"><p class="meta" style="color:var(--coin)">tối thiểu 5.000 coin</p><button type="button" class="btn sm wide" style="margin-top:14px">Chọn</button></div>
+          </div>
+          <p class="meta">Mỗi lần nạp mang một khoá idempotency riêng, nên một giao dịch không bao giờ cấp coin hai lần dù bạn tải lại trang.</p>
+        </div>
+      </div>
+    </section>
+
+  </main>
+</div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  /* ---------- chủ đề ---------- */
+  var themeBtns = document.querySelectorAll("[data-theme-set]");
+  function applyTheme(t){
+    document.documentElement.setAttribute("data-theme", t);
+    themeBtns.forEach(function(b){ b.setAttribute("aria-pressed", String(b.dataset.themeSet === t)); });
+  }
+  themeBtns.forEach(function(b){ b.addEventListener("click", function(){ applyTheme(b.dataset.themeSet); }); });
+  applyTheme(window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+
+  /* ---------- chuyển màn ---------- */
+  var META = {
+    dangnhap:{title:"Đăng nhập", refs:["Story 1.2","Story 1.3"],
+      note:"Bốn provider mạng xã hội. Lỗi kỹ thuật không bao giờ lộ ra giao diện — người dùng thấy điều gì đã xảy ra và làm gì tiếp theo."},
+    khampha:{title:"Khám phá & AI match", refs:["Story 4.2"],
+      note:"Ô nguyện vọng là chủ đạo, không phải ô từ khoá. Trạng thái không có kết quả luôn kèm một lối đi tiếp."},
+    prejoin:{title:"Pre-join", refs:["Story 2.3","Story 2.7"],
+      note:"Bề mặt bắt buộc, không bỏ qua được. Quyết định lộ mặt xảy ra trước khi có bất kỳ ai nhìn thấy bạn."},
+    phong:{title:"Phòng học live", refs:["Story 2.4","Story 2.5","Story 2.8"],
+      note:"Thang suy giảm mạng bốn bậc là trạng thái vận hành trung tâm, không phải nhánh lỗi. Audio không bao giờ bị hy sinh."},
+    xacnhan:{title:"Xác nhận hỏi riêng", refs:["Story 3.4","Story 3.8"],
+      note:"Không có gì trừ coin mà không qua thẻ xác nhận. Luật khi mất mạng in nguyên văn trên thẻ, trước khi đồng hồ chạy."},
+    phien:{title:"Phiên hỏi riêng đang chạy", refs:["Story 3.5","Story 3.6","Story 3.7"],
+      note:"Đồng hồ chạy ở server. Ngưỡng còn 2 phút đổi màu và hiện dòng chữ; phiên dừng ở ranh giới block, số dư không bao giờ âm."},
+    vi:{title:"Ví coin", refs:["Story 3.1","Story 3.2"],
+      note:"Mọi thay đổi số dư sinh một thẻ giao dịch đọc lại được vĩnh viễn. Snackbar không bao giờ là nơi duy nhất biết mình bị trừ tiền."},
+    hoso:{title:"Hồ sơ & huy hiệu", refs:["Story 1.5","Story 4.3","Story 4.4","Story 4.5"],
+      note:"Ba trục uy tín. Cổng tuổi bỏ hẳn nút thay vì hiện mờ — và chặn thật nằm ở tầng API."},
+    goi:{title:"Gói dịch vụ & nạp coin", refs:["Story 5.1","Story 5.2","Story 5.3"],
+      note:"Ba trạng thái khi quay lại từ cổng thanh toán. Câu nào nói về tiền cũng có con số và mốc thời gian."}
+  };
+  var current = "dangnhap";
+  var navBtns = document.querySelectorAll(".navbtn");
+
+  function goto(id){
+    if(!META[id]) return;
+    current = id;
+    document.querySelectorAll(".scr").forEach(function(s){ s.classList.toggle("hidden", s.id !== "scr-"+id); });
+    navBtns.forEach(function(b){ b.setAttribute("aria-current", String(b.dataset.goto === id)); });
+    document.querySelectorAll(".ctl").forEach(function(c){ c.classList.toggle("hidden", c.dataset.ctl !== id); });
+    var m = META[id];
+    document.getElementById("vpTitle").textContent = m.title;
+    document.getElementById("vpNote").textContent = m.note;
+    document.getElementById("vpRefs").innerHTML = m.refs.map(function(r){ return '<span class="ref">'+r+'</span>'; }).join("");
+    if(id === "phien"){ startSession(); } else { stopSession(); }
+    window.scrollTo({top:0, behavior:"smooth"});
+  }
+  document.addEventListener("click", function(e){
+    var t = e.target.closest("[data-goto]");
+    if(t){ e.preventDefault(); goto(t.dataset.goto); }
+  });
+
+  /* nhóm nút chỉ-chọn-một trong dải demo */
+  function segment(sel, attr, fn){
+    var btns = document.querySelectorAll(sel);
+    btns.forEach(function(b){
+      b.addEventListener("click", function(){
+        btns.forEach(function(x){ x.setAttribute("aria-pressed", String(x === b)); });
+        fn(b.getAttribute(attr));
+      });
+    });
+  }
+
+  /* ---------- 01 · đăng nhập ---------- */
+  var LOGIN = {
+    fail:{bg:"var(--warnc)", fg:"var(--warn)", text:"Không đăng nhập được. Thử lại hoặc chọn cách khác."},
+    cancel:{bg:"var(--sunken)", fg:"var(--ink)", text:"Bạn đã huỷ ở bước cấp quyền. Chọn lại cách đăng nhập bên dưới."},
+    limit:{bg:"var(--warnc)", fg:"var(--warn)", text:""}
+  };
+  var alertBox = document.getElementById("loginAlert");
+  var alertTxt = document.getElementById("loginAlertText");
+  var limitTimer = null, limitLeft = 0;
+
+  function clearLimit(){ if(limitTimer){ clearInterval(limitTimer); limitTimer = null; }
+    document.querySelectorAll("#loginProviders .btn").forEach(function(b){ b.disabled = false; }); }
+
+  segment("[data-login]", "data-login", function(state){
+    clearLimit();
+    if(state === "idle"){ alertBox.classList.add("hidden"); return; }
+    var s = LOGIN[state];
+    alertBox.classList.remove("hidden");
+    alertBox.style.background = s.bg;
+    alertTxt.style.color = s.fg;
+    if(state === "limit"){
+      limitLeft = 30;
+      document.querySelectorAll("#loginProviders .btn").forEach(function(b){ b.disabled = true; });
+      var tick = function(){
+        alertTxt.innerHTML = 'Thử lại sau <span class="tnum">' + limitLeft + '</span> giây.';
+        if(limitLeft <= 0){ clearLimit(); alertTxt.textContent = "Bạn thử lại được rồi."; return; }
+        limitLeft--;
+      };
+      tick();
+      limitTimer = setInterval(tick, 1000);
+    } else {
+      alertTxt.textContent = s.text;
+    }
+  });
+
+  /* ---------- 02 · khám phá ---------- */
+  segment("[data-disc]", "data-disc", function(v){
+    document.getElementById("discHas").classList.toggle("hidden", v !== "has");
+    document.getElementById("discEmpty").classList.toggle("hidden", v !== "empty");
+  });
+
+  /* ---------- 03 · pre-join ---------- */
+  segment("[data-perm]", "data-perm", function(v){
+    document.getElementById("preOk").classList.toggle("hidden", v !== "ok");
+    document.getElementById("preBlocked").classList.toggle("hidden", v === "ok");
+  });
+
+  var EXPOSURE = {
+    raw:'Người trong phòng sẽ thấy <b style="color:var(--ink)">khuôn mặt thật</b> của bạn và tên hiển thị “Trâm”.',
+    hidden:'Người trong phòng chỉ thấy <b style="color:var(--ink)">avatar chữ cái</b> và tên hiển thị “Trâm”. Khung hình gốc không rời máy bạn.',
+    filter:'Người trong phòng thấy <b style="color:var(--ink)">khuôn mặt đã biến đổi</b>. Xử lý chạy trên máy bạn, khung hình gốc không được gửi đi.'
+  };
+  function wireModes(group, tile, avatar, badge, exposure){
+    var btns = group.querySelectorAll(".mode");
+    btns.forEach(function(b){
+      b.addEventListener("click", function(){
+        btns.forEach(function(x){ x.setAttribute("aria-checked", String(x === b)); });
+        var m = b.dataset.mode;
+        if(tile) tile.classList.toggle("live", m !== "hidden");
+        if(avatar) avatar.classList.toggle("hidden", m !== "hidden");
+        if(badge) badge.textContent = b.dataset.badge;
+        if(exposure) exposure.innerHTML = EXPOSURE[m];
+      });
+    });
+  }
+  wireModes(document.querySelector("#scr-prejoin .modes"),
+    document.getElementById("preTile"), document.getElementById("preAvatar"),
+    document.getElementById("preModeBadge"), document.getElementById("preExposure"));
+
+  /* ---------- 04 · phòng live ---------- */
+  var faceBtn = document.getElementById("faceToggle");
+  var facePanel = document.getElementById("facePanel");
+  faceBtn.addEventListener("click", function(){
+    var open = facePanel.classList.toggle("hidden") === false;
+    faceBtn.setAttribute("aria-expanded", String(open));
+  });
+  wireModes(document.querySelector("#facePanel .modes"),
+    document.getElementById("fpPreview"), document.getElementById("fpAvatar"), null, null);
+
+  var netChip = document.getElementById("netChip");
+  var netBanner = document.getElementById("netBanner");
+  var netText = document.getElementById("netBannerText");
+  var netCta = document.getElementById("netBannerCta");
+  var roomTiles = document.querySelectorAll("#roomGrid .tile");
+  var liveByDefault = ["MA","TR","DU","PT"];
+
+  segment("[data-net]", "data-net", function(tier){
+    if(tier === "1"){
+      netChip.className = "chip ok";
+      netChip.innerHTML = '<span class="dot"></span>Mạng tốt';
+      netBanner.classList.add("hidden");
+      roomTiles.forEach(function(t){
+        t.classList.remove("frozen");
+        if(liveByDefault.indexOf(t.dataset.av) > -1){
+          t.classList.add("live");
+          var a = t.querySelector(".av"); if(a) a.remove();
+        }
+      });
+    } else {
+      netChip.className = "chip warn";
+      netChip.innerHTML = '<span class="dot"></span>' + (tier === "3" ? "Mạng yếu" : "Mất kết nối");
+      netBanner.classList.remove("hidden");
+      netText.textContent = tier === "3"
+        ? "Mạng yếu — đã tắt video để giữ tiếng."
+        : "Mất kết nối — đang thử lại. Lưới đóng băng cho tới khi có tiếng trở lại.";
+      netCta.classList.toggle("hidden", tier !== "3");
+      roomTiles.forEach(function(t){
+        t.classList.toggle("frozen", tier === "4");
+        if(t.classList.contains("live")){
+          t.classList.remove("live");
+          var av = document.createElement("div");
+          av.className = "av";
+          av.textContent = t.dataset.av;
+          t.insertBefore(av, t.firstChild);
+        }
+      });
+    }
+  });
+
+  var chatForm = document.getElementById("chatForm");
+  var chatInput = document.getElementById("chatInput");
+  var chatLog = document.getElementById("chatLog");
+  chatForm.addEventListener("submit", function(e){
+    e.preventDefault();
+    var v = chatInput.value.trim();
+    if(!v) return;
+    var d = document.createElement("div");
+    d.className = "msg";
+    d.innerHTML = '<span class="au">Trâm</span><span class="tx"></span>';
+    d.querySelector(".tx").textContent = v;
+    chatLog.appendChild(d);
+    chatLog.scrollTop = chatLog.scrollHeight;
+    chatInput.value = "";
+  });
+
+  /* ---------- 05 · xác nhận hỏi riêng ---------- */
+  segment("[data-ask]", "data-ask", function(v){
+    document.getElementById("askConfirm").classList.toggle("hidden", v !== "confirm");
+    document.getElementById("askBusy").classList.toggle("hidden", v !== "busy");
+  });
+
+  /* ---------- 06 · phiên đang chạy ---------- */
+  var sesTimer = null, sesLeft = 500, sesMax = 500, sesRate = 120;
+  var elCount = document.getElementById("sesCount");
+  var elBar = document.getElementById("sesBar");
+  var elWarn = document.getElementById("sesWarn");
+  var elTopup = document.getElementById("sesTopup");
+  var elStatus = document.getElementById("sesStatus");
+  var elSpent = document.getElementById("sesSpent");
+  var elBalance = document.getElementById("sesBalance");
+  var elExplain = document.getElementById("sesExplain");
+  var elLive = document.getElementById("sesLive");
+  var elSummary = document.getElementById("sesSummary");
+  var announced = {};
+
+  function fmt(s){
+    var m = Math.floor(s/60), r = s % 60;
+    return (m < 10 ? "0" : "") + m + ":" + (r < 10 ? "0" : "") + r;
+  }
+  function render(){
+    elCount.textContent = fmt(sesLeft);
+    elCount.classList.toggle("low", sesLeft <= 120);
+    elBar.style.width = Math.max(0, (sesLeft / sesMax) * 100) + "%";
+    var low = sesLeft <= 120 && sesLeft > 0;
+    elWarn.classList.toggle("hidden", !low);
+    elTopup.classList.toggle("hidden", !low);
+    var used = Math.ceil((sesMax - sesLeft) / 60);
+    var spent = 360 + used * sesRate;   /* 360 coin đã trừ trước khi demo mở màn */
+    elSpent.textContent = spent.toLocaleString("vi-VN") + " coin";
+    var bal = 1000000 - spent;
+    elBalance.textContent = "◈ " + bal.toLocaleString("vi-VN");
+    elExplain.textContent = "Tính theo số dư " + bal.toLocaleString("vi-VN") + " coin ÷ " + sesRate + " coin/phút, làm tròn xuống block 1 phút.";
+    /* chỉ đọc ra ở ngưỡng — không đọc từng giây */
+    if(low && !announced.two){ announced.two = true; elStatus.textContent = "Còn dưới 2 phút coin. Nạp thêm để phiên không dừng ở block tới."; }
+    if(sesLeft <= 60 && sesLeft > 0 && !announced.one){ announced.one = true; elStatus.textContent = "Còn dưới 1 phút coin."; }
+  }
+  function showLive(){ elLive.classList.remove("hidden"); elSummary.classList.add("hidden"); }
+  function showEnd(){
+    elLive.classList.add("hidden"); elSummary.classList.remove("hidden");
+    elStatus.textContent = "Phiên đã dừng lúc 23:14. Đã trừ 720 coin. Số dư còn 999.280.";
+    if(sesTimer){ clearInterval(sesTimer); sesTimer = null; }
+  }
+  function startSession(){
+    if(sesTimer) return;
+    sesTimer = setInterval(function(){
+      if(sesLeft <= 0){ showEnd(); return; }
+      sesLeft--; render();
+    }, 1000);
+    render();
+  }
+  function stopSession(){ if(sesTimer){ clearInterval(sesTimer); sesTimer = null; } }
+
+  document.getElementById("sesStop").addEventListener("click", showEnd);
+  segment("[data-ses]", "data-ses", function(v){
+    announced = {};
+    if(v === "run"){ sesLeft = 500; showLive(); render(); startSession(); }
+    if(v === "low"){ sesLeft = 118; showLive(); render(); startSession(); }
+    if(v === "end"){ showEnd(); }
+  });
+
+  /* ---------- 08 · hồ sơ ---------- */
+  segment("[data-age]", "data-age", function(v){
+    document.getElementById("hosoAdult").classList.toggle("hidden", v !== "adult");
+    document.getElementById("hosoMinor").classList.toggle("hidden", v === "adult");
+  });
+
+  /* ---------- 09 · nạp coin ---------- */
+  segment("[data-pay]", "data-pay", function(v){
+    ["ok","pending","fail"].forEach(function(k){
+      document.getElementById("pay" + k.charAt(0).toUpperCase() + k.slice(1)).classList.toggle("hidden", k !== v);
+    });
+  });
+
+  /* ---------- khởi tạo ---------- */
+  goto("dangnhap");
+})();
+</script>
+</body>
+</html>

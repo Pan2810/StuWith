@@ -243,6 +243,71 @@ required check is a silent pass, so both the workflow and
   pino logger and asserts no cookie, authorization header, email, date of birth,
   access token or provider id reaches an output line. Deleting a path, flipping
   `remove: true`, or dropping the serializers block now fails a test.
+- **No real OAuth credential exists yet, and `AUTH_ENABLED_PROVIDERS` is how that
+  is handled honestly.** Story 1.2 ships the full Google / Facebook / Apple /
+  Microsoft flow, but nobody has registered an app with any of them (human
+  decision, 2026-09-04). Requiring all four credentials would mean `apps/api`
+  cannot start on a developer machine; defaulting any of them would break AD-14.
+  So the enabled set is an explicit list, empty by default:
+
+  - a provider that is **not** listed answers `404` on `/v1/auth/:provider/start`
+    and `/callback`, with a body identical to the one an unknown provider gets, so
+    the endpoint does not enumerate the deployment's configuration;
+  - a provider that **is** listed must be configured completely — a missing
+    `GOOGLE_CLIENT_SECRET` exits non-zero naming that variable before a port opens.
+    `tests/gates/config-fail-fast.test.ts` spawns the real built process to prove
+    it, for each of the four providers.
+
+  **Open manual check.** The acceptance criterion "an organisational `@fpt.com`
+  account can sign in through Microsoft/Entra" cannot be closed until a real tenant
+  credential exists. What IS verified today, with a real signed `id_token` from an
+  in-process authorization server: `MICROSOFT_TENANT_ID` goes into the authority URL
+  (`login.microsoftonline.com/<tenant>/v2.0/...`), and the provider subject is the
+  pair `(tid, oid)` rather than `sub` or `oid` alone — so the same `oid` in two
+  tenants is two people, and a rotated `sub` is still the same person. Sign in once
+  with a real Entra tenant before calling that criterion done.
+
+- **The PII deny-list gained the OAuth handshake, with one deliberate omission.**
+  `code`, `state`, `code_verifier`, `id_token`, `client_secret` and the session
+  cookies are covered by `LOG_REDACT_PATHS`. A bare `*.code` is **not** in the list,
+  on purpose: pino's one-level wildcard would also delete `err.code` — the SQLSTATE
+  or errno every incident starts from. The place an OAuth `code` would really have
+  reached a log line is `req.url` on the callback, and no redaction path can reach
+  inside a string; that leak is closed structurally by `sanitizeLoggedUrl`, which
+  both processes put in front of `req.url` (the query string is dropped, leaving
+  `/v1/auth/google/callback?<redacted>`). `packages/config/src/logging.test.ts`
+  pins the omission so it stays a decision, and `apps/api/src/logging.test.ts` runs
+  a whole login through a real pino and reads back every line it wrote.
+
+- **Session cookies are always `Secure`, including in development.** There is no
+  `NODE_ENV` branch, because that branch is how a production deployment ends up
+  shipping session cookies in the clear.
+
+  An earlier version of this note said local development therefore needs TLS,
+  "Caddy is in the compose stack for exactly this". Both halves were wrong:
+  `infra/docker-compose.yml` deliberately contains **no Caddy** (four backing
+  services only; TLS terminates at the VPS edge), and no TLS is needed for the
+  ordinary local case anyway. Chrome (≥ 89) and Firefox (≥ 75) treat
+  `http://localhost` as a secure context and accept `Secure` cookies from it, so
+  `pnpm dev` on `http://localhost:3000` + `http://localhost:3001` signs in
+  normally.
+
+  Where it does bite: Safari is stricter, and **any non-localhost plain-HTTP
+  origin** — a LAN IP so a phone can reach your laptop, a bare staging box — drops
+  the cookie silently. The login redirect succeeds and `/v1/auth/me` then answers
+  401 with nothing in the log to explain it. Put a TLS terminator in front for
+  those cases; do not make the flag conditional.
+
+- **`sessions` grows without bound and nothing can prune it — later story.** One
+  row per login AND one per refresh rotation, and no role holds `DELETE` or
+  `TRUNCATE`. For `audit_events` permanence is the design; for `sessions` it is a
+  side effect of reusing that posture. A user refreshing hourly for a year is
+  ~8,800 rows, so this is a housekeeping problem rather than an urgent one, but it
+  has no owner today and the two knobs it needs — a retention window, and a
+  privilege that can act on it — are both deliberate omissions right now. Whoever
+  picks it up: revoking is an UPDATE for a reason, so the answer is probably a
+  scheduled job under a THIRD role rather than a `DELETE` grant to either process.
+
 - **`ClockPort` and `HeartbeatPort` are scaffolding.** They exist so the hexagon and
   the shared contract test-kit are exercised by something real. The money ports
   (`debit()` and `InsufficientFunds`) arrive in Epic 3 and follow the same shape: a

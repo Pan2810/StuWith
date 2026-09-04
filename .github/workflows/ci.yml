@@ -138,12 +138,20 @@ jobs:
       - name: Build workspace packages
         run: pnpm run build:packages
 
-      - name: Domain, contracts, config and api unit tests
+      - name: Unit tests for every package and both process shells
         run: pnpm run test:unit
 
       # AD-6: one suite, two adapters. An adapter that drops a condition passes
       # every architecture rule on paper and only fails here.
-      - name: Adapter contract suite × {in-memory, PostgreSQL 18}
+      #
+      # This runs the WHOLE packages/db project, not a filename filter. The filter
+      # it replaced (`vitest run --project db contract`) silently skipped
+      # `identity-schema.test.ts` — the only thing standing between the migration's
+      # CHECK constraints and the enums in packages/contracts — because its name
+      # matched neither `contract` nor `migration`. Selecting by project means the
+      # next file added to packages/db is covered without anyone remembering a
+      # naming convention.
+      - name: packages/db — every suite, in-memory and PostgreSQL 18
         run: pnpm run test:contract
 
   # ── Gate 4 ─────────────────────────────────────────────────────────────────

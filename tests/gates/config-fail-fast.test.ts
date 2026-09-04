@@ -37,6 +37,8 @@ function completeEnv(port: number): Record<string, string> {
     API_PORT: String(port),
     API_DATABASE_URL: 'postgres://gate@127.0.0.1:5432/gate',
     SESSION_COOKIE_SECRET: placeholder('session'),
+    WEB_BASE_URL: 'http://127.0.0.1:3000',
+    OAUTH_REDIRECT_BASE_URL: 'http://127.0.0.1:3001',
     // Windows needs these to start a process at all; nothing else is inherited,
     // so a developer's real .env cannot accidentally satisfy a variable the test
     // is trying to remove.
@@ -204,6 +206,67 @@ describe('AD-14 — the process refuses to start on an incomplete environment', 
     // would satisfy the assertion above while telling the operator nothing.
     expect(run.stderr).not.toContain('SESSION_COOKIE_SECRET');
     expect(run.stderr).not.toContain('LIVEKIT_API_SECRET');
+  }, 60_000);
+
+  /**
+   * Story 1.2's half of AD-14: a provider that is switched on must be switched on
+   * COMPLETELY.
+   *
+   * The failure this rules out is the tempting one — noticing at startup that a
+   * credential is missing and quietly disabling that provider. The deployment
+   * would then come up looking perfectly healthy while silently no longer offering
+   * a login its users had yesterday, and nothing would say so.
+   */
+  function allFourProviders(port: number): Record<string, string> {
+    const placeholder = (label: string) => `gate-${label}-${'x'.repeat(24)}`;
+    return {
+      ...completeEnv(port),
+      AUTH_ENABLED_PROVIDERS: 'google,facebook,apple,microsoft',
+      GOOGLE_CLIENT_ID: placeholder('google-id'),
+      GOOGLE_CLIENT_SECRET: placeholder('google-secret'),
+      FACEBOOK_CLIENT_ID: placeholder('facebook-id'),
+      FACEBOOK_CLIENT_SECRET: placeholder('facebook-secret'),
+      MICROSOFT_CLIENT_ID: placeholder('microsoft-id'),
+      MICROSOFT_CLIENT_SECRET: placeholder('microsoft-secret'),
+      MICROSOFT_TENANT_ID: 'organizations',
+      APPLE_CLIENT_ID: 'vn.stuwith.gate',
+      APPLE_TEAM_ID: 'TEAMGATE12',
+      APPLE_KEY_ID: 'KEYGATE123',
+      APPLE_PRIVATE_KEY: placeholder('apple-key'),
+    };
+  }
+
+  it.each([
+    'GOOGLE_CLIENT_SECRET',
+    'FACEBOOK_CLIENT_SECRET',
+    'MICROSOFT_TENANT_ID',
+    'APPLE_PRIVATE_KEY',
+  ])('exits naming %s when that provider is enabled but incompletely configured', async (variable) => {
+    const port = await freePort();
+    const env = allFourProviders(port);
+    delete env[variable];
+
+    const run = await runToExit(env, port);
+
+    expect(run.exitCode, 'the process must exit non-zero').not.toBe(0);
+    expect(run.stderr).toContain(variable);
+    expect(
+      run.everBound,
+      'a half-configured provider must not reach a listening socket',
+    ).toBe(false);
+  }, 60_000);
+
+  it('starts happily with all four providers fully configured', async () => {
+    // The control for the four examples above: without it they would also pass
+    // against a build that refuses to start no matter what is set.
+    const port = await freePort();
+    const child = start(allFourProviders(port));
+    try {
+      await expect(waitUntilBound(port, 30_000)).resolves.toBe(true);
+    } finally {
+      child.kill();
+      await new Promise((resolve) => child.once('exit', resolve));
+    }
   }, 60_000);
 
   it('does not print the value of any variable it rejects', async () => {
