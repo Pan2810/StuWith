@@ -12,8 +12,35 @@ import { defineConfig } from '@playwright/test';
 const API_PORT = Number(process.env['API_PORT'] ?? 3001);
 const GATEWAY_PORT = Number(process.env['GATEWAY_PORT'] ?? 3002);
 
+/**
+ * The browser half of the suite, on ports of its own.
+ *
+ * Deliberately NOT 3000/3001: a developer running `pnpm dev` must be able to run
+ * `pnpm test:e2e` at the same time without the two stealing each other's ports, and
+ * `reuseExistingServer` would otherwise hand the suite a dev server built against a
+ * different API origin — a green run proving nothing.
+ */
+const WEB_PORT = Number(process.env['E2E_WEB_PORT'] ?? 3100);
+const FAKE_API_PORT = Number(process.env['E2E_FAKE_API_PORT'] ?? 3200);
+
 export const API_BASE_URL = `http://127.0.0.1:${API_PORT}`;
 export const GATEWAY_BASE_URL = `http://127.0.0.1:${GATEWAY_PORT}`;
+export const WEB_BASE_URL = `http://127.0.0.1:${WEB_PORT}`;
+export const FAKE_API_BASE_URL = `http://127.0.0.1:${FAKE_API_PORT}`;
+
+/** Where the E2E build of `apps/web` lands, so it cannot overwrite `.next`. */
+const E2E_DIST_DIR = '.next-e2e';
+
+/**
+ * `apps/web`'s own `next`, invoked through `node` rather than through a shim.
+ *
+ * Not `pnpm --filter web exec`: `pnpm` is not always on PATH in the environment
+ * Playwright spawns, and a webServer that only starts on some machines is a suite
+ * that only runs on some machines. Not `node_modules/.bin/next` either — that is a
+ * shell script on POSIX and a `.CMD` on Windows, so the spelling would differ by
+ * platform. The JS entry point is one path everywhere.
+ */
+const WEB_BIN = 'node node_modules/next/dist/bin/next';
 
 /**
  * Obviously-fake, locally-scoped values, assembled at runtime rather than written
@@ -47,7 +74,27 @@ export default defineConfig({
       // No browser: `/healthz` is checked with the request fixture, which needs no
       // browser binary and keeps CI from downloading three of them for one probe.
       name: 'api',
+      testMatch: /health\.spec\.ts$/,
       use: {},
+    },
+    {
+      /**
+       * The browser project, and the only place `apps/web` is executed at all.
+       *
+       * The `web` Vitest project renders with `renderToStaticMarkup`, which never
+       * runs an effect — so until this existed, no test in the repo had ever seen
+       * a screen call the API, submit a form, or redraw on the answer.
+       *
+       * One browser, not three. Chromium is what the product is developed against;
+       * cross-browser matrices are a separate decision with a separate cost, and
+       * three downloads for a suite this size buys nothing today.
+       */
+      name: 'web',
+      testMatch: /web\/.*\.spec\.ts$/,
+      use: {
+        baseURL: WEB_BASE_URL,
+        browserName: 'chromium',
+      },
     },
   ],
   webServer: [
@@ -72,6 +119,45 @@ export default defineConfig({
         // silent, so the process refuses to start rather than guess. The smoke test
         // talks to the process directly, so `none` is the true answer.
         TRUSTED_PROXY_ADDRESSES: 'none',
+      },
+    },
+    {
+      /**
+       * The stand-in origin server. Started before the web build so the build's
+       * inlined origin and the running server always name the same port.
+       */
+      command: 'node tests/e2e/support/fake-api.cjs',
+      // Its own readiness route, off `/v1`: every real route answers 418 until a
+      // spec has set a scenario, and Playwright treats that as not-yet-listening.
+      url: `${FAKE_API_BASE_URL}/__e2e__/healthz`,
+      reuseExistingServer: !process.env['CI'],
+      timeout: 30_000,
+      stdout: 'pipe',
+      stderr: 'pipe',
+      env: {
+        FAKE_API_PORT: String(FAKE_API_PORT),
+        FAKE_API_WEB_ORIGIN: WEB_BASE_URL,
+      },
+    },
+    {
+      /**
+       * Builds AND starts, in that order, because `NEXT_PUBLIC_API_BASE_URL` is
+       * inlined at build time. Starting a previously-built bundle with a different
+       * value in the environment produces a page that calls whatever origin it was
+       * built with — green suite, wrong product. `NEXT_DIST_DIR` keeps this build
+       * away from the one a developer has running.
+       */
+      command: `${WEB_BIN} build && ${WEB_BIN} start -p ${WEB_PORT}`,
+      cwd: 'apps/web',
+      url: WEB_BASE_URL,
+      reuseExistingServer: false,
+      timeout: 240_000,
+      stdout: 'pipe',
+      stderr: 'pipe',
+      env: {
+        NODE_ENV: 'production',
+        NEXT_DIST_DIR: E2E_DIST_DIR,
+        NEXT_PUBLIC_API_BASE_URL: FAKE_API_BASE_URL,
       },
     },
     {

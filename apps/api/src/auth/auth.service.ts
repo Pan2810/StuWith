@@ -3,6 +3,7 @@ import {
   AUTH_COOKIE_PATH,
   REFRESH_COOKIE_NAME,
   SESSION_COOKIE_NAME,
+  SESSION_REFRESHED_STATUS,
   DATE_OF_BIRTH_ALREADY_SET_MESSAGE,
   DATE_OF_BIRTH_FIELD,
   DATE_OF_BIRTH_INVALID_MESSAGE,
@@ -577,7 +578,10 @@ export class AuthService {
 
     return {
       kind: 'empty',
-      status: 204,
+      // The shared constant, not the literal it used to be. `apps/web`'s seam
+      // branches on this exact number, and while each side spelled its own the two
+      // disagreed — 204 here, 200 there — so no renewal ever counted as successful.
+      status: SESSION_REFRESHED_STATUS,
       cookies: [
         serializeCookie(sessionCookie(sessionToken, this.config.SESSION_TTL_SECONDS)),
         serializeCookie(refreshCookie(refreshToken, this.config.SESSION_REFRESH_TTL_SECONDS)),

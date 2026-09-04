@@ -200,12 +200,55 @@ jobs:
           pnpm --filter api build
           pnpm --filter realtime-gateway build
 
+      # `--project=api` keeps this job what its name says: two processes, two
+      # ports, no browser. The browser suite is its own job below, because it
+      # needs a Chromium download and a Next.js build and would turn a 20-second
+      # liveness check into a several-minute one.
       - name: Playwright smoke test
-        run: pnpm exec playwright test
+        run: pnpm exec playwright test --project=api
 
       - if: failure()
         uses: actions/upload-artifact@v7
         with:
           name: playwright-report
+          path: playwright-report/
+          retention-days: 7
+
+  # ── Browser E2E ────────────────────────────────────────────────────────────
+  # NOT one of AD-20's four gates, and deliberately a separate job: it is the only
+  # thing in CI that executes `apps/web` at all. The `web` Vitest project renders
+  # with `renderToStaticMarkup` and never runs a `useEffect`, so before this job
+  # existed no check anywhere proved that a screen calls the API, that a form
+  # reaches it, or that the answer redraws anything.
+  #
+  # It found a real defect on its first run: `/v1/auth/refresh` answers 204 while
+  # `apps/web` accepted only 200, so Story 1.3c's silent renewal never worked.
+  web-e2e:
+    name: 'E2E · các màn hình web trong trình duyệt'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+
+      # `apps/web` is built by Playwright's own webServer, not here: the E2E build
+      # has to inline the fake API's origin, and a build made in this step would
+      # inline whatever was in the environment at the time instead.
+      - name: Build packages and both processes
+        run: |
+          pnpm run build:packages
+          pnpm --filter api build
+          pnpm --filter realtime-gateway build
+
+      - name: Install Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Browser E2E
+        run: pnpm exec playwright test --project=web
+
+      - if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report-web
           path: playwright-report/
           retention-days: 7

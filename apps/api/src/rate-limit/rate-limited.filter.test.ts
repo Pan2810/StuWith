@@ -5,8 +5,8 @@ import {
   SIGN_IN_RETRY_AFTER_QUERY_PARAM,
   errorEnvelopeSchema,
 } from '@stuwith/contracts';
-import type { ApiEnv } from '@stuwith/config';
 import { describe, expect, it } from 'vitest';
+import { testApiEnv } from '../__testing__/api-env';
 import { RateLimitedFilter } from './rate-limited.filter';
 import { RateLimitedException } from './rate-limited.exception';
 
@@ -19,7 +19,7 @@ import { RateLimitedException } from './rate-limited.exception';
  * the mapping readable in one place.
  */
 
-const CONFIG = { WEB_BASE_URL: 'https://stuwith.example' } as unknown as ApiEnv;
+const CONFIG = testApiEnv({ WEB_BASE_URL: 'https://stuwith.example' });
 
 interface Recorded {
   status?: number;

@@ -1,5 +1,8 @@
 import {
   AUTH_REFRESH_PATH,
+  RATE_LIMITED_STATUS,
+  SESSION_EXPIRED_STATUS,
+  SESSION_REFRESHED_STATUS,
   SIGN_IN_PATHNAME,
   SIGN_IN_RETURN_PATH_QUERY_PARAM,
   parseInternalReturnPath,
@@ -32,16 +35,20 @@ import {
  */
 export { SIGN_IN_PATHNAME };
 
-/** The status that means "there is no live session behind this call any more". */
-export const SESSION_EXPIRED_STATUS = 401;
-
 /**
- * The status `/v1/auth/refresh` answers when the rate limiter has had enough.
+ * Re-exported, not redeclared.
  *
- * It matters separately from 401 because it is the one refusal that says "asking
- * again is the problem" — see {@link createSessionRefresher}.
+ * These three used to be literals in this file, and one of them was wrong: the
+ * renewal was accepted only on `200` while `/v1/auth/refresh` answers `204`. Both
+ * sides' unit suites passed anyway — the API's asserted 204, this one stubbed 200 —
+ * so the renewal silently never worked and every expiry went straight to the
+ * dialog. A status a client branches on belongs to the contract (AD-13).
  */
-export const RATE_LIMITED_STATUS = 429;
+export {
+  SESSION_REFRESHED_STATUS,
+  SESSION_EXPIRED_STATUS,
+  RATE_LIMITED_STATUS,
+} from '@stuwith/contracts';
 
 /** The parts of `window.location` any of this needs. */
 export interface ReturnPathLocation {
@@ -244,7 +251,10 @@ export function createSessionRefresher(deps: {
         if (response.status === SESSION_EXPIRED_STATUS || response.status === RATE_LIMITED_STATUS) {
           refused = true;
         }
-        return response.status === 200;
+        // `SESSION_REFRESHED_STATUS`, not `200`. `/v1/auth/refresh` answers 204,
+        // so this comparison was false on every successful renewal and the dialog
+        // appeared for people whose session had just been renewed perfectly well.
+        return response.status === SESSION_REFRESHED_STATUS;
       })
       // A thrown `fetch` is the network being unavailable, not an answer. It is
       // deliberately not latched: the session may be perfectly alive.
