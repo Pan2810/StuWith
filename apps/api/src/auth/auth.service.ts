@@ -4,9 +4,11 @@ import {
   REFRESH_COOKIE_NAME,
   SESSION_COOKIE_NAME,
   SIGN_IN_OUTCOME_QUERY_PARAM,
+  SIGN_IN_PATHNAME,
   currentUserSchema,
   isAuthProvider,
   makeError,
+  parseInternalReturnPath,
   type AuthProvider,
   type ErrorEnvelope,
   type SignInOutcome,
@@ -101,7 +103,38 @@ interface OAuthStatePayload {
   readonly n: string;
   /** Expiry, epoch seconds. */
   readonly x: number;
+  /**
+   * Where to send the browser after a SUCCESSFUL login — an internal path, and
+   * absent when none was proposed or when what was proposed was not internal.
+   *
+   * This is the one field here that is not merely unforgeable-in-principle but
+   * unforgeable-in-consequence: it decides a redirect target. The client proposes
+   * it at `/start`, `parseInternalReturnPath` judges it there, and the SIGNATURE
+   * is what carries the verdict to the callback. Nothing on the callback leg reads
+   * a path from a query parameter, a cookie of its own or a header, so producing a
+   * destination of your choosing requires producing a signature — which requires
+   * `SESSION_COOKIE_SECRET`.
+   *
+   * Short name for the same reason the other four are short: it rides in a cookie
+   * on every `/v1/auth` request until the handshake ends.
+   */
+  readonly r?: string;
 }
+
+/**
+ * Where a login lands when nothing else was asked for.
+ *
+ * The login page itself, which is also where every FAILED attempt lands — see
+ * `failedSignIn`, which deliberately drops the return path: the person is looking
+ * at the login page, so "put them back where they were" has nothing to mean yet.
+ *
+ * The literal lives in `packages/contracts` (AD-13) because `apps/web` needs the
+ * same string to answer "is this person already on the sign-in page", and the
+ * docblock at the top of `contracts/src/auth.ts` says nothing there may be
+ * redeclared in `apps/*`. Two copies is how one of them gets renamed alone, and
+ * both failures that produces are silent.
+ */
+const DEFAULT_RETURN_PATH = SIGN_IN_PATHNAME;
 
 /**
  * The strings the JSON endpoints (`/me`, `/refresh`) answer with. They say
@@ -162,8 +195,27 @@ export class AuthService {
     this.rateLimit = runtime.rateLimit;
   }
 
-  /** `GET /v1/auth/:provider/start` */
-  async start(providerName: string, requestId: string): Promise<AuthOutcome> {
+  /**
+   * `GET /v1/auth/:provider/start`
+   *
+   * `returnPathProposal` is exactly what its name says: untrusted, whatever the
+   * query parameter happened to contain, and only a SUGGESTION. This is the one
+   * leg where it is looked at, judged, and — if it survives — signed into the
+   * state. Everything downstream reads the verdict, never the proposal.
+   *
+   * A proposal that is not an internal path is dropped in silence, and the login
+   * continues to the default. It is a value a stranger can put in a link and send
+   * to somebody, so refusing it with an error would turn "here is a login link"
+   * into a way to break somebody's login; and it is not the visitor's mistake
+   * either way. Nothing about it is logged: writing the rejected value to a log
+   * line is how an attacker-chosen string gets into the operator's terminal, and
+   * the acceptance criterion says as much.
+   */
+  async start(
+    providerName: string,
+    requestId: string,
+    returnPathProposal?: unknown,
+  ): Promise<AuthOutcome> {
     const adapter = this.adapterFor(providerName);
     if (adapter === null) {
       return { kind: 'json', status: 404, body: notFound(), cookies: [] };
@@ -174,12 +226,24 @@ export class AuthService {
     const { verifier, challenge } = createPkcePair();
     const now = this.clock.now();
 
+    // `firstQueryValue`, matching how `?error=` is read on the callback leg: a
+    // repeated `?quay-ve=/a&quay-ve=//evil.com` reaches Fastify as an ARRAY, and
+    // code that only accepts a `string` would ignore the whole thing — harmless
+    // here, but the two legs disagreeing about what a repeated parameter means is
+    // the kind of difference that becomes a defect the moment one of them stops
+    // being harmless.
+    const returnPath = parseInternalReturnPath(firstQueryValue(returnPathProposal));
+
     const payload: OAuthStatePayload = {
       p: adapter.provider,
       s: state,
       v: verifier,
       n: nonce,
       x: Math.floor(now.getTime() / 1000) + this.config.OAUTH_STATE_TTL_SECONDS,
+      // Absent rather than `null` when there is nothing to carry: this payload is
+      // JSON in a cookie on every `/v1/auth` request, and a key worth four bytes
+      // is worth not sending.
+      ...(returnPath === null ? {} : { r: returnPath }),
     };
 
     let location: string;
@@ -381,7 +445,10 @@ export class AuthService {
 
     return {
       kind: 'redirect',
-      location: `${this.config.WEB_BASE_URL}/dang-nhap`,
+      // The destination comes from the SIGNED state and from nowhere else. Not
+      // from `query`, not from a cookie this leg reads for itself, not from a
+      // header — see `OAuthStatePayload.r`.
+      location: this.webDestination(stateCheck.payload.r),
       cookies: [
         ...issued.cookies,
         // The handshake is over; this attempt's state cookie must not survive it.
@@ -539,6 +606,52 @@ export class AuthService {
     }
 
     return { kind: 'json', status: 200, body: toCurrentUser(user), cookies: [] };
+  }
+
+  /**
+   * A URL on the web client, built rather than concatenated.
+   *
+   * `new URL(path, base)` and not `` `${base}${path}` ``: the second one takes a
+   * value that varies and splices it into a string that is about to be parsed as
+   * a URL, which is the shape every open redirect has ever had.
+   *
+   * Two things guard the result, and they are deliberately not the same thing
+   * twice:
+   *
+   * 1. The path is run back through `parseInternalReturnPath`. That is NOT a
+   *    second policy — it is the same shared function, applied to a value that
+   *    reached here as an unchecked cast. `verifyPayload<OAuthStatePayload>()`
+   *    proves the bytes were signed by us; it proves nothing about their SHAPE,
+   *    which is why the expiry two screens up is guarded with
+   *    `typeof payload.x !== 'number'` in the same spirit. A `TypeError` here
+   *    would turn a completed login into a 500.
+   * 2. The origin of what comes out must be the origin of `WEB_BASE_URL`. That
+   *    invariant is what `auth.flow.test.ts` has asserted on every failure path
+   *    since Story 1.3 part 1, and the success path is the leg where a variable
+   *    path made it possible to break for the first time. `//evil.com` is the
+   *    exact spelling that makes `new URL(path, base)` adopt a new origin, so the
+   *    check is placed where it catches that even if rule 1 were ever weakened.
+   *
+   *    It is UNREACHABLE by design, and that is worth writing down rather than
+   *    leaving as a branch somebody later deletes for having no coverage. No input
+   *    exists today that satisfies rule 1 and fails rule 2: `//` and `\` and every
+   *    encoded spelling of them die inside `parseInternalReturnPath`, so reaching
+   *    this comparison would mean faking the shared validator. It is the second
+   *    half of a belt-and-braces pair, kept for the day rule 1 is relaxed by
+   *    somebody who does not read this file — which is exactly when a redirect
+   *    onto another origin stops being impossible.
+   *
+   * Anything that fails either one lands on the default. Silence, again: there is
+   * nothing here a person did wrong and nothing an operator can act on.
+   */
+  private webDestination(signedReturnPath: unknown): string {
+    const fallback = new URL(DEFAULT_RETURN_PATH, this.config.WEB_BASE_URL);
+    const path = parseInternalReturnPath(signedReturnPath);
+    if (path === null) {
+      return fallback.toString();
+    }
+    const destination = new URL(path, this.config.WEB_BASE_URL);
+    return destination.origin === fallback.origin ? destination.toString() : fallback.toString();
   }
 
   /** Null when the provider is unknown OR not enabled — the caller cannot tell. */
@@ -752,7 +865,18 @@ export class AuthService {
     // traffic", this one asks "how much of it failed".
     await this.countFailure('browser', subject, reason);
 
-    const location = new URL(`${this.config.WEB_BASE_URL}/dang-nhap`);
+    /**
+     * The return path is deliberately NOT carried here, even when this attempt
+     * signed one.
+     *
+     * `auth.flow.test.ts` pins that exactly one query parameter rides back, and
+     * the docblock there says why: an extra parameter is how a diagnostic detail
+     * gets smuggled to the client "just for debugging". Keeping that invariant is
+     * worth more than preserving a place to stand for a login that has already
+     * failed — the person is looking at the login page, and the next successful
+     * attempt proposes its own path from wherever they are then.
+     */
+    const location = new URL(DEFAULT_RETURN_PATH, this.config.WEB_BASE_URL);
     location.searchParams.set(SIGN_IN_OUTCOME_QUERY_PARAM, publicOutcomeFor(reason));
 
     // A Set keeps this attempt's cookie from being cleared twice when it is also

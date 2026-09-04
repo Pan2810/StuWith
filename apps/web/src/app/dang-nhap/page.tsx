@@ -2,6 +2,7 @@
 
 import type { CurrentUser } from '@stuwith/contracts';
 import { useCallback, useEffect, useState } from 'react';
+import { useApiBaseUrl, useAuthorizedFetch } from '../session-expiry-provider';
 import {
   SignInPanel,
   nextLocationAfterOutcome,
@@ -20,19 +21,14 @@ import {
  * the provider list and the response type both come from `@stuwith/contracts`, and
  * there is no business rule in this file.
  *
- * What is left here is only what needs a browser: two `fetch` calls, `setState`,
- * and `history.replaceState`. Every DECISION — which notice to show, whether the
- * login links may be offered, what a 429 from `/me` means — is an exported
- * function or component in `sign-in-outcome.tsx`, because this project has no DOM
- * environment and a decision left in this file is a decision no test can execute.
+ * What is left here is only what needs a browser: two calls through the shared
+ * `authorizedFetch` seam, `setState`, and `history.replaceState`. Every DECISION —
+ * which notice to show, whether the login links may be offered, what a 429 from
+ * `/me` means, whether a 401 raises the session-expiry dialog — is an exported
+ * function or component in `sign-in-outcome.tsx` or `session-expiry.ts`, because
+ * this project has no DOM environment and a decision left in this file is a
+ * decision no test can execute.
  */
-
-/**
- * The API is a separate process on a separate origin, so the base URL has to be
- * configured rather than assumed. `NEXT_PUBLIC_` because it is read in the browser;
- * it is an origin, not a secret.
- */
-const API_BASE_URL = process.env['NEXT_PUBLIC_API_BASE_URL'] ?? '';
 
 type LoadState =
   | { status: 'loading' }
@@ -50,14 +46,33 @@ export default function DangNhapPage() {
    */
   const [notice, setNotice] = useState<SignInNotice | null>(null);
 
+  /**
+   * The shared seam, not a bare `fetch`.
+   *
+   * It carries `credentials: 'include'` — the session lives in an `httpOnly`
+   * cookie and only travels on a credentialed request — it tries
+   * `/v1/auth/refresh` before anybody is disturbed, and it reports the surviving
+   * status so a 401 anywhere in the app raises the session-expiry dialog. Both of
+   * those are deliberately quiet on THIS page: `authorizedCall` does not renew on
+   * `/dang-nhap` and `nextSessionExpiry` does not open a dialog there, because a
+   * 401 from `/v1/auth/me` here is the ordinary signed-out answer rather than a
+   * session that just died — and renewing on it would spend one rate-limited
+   * `auth_refresh` for every anonymous visit.
+   */
+  const authorizedFetch = useAuthorizedFetch();
+  /**
+   * From the provider, not from `process.env`.
+   *
+   * `layout.tsx` reads `NEXT_PUBLIC_API_BASE_URL` once and hands it down. This
+   * page used to read it a second time, which made the layout's docblock ("one
+   * answer for the whole app") false the moment it was written.
+   */
+  const apiBaseUrl = useApiBaseUrl();
+
   const load = useCallback(async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/v1/auth/me`, {
-        // The session lives in an httpOnly cookie, so it only travels if the
-        // request is explicitly credentialed.
-        credentials: 'include',
-      });
-      if (!response.ok) {
+      const response = await authorizedFetch(`${apiBaseUrl}/v1/auth/me`);
+      if (response.status !== 200) {
         /**
          * A 429 here is not "signed out", and treating it as one was the bug.
          *
@@ -65,6 +80,12 @@ export default function DangNhapPage() {
          * login page with four links and no explanation — and the first click
          * spent an `auth_start` and bounced them back with a longer wait. The
          * decision lives in `signInNoticeFromMe` so a test can execute it.
+         *
+         * `status !== 200` rather than `!response.ok`, and the difference is not
+         * cosmetic: `ok` is true for the whole 2xx range, and the only shape this
+         * page can render is the `CurrentUser` body a 200 carries. A 204 or a 206
+         * would be parsed as JSON and throw. The signed-in branch takes exactly
+         * the one status that means "here is the profile".
          */
         const limited = signInNoticeFromMe(response.status, response.headers.get('retry-after'));
         if (limited !== null) {
@@ -75,13 +96,13 @@ export default function DangNhapPage() {
       }
       setState({ status: 'signed-in', user: (await response.json()) as CurrentUser });
     } catch {
-      // A network failure is not a signed-in state. Telling the person about a
-      // session that dropped mid-visit — the dialog, and returning them to where
-      // they were — was split out of Story 1.3 and is in `deferred-work.md`; the
-      // outcome banner is only about the attempt they just made.
+      // A network failure is not a signed-in state, and it is not an expired
+      // session either: nothing came back, so there is no status to report and the
+      // seam is never told. The outcome banner is only about the attempt the
+      // person just made.
       setState({ status: 'signed-out' });
     }
-  }, []);
+  }, [authorizedFetch, apiBaseUrl]);
 
   useEffect(() => {
     void load();
@@ -112,9 +133,12 @@ export default function DangNhapPage() {
   }, []);
 
   const logout = useCallback(async () => {
-    await fetch(`${API_BASE_URL}/v1/auth/logout`, { method: 'POST', credentials: 'include' });
+    // Through the seam as well. Logging out answers 204, so it raises nothing
+    // today — but a `fetch` written by hand beside one that goes through the seam
+    // is how the next authenticated call in this file quietly skips it.
+    await authorizedFetch(`${apiBaseUrl}/v1/auth/logout`, { method: 'POST' });
     await load();
-  }, [load]);
+  }, [authorizedFetch, apiBaseUrl, load]);
 
   return (
     <main>
@@ -131,7 +155,7 @@ export default function DangNhapPage() {
         notice={notice}
         canSignIn={state.status === 'signed-out'}
         loading={state.status === 'loading'}
-        apiBaseUrl={API_BASE_URL}
+        apiBaseUrl={apiBaseUrl}
         // The wait is over: drop the notice so the links come back.
         onCountdownFinished={() => setNotice(null)}
       />

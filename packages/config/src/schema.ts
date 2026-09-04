@@ -36,7 +36,43 @@ const httpUrl = z
   .regex(/^https?:\/\/[^\s]+$/, 'must be an absolute http(s) URL')
   // A trailing slash silently produces `https://host//v1/auth/...`, which several
   // providers reject as a redirect_uri mismatch with no useful message.
-  .refine((value) => !value.endsWith('/'), 'must not end with a trailing slash');
+  .refine((value) => !value.endsWith('/'), 'must not end with a trailing slash')
+  /**
+   * An ORIGIN, and nothing else: scheme, host, optional non-default port. No path,
+   * no query, no fragment, no userinfo, and already in the spelling `URL` would
+   * normalise it to.
+   *
+   * This is a BREAKING configuration change, and the reason is that a sub-path was
+   * accepted while nothing in the codebase could honour it consistently. Both
+   * processes build URLs from these values two different ways — `new URL(path,
+   * base)`, which DISCARDS a base path, and string concatenation, which keeps it —
+   * so `WEB_BASE_URL=https://x.vn/app` produced `https://x.vn/dang-nhap` from the
+   * auth service and `https://x.vn/app/dang-nhap` from the rate-limit filter, for
+   * the same page, in the same deployment. Making every builder agree is possible;
+   * making it STAY true is a rule nobody can see. Refusing the input makes the two
+   * forms identical by arithmetic instead: with an origin, `new URL('/x', base)`
+   * and `${base}/x` are the same string.
+   *
+   * The normalisation half is not pedantry either. `OAUTH_REDIRECT_BASE_URL` has to
+   * match what is registered with each provider byte for byte, so `HTTPS://Host` or
+   * `https://host:443` — both of which a URL parser silently rewrites — are exactly
+   * the values that produce a `redirect_uri` mismatch nobody can see in the config
+   * file. The error names what to write instead.
+   *
+   * Concretely: a deployment whose `.env` says `WEB_BASE_URL=https://x.vn/app`
+   * started yesterday and exits non-zero today, naming the variable. Serving the
+   * web client from a sub-path needs a decision about which builder wins, and that
+   * decision has no owner today.
+   */
+  .refine((value) => {
+    let parsed: URL;
+    try {
+      parsed = new URL(value);
+    } catch {
+      return false;
+    }
+    return parsed.origin === value;
+  }, 'must be a bare origin — scheme, host and optional port, with no path, query, fragment or credentials');
 
 /**
  * A whole number written as digits, and nothing else.

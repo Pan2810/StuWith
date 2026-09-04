@@ -5,6 +5,7 @@ import {
   resolveRequestId,
   type TrustedProxyTrust,
 } from '@stuwith/config';
+import { SIGN_IN_RETURN_PATH_QUERY_PARAM } from '@stuwith/contracts';
 import type { RateLimitSubject } from '@stuwith/domain';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { randomUUID } from 'node:crypto';
@@ -37,6 +38,28 @@ export class AuthController {
     this.trust = compiled.trust;
   }
 
+  /**
+   * The one leg that reads a proposed return path, and it does not judge it.
+   *
+   * The raw query value is handed down as `unknown` on purpose. `AuthService` owns
+   * the verdict — through the shared `parseInternalReturnPath` in
+   * `packages/contracts` — because a controller that pre-filtered would be a
+   * second place where "is this destination safe" is decided, and two such places
+   * are two places that can drift apart. This file contains no decisions; that is
+   * the arrangement, and this parameter does not get to be the exception.
+   *
+   * A provider that is not enabled still answers `404`, and the ORDER is worth
+   * stating accurately because an earlier version of this comment got it wrong.
+   * The query is read here first, unconditionally; the 404 decision is made
+   * further in, by `adapterFor` inside `AuthService.start`. What matters is not
+   * that the reply is decided first but that it is decided the SAME WAY whatever
+   * the query said — reading a parameter has no side effect, nothing about it is
+   * logged, and the body a disabled provider returns is byte-identical to the one
+   * an unknown provider returns whether or not `quay-ve` was present. Otherwise
+   * the endpoint starts enumerating the deployment's configuration.
+   * `auth.flow.test.ts` sends `/start?quay-ve=` at a disabled provider to hold
+   * that.
+   */
   @RateLimited('auth_start')
   @Get(':provider/start')
   async start(
@@ -44,7 +67,15 @@ export class AuthController {
     @Req() request: FastifyRequest,
     @Res() reply: FastifyReply,
   ): Promise<void> {
-    send(reply, await this.auth.start(provider, requestIdOf(request, reply)));
+    const query = (request.query ?? {}) as Record<string, unknown>;
+    send(
+      reply,
+      await this.auth.start(
+        provider,
+        requestIdOf(request, reply),
+        query[SIGN_IN_RETURN_PATH_QUERY_PARAM],
+      ),
+    );
   }
 
   @RateLimited('auth_callback')

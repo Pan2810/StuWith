@@ -4,7 +4,9 @@ import {
   REFRESH_COOKIE_NAME,
   SESSION_COOKIE_NAME,
   SESSION_COOKIE_PATH,
+  MAX_SIGN_IN_RETURN_PATH_LENGTH,
   SIGN_IN_OUTCOME_QUERY_PARAM,
+  SIGN_IN_RETURN_PATH_QUERY_PARAM,
   errorEnvelopeSchema,
   currentUserSchema,
   type SignInOutcome,
@@ -172,7 +174,7 @@ describe('Matrix: first sign-in', () => {
 describe('Matrix: signing in again', () => {
   it('maps back onto the same user and creates no second account', async () => {
     const first = await harness.login('google', googleProfile);
-    const second = await harness.login('google', googleProfile, new CookieJar());
+    const second = await harness.login('google', googleProfile, { jar: new CookieJar() });
 
     expect(second.callback.status).toBe(302);
     expect(await harness.identity.countUsers()).toBe(1);
@@ -194,7 +196,7 @@ describe('Matrix: two providers, one email address', () => {
     const facebook = await harness.login(
       'facebook',
       { subject: 'f-1', email, name: 'A' },
-      new CookieJar(),
+      { jar: new CookieJar() },
     );
 
     expect(google.callback.status).toBe(302);
@@ -211,8 +213,8 @@ describe('Matrix: concurrent callbacks for the same new identity', () => {
   it('creates exactly one user and does not answer 500 to the loser', async () => {
     const profile = { subject: 'racy-subject', email: 'racy@fpt.edu.vn', name: 'Racy' };
     const [first, second] = await Promise.all([
-      harness.login('google', profile, new CookieJar()),
-      harness.login('google', profile, new CookieJar()),
+      harness.login('google', profile, { jar: new CookieJar() }),
+      harness.login('google', profile, { jar: new CookieJar() }),
     ]);
 
     expect(first.callback.status).toBe(302);
@@ -249,7 +251,7 @@ describe('Matrix: Microsoft organisational account', () => {
     await harness.login(
       'microsoft',
       { subject: 's2', objectId: 'same-oid', tenantId: 'tenant-vnu', name: 'Two' },
-      new CookieJar(),
+      { jar: new CookieJar() },
     );
 
     expect(await harness.identity.countUsers()).toBe(2);
@@ -267,7 +269,7 @@ describe('Matrix: Microsoft organisational account', () => {
     await harness.login(
       'microsoft',
       { subject: 'sub-after', objectId: 'stable-oid', tenantId: 'tenant-fpt', name: 'Stable' },
-      new CookieJar(),
+      { jar: new CookieJar() },
     );
 
     expect(await harness.identity.countUsers()).toBe(1);
@@ -786,6 +788,27 @@ describe('Matrix: a provider that is not enabled', () => {
     expect(await disabled.text()).toBe(await unknown.text());
   });
 
+  it('answers 404 the same way when a return path is proposed', async () => {
+    // The controller reads `?quay-ve=` BEFORE the 404 is decided — that is the
+    // real order, and the docblock there used to claim the opposite. What has to
+    // hold is that reading it changes nothing: same status, same body, byte for
+    // byte, whatever the query said. Otherwise `/start` starts telling a stranger
+    // which providers this deployment has configured.
+    const plain = await limited.request('/v1/auth/apple/start');
+    const proposing = await limited.request(
+      `/v1/auth/apple/start?${SIGN_IN_RETURN_PATH_QUERY_PARAM}=%2Fphong-hoc%2Fabc`,
+    );
+    const hostile = await limited.request(
+      `/v1/auth/apple/start?${SIGN_IN_RETURN_PATH_QUERY_PARAM}=%2F%2Fevil.com`,
+    );
+
+    expect(proposing.status).toBe(404);
+    expect(hostile.status).toBe(404);
+    const body = await plain.text();
+    expect(await proposing.text()).toBe(body);
+    expect(await hostile.text()).toBe(body);
+  });
+
   it('still serves the provider that IS enabled', async () => {
     const response = await limited.request('/v1/auth/google/start');
     expect(response.status).toBe(302);
@@ -1193,5 +1216,283 @@ describe('a provider that cannot be reached on the START leg', () => {
     ).text();
     expect(raw.toLowerCase()).not.toContain('google');
     expect(raw.toLowerCase()).not.toContain('discovery');
+  });
+});
+
+describe('Matrix: coming back to where you were standing', () => {
+  /**
+   * Story 1.3 part 3. A session that dies mid-visit must not cost somebody their
+   * place, and the mechanism is general on purpose — Epic 2's live room plugs into
+   * it, and nothing on this side knows a room exists.
+   *
+   * The security argument fits in one sentence: the destination is read from the
+   * SIGNED state and from nowhere else, so choosing one means signing one. The
+   * examples below are therefore not "does the validator work" —
+   * `packages/contracts/src/auth.test.ts` sweeps that by class — they are "does a
+   * hostile proposal that travels the real road, through real HTTP and a real
+   * signed cookie, end up anywhere other than our own origin".
+   */
+  const internalPath = '/phong-hoc/abc-123?tab=chat';
+
+  const startWith = (proposal: string, jar: CookieJar): Promise<Response> =>
+    harness.request(
+      `/v1/auth/google/start?${SIGN_IN_RETURN_PATH_QUERY_PARAM}=${encodeURIComponent(proposal)}`,
+      { jar },
+    );
+
+  it('sends the browser back to the proposed internal path', async () => {
+    const { callback } = await harness.login('google', googleProfile, { returnPath: internalPath });
+
+    expect(callback.status).toBe(302);
+    expect(callback.headers.get('location')).toBe(`${harness.webBaseUrl}${internalPath}`);
+  });
+
+  it('still clears that handshake cookie and still opens the session', async () => {
+    const { jar } = await harness.login('google', googleProfile, { returnPath: internalPath });
+
+    // A changed redirect target must not quietly cost the flow its cleanup.
+    expect(jar.namesMatching(OAUTH_STATE_COOKIE_PREFIX)).toEqual([]);
+    expect(jar.get(SESSION_COOKIE_NAME)).toBeDefined();
+    expect(jar.get(REFRESH_COOKIE_NAME)).toBeDefined();
+  });
+
+  it('lands on the login page when nothing was proposed', async () => {
+    const { callback } = await harness.login('google', googleProfile);
+
+    // The row this story must not break: `/start` exactly as it was before, and
+    // the destination it has always had.
+    expect(callback.headers.get('location')).toBe(`${harness.webBaseUrl}/dang-nhap`);
+  });
+
+  it.each([
+    ['an absolute URL', 'https://evil.com/x'],
+    ['protocol-relative', '//evil.com'],
+    ['a backslash spelling of protocol-relative', '/\\evil.com'],
+    ['an encoded slash pair', '/%2F%2Fevil.com'],
+    ['a parent segment', '/../x'],
+    ['userinfo punctuation', '/@evil.com'],
+    ['a scheme behind a leading slash', '/https://evil.com'],
+    ['an empty proposal', ''],
+  ])('drops %s and completes the login on our own origin', async (_label, proposal) => {
+    const { callback } = await harness.login('google', googleProfile, { returnPath: proposal });
+
+    // Not an error: the login SUCCEEDS and simply lands where it always did.
+    // Refusing would turn "here is a login link" into a way to break somebody's
+    // login, and the visitor did nothing wrong either way.
+    expect(callback.status).toBe(302);
+    const location = new URL(callback.headers.get('location') ?? '');
+    expect(location.origin).toBe(new URL(harness.webBaseUrl).origin);
+    expect(callback.headers.get('location')).toBe(`${harness.webBaseUrl}/dang-nhap`);
+    expect(location.toString()).not.toContain('evil.com');
+  });
+
+  it('never lets a proposal move the redirect onto the API origin', async () => {
+    // `OAUTH_REDIRECT_BASE_URL` is one line away from `WEB_BASE_URL` in the same
+    // config object, which is why every failure path has asserted the whole origin
+    // since Story 1.3 part 1. The success path is where a variable path made that
+    // breakable for the first time.
+    const { callback } = await harness.login('google', googleProfile, { returnPath: internalPath });
+
+    expect(new URL(callback.headers.get('location') ?? '').origin).not.toBe(
+      new URL(harness.baseUrl).origin,
+    );
+  });
+
+  it('writes nothing about a rejected proposal into the audit trail', async () => {
+    // `audit_events` is append-only (AD-12) — no role holds DELETE — so an
+    // attacker-chosen string that reached a row could never be taken back out.
+    const marker = 'kokoro-marker-9x';
+    await harness.login('google', googleProfile, { returnPath: `//evil.com/${marker}` });
+
+    expect(JSON.stringify(harness.audit.all())).not.toContain(marker);
+  });
+
+  it('drops the return path on the FAILURE branch, keeping exactly one parameter', async () => {
+    const jar = new CookieJar();
+    const started = await startWith(internalPath, jar);
+    expect(started.status).toBe(302);
+
+    // A real signed state, then a code the provider will not honour.
+    const authorized = harness.fake.authorize(started.headers.get('location') ?? '', googleProfile);
+    const target = new URL(authorized.callbackUrl);
+    target.searchParams.set('code', 'not-a-real-code');
+    const callback = await harness.request(target.toString(), { jar });
+
+    // `expectOutcomeRedirect` re-asserts the whole invariant, including "exactly
+    // one query parameter rides back" — which is what forbids the return path
+    // here even though this attempt signed a perfectly valid one.
+    const location = expectOutcomeRedirect(callback, 'that-bai');
+    expect(location.pathname).toBe('/dang-nhap');
+    expect(location.toString()).not.toContain('phong-hoc');
+  });
+
+  /**
+   * `/start` with a query string written EXACTLY as given — no `encodeURIComponent`
+   * between the example and the wire.
+   *
+   * That distinction is the whole point of the block below. Every earlier example
+   * went through `encodeURIComponent`, so a value like `%2F%2Fevil.com` reached the
+   * server as `%252F%252Fevil.com` — a DOUBLE-encoded string. Fastify percent-
+   * decodes the query once before any handler runs, so the single-encoded spelling
+   * an attacker actually writes arrives at `parseInternalReturnPath` already
+   * decoded, and is refused by a different rule than the one the tests were
+   * demonstrating. Two spellings, two roads; both need driving.
+   */
+  const startRaw = (rawQueryValue: string, jar: CookieJar): Promise<Response> =>
+    harness.request(
+      `/v1/auth/google/start?${SIGN_IN_RETURN_PATH_QUERY_PARAM}=${rawQueryValue}`,
+      { jar },
+    );
+
+  /** Consent and callback for a `/start` that was driven by hand. */
+  const finish = async (started: Response, jar: CookieJar): Promise<Response> => {
+    expect(started.status).toBe(302);
+    const authorized = harness.fake.authorize(started.headers.get('location') ?? '', googleProfile);
+    return harness.request(authorized.callbackUrl, { jar });
+  };
+
+  it('takes the FIRST value when the parameter is repeated', async () => {
+    // `?quay-ve=/a&quay-ve=//evil.com` reaches Fastify as an ARRAY. The callback
+    // leg has read `?error=` through `firstQueryValue` since Story 1.3 part 1, and
+    // the comment there records that a bare `typeof === 'string'` was a real
+    // defect; this leg had the same code and no example. Last-wins, or "an array
+    // is not a string so ignore the whole thing", are both one line away.
+    const jar = new CookieJar();
+    const callback = await finish(await startRaw('/a&quay-ve=//evil.com', jar), jar);
+
+    expect(callback.headers.get('location')).toBe(`${harness.webBaseUrl}/a`);
+  });
+
+  it.each([
+    ['a single-encoded slash pair', '%2F%2Fevil.com'],
+    ['a single-encoded backslash', '%5Cevil.com'],
+    ['single-encoded parent segments', '%2e%2e/x'],
+    // CR and LF ALONE, with nothing else in the string the allow-list would
+    // refuse: a value like `/x%0d%0aX-Injected:%201` also dies on the `:`, so it
+    // would pass even with the newline rule gone.
+    ['a single-encoded CRLF', '/x%0d%0aY'],
+    ['a double-encoded slash pair', '%252F%252Fevil.com'],
+    ['a single-encoded scheme', 'https%3A%2F%2Fevil.com'],
+  ])('drops %s sent RAW over HTTP and lands on the login page', async (_label, rawValue) => {
+    const jar = new CookieJar();
+    const callback = await finish(await startRaw(rawValue, jar), jar);
+
+    const raw = callback.headers.get('location') ?? '';
+    expect(raw).toBe(`${harness.webBaseUrl}/dang-nhap`);
+    expect(new URL(raw).origin).toBe(new URL(harness.webBaseUrl).origin);
+    expect(raw.toLowerCase()).not.toContain('evil.com');
+    // A `Location` header carrying a CR or an LF is response splitting, and no
+    // amount of "it was rejected anyway" makes an emitted one safe.
+    expect(raw).not.toMatch(/[\r\n]/);
+  });
+
+  it('accepts a path at the ceiling and brings the person back to it', async () => {
+    // `MAX_SIGN_IN_RETURN_PATH_LENGTH` exists because the value rides in a cookie
+    // on every `/v1/auth` request until the handshake ends, and a `Cookie` header
+    // that grows past the server's limit answers 431 instead of a login page. Only
+    // the unit test had ever exercised the number; nothing had pushed a path of
+    // that size through a real cookie, a real signature and a real callback.
+    const atCeiling = `/p/${'a'.repeat(MAX_SIGN_IN_RETURN_PATH_LENGTH - 3)}`;
+    expect(atCeiling.length).toBe(MAX_SIGN_IN_RETURN_PATH_LENGTH);
+
+    const jar = new CookieJar();
+    const started = await startRaw(encodeURIComponent(atCeiling), jar);
+
+    // The state cookie carries it. Measured rather than assumed: this is the
+    // number `deferred-work.md` records, and a change to the payload shape that
+    // doubled it would be invisible without an assertion here.
+    const stateCookie = started.headers
+      .getSetCookie()
+      .find((cookie) => cookie.startsWith(OAUTH_STATE_COOKIE_PREFIX));
+    expect(stateCookie).toBeDefined();
+    const bare = await harness.request('/v1/auth/google/start', { jar: new CookieJar() });
+    const bareCookie = bare.headers
+      .getSetCookie()
+      .find((cookie) => cookie.startsWith(OAUTH_STATE_COOKIE_PREFIX));
+
+    // Measured on 2026-09-04: 374 bytes with no proposal, 1066 with one at the
+    // ceiling — 2.85x, because 512 characters of path become ~683 of base64
+    // inside the signed payload. The bounds are loose enough not to be brittle
+    // and tight enough that doubling the payload shape fails here. What the
+    // number MEANS for concurrent attempts is in `deferred-work.md`.
+    expect((bareCookie ?? '').length).toBeLessThan(450);
+    expect((stateCookie ?? '').length).toBeLessThan(1200);
+    expect((stateCookie ?? '').length - (bareCookie ?? '').length).toBeLessThan(750);
+
+    const callback = await finish(started, jar);
+    expect(callback.headers.get('location')).toBe(`${harness.webBaseUrl}${atCeiling}`);
+  });
+
+  it('drops a path one character over the ceiling, silently', async () => {
+    const overCeiling = `/p/${'a'.repeat(MAX_SIGN_IN_RETURN_PATH_LENGTH - 2)}`;
+    expect(overCeiling.length).toBe(MAX_SIGN_IN_RETURN_PATH_LENGTH + 1);
+
+    const jar = new CookieJar();
+    const callback = await finish(await startRaw(encodeURIComponent(overCeiling), jar), jar);
+
+    // Not an error, and not a truncation: a truncated path is a DIFFERENT page,
+    // and sending somebody to one because their URL was long is worse than
+    // sending them to the login page they expected.
+    expect(callback.status).toBe(302);
+    expect(callback.headers.get('location')).toBe(`${harness.webBaseUrl}/dang-nhap`);
+  });
+
+  /**
+   * The acceptance criterion says "no log line contains the value", and until now
+   * only the audit trail was checked. `logLines` is what a REAL pino wrote through
+   * the real serialisers, which is the only place that claim can be tested — and
+   * it needs its own harness, because `captureLogs` is off by default and a logger
+   * that was never wired up passes every "does not contain" assertion perfectly.
+   */
+  describe('and nothing about it reaches a log line', () => {
+    const marker = 'kokoro-log-marker-7q';
+    let logged: AuthHarness;
+    let output: string;
+
+    beforeAll(async () => {
+      logged = await createAuthHarness({ captureLogs: true });
+      const jar = new CookieJar();
+      const started = await logged.request(
+        `/v1/auth/google/start?${SIGN_IN_RETURN_PATH_QUERY_PARAM}=//evil.com/${marker}`,
+        { jar },
+      );
+      const authorized = logged.fake.authorize(started.headers.get('location') ?? '', googleProfile);
+      await logged.request(authorized.callbackUrl, { jar });
+      output = logged.logLines.join('\n');
+    }, 60_000);
+
+    afterAll(async () => {
+      await logged?.close();
+    });
+
+    it('actually logged something — otherwise the assertions below are vacuous', () => {
+      expect(logged.logLines.length).toBeGreaterThan(0);
+      expect(output).toContain('/v1/auth/google/start');
+    });
+
+    it('never writes the rejected proposal', () => {
+      // The proposal rides in `req.url`, and no `redact` path can reach inside a
+      // string — `sanitizeLoggedUrl` dropping the whole query is what closes it.
+      expect(output).not.toContain(marker);
+      expect(output.toLowerCase()).not.toContain('evil.com');
+    });
+
+    it('and writes nothing about it into the append-only audit trail', () => {
+      // `audit_events` holds no DELETE grant (AD-12), so an attacker-chosen string
+      // that reached a row could never be taken back out.
+      expect(JSON.stringify(logged.audit.all())).not.toContain(marker);
+    });
+  });
+
+  it('takes the ordinary failure road when the state has expired', async () => {
+    const jar = new CookieJar();
+    const started = await startWith(internalPath, jar);
+    const authorized = harness.fake.authorize(started.headers.get('location') ?? '', googleProfile);
+
+    // The signed path is bounded by the same clock the rest of the handshake is,
+    // so there is no separate lifetime for it to outlive.
+    harness.clock.advance((harness.config.OAUTH_STATE_TTL_SECONDS + 1) * 1000);
+
+    expectOutcomeRedirect(await harness.request(authorized.callbackUrl, { jar }), 'that-bai');
   });
 });

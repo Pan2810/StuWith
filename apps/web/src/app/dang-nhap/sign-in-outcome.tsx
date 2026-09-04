@@ -16,7 +16,6 @@
  */
 
 import {
-  AUTH_PROVIDERS,
   MAX_SIGN_IN_RETRY_AFTER_SECONDS,
   RATE_LIMITED_MESSAGE,
   SIGN_IN_OUTCOME_QUERY_PARAM,
@@ -25,6 +24,7 @@ import {
   parseSignInRetryAfterSeconds,
   type SignInOutcome,
 } from '@stuwith/contracts';
+import { SignInProviderLinks } from '../sign-in-links';
 import { SignInCountdown } from './countdown';
 
 /**
@@ -376,21 +376,16 @@ export function SignInPanel({
       {signInOptionsVisible(notice, canSignIn) ? (
         <nav>
           <p>Chọn tài khoản mạng xã hội để tiếp tục:</p>
-          <ul>
-            {AUTH_PROVIDERS.map((provider) => (
-              <li key={provider}>
-                {/*
-                  A plain anchor, not a fetch. The OAuth flow is a top-level
-                  browser navigation: it has to leave this origin, come back, and
-                  carry the SameSite=Lax state cookie on the way in. An XHR cannot
-                  do any of that.
-                */}
-                <a href={`${apiBaseUrl}/v1/auth/${provider}/start`}>
-                  Tiếp tục với {PROVIDER_LABELS[provider]}
-                </a>
-              </li>
-            ))}
-          </ul>
+          {/*
+            The same list the session-expiry dialog offers — one module, so the two
+            screens cannot come to say different things about the same provider.
+
+            `returnPath` is `null` here and that is the decision, not an omission:
+            somebody signing in FROM the login page is already where a login lands
+            by default, so a `?quay-ve=/dang-nhap` would be a parameter that
+            changes nothing while looking like it changes something.
+          */}
+          <SignInProviderLinks apiBaseUrl={apiBaseUrl} returnPath={null} />
           <p>
             Provider chưa được bật trên máy chủ này sẽ trả về &ldquo;không tìm
             thấy&rdquo;.
@@ -400,14 +395,6 @@ export function SignInPanel({
     </>
   );
 }
-
-/** Vietnamese is the default locale; full i18n arrives with Story 1.6. */
-const PROVIDER_LABELS: Record<(typeof AUTH_PROVIDERS)[number], string> = {
-  google: 'Google',
-  facebook: 'Facebook',
-  apple: 'Apple',
-  microsoft: 'Microsoft',
-};
 
 /**
  * What `/v1/auth/me` answering told us, including the case the page could not see.

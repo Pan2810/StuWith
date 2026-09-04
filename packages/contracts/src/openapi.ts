@@ -1,7 +1,9 @@
 import { z } from 'zod';
 import { auditEventSchema } from './audit';
 import {
+  MAX_SIGN_IN_RETURN_PATH_LENGTH,
   SIGN_IN_OUTCOME_QUERY_PARAM,
+  SIGN_IN_RETURN_PATH_QUERY_PARAM,
   currentUserSchema,
   signInOutcomeSchema,
 } from './auth';
@@ -164,6 +166,25 @@ function authPaths(): Record<string, unknown> {
         summary: 'Begin an OAuth 2.0 authorization-code + PKCE login',
         parameters: [
           { name: 'provider', in: 'path', required: true, schema: { type: 'string' } },
+          {
+            // Documented because a mobile client has the same problem — a session
+            // that dies mid-use — and this is the ONE leg that accepts a return
+            // path. The description says so, because an integrator who tried to
+            // pass it on the callback instead would find it silently ignored and
+            // have no way to learn why.
+            name: SIGN_IN_RETURN_PATH_QUERY_PARAM,
+            in: 'query',
+            required: false,
+            description:
+              'An internal path to return to after a SUCCESSFUL sign-in, proposed ' +
+              'by the client. It must begin with exactly one "/" and carry no ' +
+              'host, scheme, percent escape, backslash or ".." segment; anything ' +
+              'else is dropped in silence and the login lands on the default. The ' +
+              'value is checked here, signed into the OAuth state, and read back ' +
+              'from that signature — the callback never reads a path from a URL, ' +
+              'a cookie of its own or a header. A failed attempt drops it.',
+            schema: { type: 'string', maxLength: MAX_SIGN_IN_RETURN_PATH_LENGTH },
+          },
         ],
         responses: {
           '302': { description: 'Redirect to the provider authorization endpoint' },

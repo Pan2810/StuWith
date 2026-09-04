@@ -3,6 +3,7 @@ import {
   AUTH_COOKIE_PATH,
   RATE_LIMITED_MESSAGE,
   SIGN_IN_OUTCOME_QUERY_PARAM,
+  SIGN_IN_PATHNAME,
   SIGN_IN_RETRY_AFTER_QUERY_PARAM,
   makeError,
 } from '@stuwith/contracts';
@@ -55,7 +56,16 @@ export class RateLimitedFilter implements ExceptionFilter<RateLimitedException> 
         reply.header('set-cookie', doomed);
       }
 
-      const location = new URL(`${this.config.WEB_BASE_URL}/dang-nhap`);
+      /**
+       * `new URL(path, base)`, and the path from `packages/contracts` — the same
+       * two rules `AuthService` follows, because this is the SAME page.
+       *
+       * It used to be `new URL(`${WEB_BASE_URL}/dang-nhap`)`: a second spelling of
+       * the route and a second way of joining it to the base. `WEB_BASE_URL` is
+       * now refused unless it is a bare origin, so the two forms cannot disagree
+       * any more — but they were free to, and for one release they did.
+       */
+      const location = new URL(SIGN_IN_PATHNAME, this.config.WEB_BASE_URL);
       location.searchParams.set(SIGN_IN_OUTCOME_QUERY_PARAM, RATE_LIMITED_OUTCOME);
       location.searchParams.set(
         SIGN_IN_RETRY_AFTER_QUERY_PARAM,

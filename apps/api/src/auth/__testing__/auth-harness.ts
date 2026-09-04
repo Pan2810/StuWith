@@ -1,7 +1,7 @@
 import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
 import { NO_TRUSTED_PROXIES, type ApiEnv } from '@stuwith/config';
-import type { AuthProvider } from '@stuwith/contracts';
+import { SIGN_IN_RETURN_PATH_QUERY_PARAM, type AuthProvider } from '@stuwith/contracts';
 import {
   InMemoryAuditAdapter,
   InMemoryIdentityAdapter,
@@ -220,13 +220,45 @@ export interface AuthHarness {
   readonly rateLimit: RateLimitPort;
   readonly logLines: readonly string[];
   request(path: string, init?: RequestInit & { jar?: CookieJar }): Promise<Response>;
-  /** Drives start -> consent -> callback and returns the resulting cookie jar. */
+  /**
+   * Drives start -> consent -> callback and returns the resulting cookie jar.
+   *
+   * See {@link LoginOptions} for what the third argument carries. It is an object
+   * rather than two more positional parameters because `login(p, profile,
+   * undefined, path)` — a call site padding past a jar it does not care about — is
+   * a shape that gets one `undefined` wrong exactly once and then passes a cookie
+   * jar as a return path.
+   */
   login(
     provider: AuthProvider,
     profile: FakeProfile,
-    jar?: CookieJar,
+    options?: LoginOptions,
   ): Promise<{ jar: CookieJar; callback: Response }>;
   close(): Promise<void>;
+}
+
+/**
+ * Everything optional about one scripted login.
+ *
+ * The docblock lives HERE and nowhere else. It used to be duplicated almost word
+ * for word on the interface member and on the implementation, which is two places
+ * to update and therefore one place that goes stale.
+ */
+export interface LoginOptions {
+  /** Reuse a jar to sign in as a second person in the same browser. */
+  readonly jar?: CookieJar;
+  /**
+   * The RAW value of the `quay-ve` parameter on the `/start` leg — not a
+   * validated one.
+   *
+   * The point of driving it from here is that a hostile spelling (`//evil.com`,
+   * an absolute URL, an encoded slash) travels the same road a real proposal
+   * does: real HTTP, Fastify's own query decoding, a real signed state cookie and
+   * a real callback. Asserting against the validator in isolation misses every
+   * difference the transport introduces. Omitted means the parameter is absent
+   * altogether, which is the shape every call site written before Story 1.3c has.
+   */
+  readonly returnPath?: string;
 }
 
 const WEB_BASE_URL = 'http://127.0.0.1:39999';
@@ -388,13 +420,19 @@ export async function createAuthHarness(options: HarnessOptions = {}): Promise<A
     return response;
   };
 
+  /** A whole login, `/start` through `/callback`. See {@link LoginOptions}. */
   const login = async (
     provider: AuthProvider,
     profile: FakeProfile,
-    existing?: CookieJar,
+    options: LoginOptions = {},
   ): Promise<{ jar: CookieJar; callback: Response }> => {
-    const jar = existing ?? new CookieJar();
-    const started = await request(`/v1/auth/${provider}/start`, { jar });
+    const { returnPath } = options;
+    const jar = options.jar ?? new CookieJar();
+    const startPath =
+      returnPath === undefined
+        ? `/v1/auth/${provider}/start`
+        : `/v1/auth/${provider}/start?${SIGN_IN_RETURN_PATH_QUERY_PARAM}=${encodeURIComponent(returnPath)}`;
+    const started = await request(startPath, { jar });
     const location = started.headers.get('location');
     if (started.status !== 302 || location === null) {
       throw new Error(`start did not redirect: ${started.status}`);

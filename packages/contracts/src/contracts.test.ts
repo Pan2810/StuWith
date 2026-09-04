@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { auditEventSchema, toAuditWireTimestamp } from './audit';
 import {
   MAX_SIGN_IN_RETRY_AFTER_SECONDS,
+  MAX_SIGN_IN_RETURN_PATH_LENGTH,
   RATE_LIMITED_MESSAGE,
   MIN_SIGN_IN_RETRY_AFTER_SECONDS,
   SIGN_IN_OUTCOMES,
+  SIGN_IN_RETURN_PATH_QUERY_PARAM,
   SIGN_IN_OUTCOME_QUERY_PARAM,
   SIGN_IN_RETRY_AFTER_QUERY_PARAM,
   isSignInOutcome,
@@ -168,6 +170,49 @@ describe('OpenAPI emission (AD-13)', () => {
     // `email`, so the POST is the normal case for one of the four providers. A
     // document with only `get:` tells an integrator it is unsupported.
     expect(Object.keys(callback).sort()).toEqual(['get', 'post']);
+  });
+
+  /**
+   * The return path parameter is documented on EXACTLY one leg, and the document
+   * is the only place an integrator can learn that.
+   *
+   * Deleting the whole `parameters` block from `/start` used to leave every gate
+   * green: nothing read the emitted document for this endpoint, so the one thing
+   * `openapi.ts` exists to publish was unpinned. The `/callback` half is the more
+   * important of the two — a client that passed `quay-ve` there would find it
+   * silently ignored, and "silently ignored" is what the whole signed-state design
+   * depends on staying true.
+   */
+  describe('the return path parameter', () => {
+    const parametersOf = (path: string, method: 'get' | 'post') => {
+      const operation = (doc.paths[path] as Record<string, unknown>)[method] as {
+        parameters?: ReadonlyArray<{ name: string; in: string; schema?: { maxLength?: number } }>;
+      };
+      return operation.parameters ?? [];
+    };
+
+    it('is offered on /start, as a query parameter, under the contract name', () => {
+      const parameter = parametersOf('/v1/auth/{provider}/start', 'get').find(
+        (candidate) => candidate.name === SIGN_IN_RETURN_PATH_QUERY_PARAM,
+      );
+
+      expect(parameter).toBeDefined();
+      expect(parameter?.in).toBe('query');
+      // The ceiling travels with it: a client that truncates at its own guess is a
+      // client whose long paths vanish without explanation.
+      expect(parameter?.schema?.maxLength).toBe(MAX_SIGN_IN_RETURN_PATH_LENGTH);
+    });
+
+    it.each([
+      ['get' as const],
+      ['post' as const],
+    ])('is NOT offered on the %s callback, on either method', (method) => {
+      const named = parametersOf('/v1/auth/{provider}/callback', method).map(
+        (parameter) => parameter.name,
+      );
+
+      expect(named).not.toContain(SIGN_IN_RETURN_PATH_QUERY_PARAM);
+    });
   });
 
   it('emits the audit timestamp as a JSON string, not an unrepresentable Date', () => {
