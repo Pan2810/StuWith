@@ -12,6 +12,16 @@ const nextConfig: NextConfig = {
   typescript: { ignoreBuildErrors: false },
   turbopack: { root: workspaceRoot },
   outputFileTracingRoot: workspaceRoot,
+  /**
+   * Normally `.next`; overridden only by the E2E suite.
+   *
+   * `NEXT_PUBLIC_API_BASE_URL` is inlined into the browser bundle at BUILD time, so
+   * an E2E run that points the app at its fake API has to build its own copy —
+   * restarting with a different value changes nothing. Without a separate directory
+   * that build would overwrite the one a developer is running, and the overwrite is
+   * invisible until a page starts calling a port that is not there.
+   */
+  distDir: process.env['NEXT_DIST_DIR'] ?? '.next',
 };
 
 export default nextConfig;

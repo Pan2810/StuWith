@@ -14,6 +14,7 @@ import {
   errorEnvelopeSchema,
   currentUserSchema,
   type SignInOutcome,
+  SESSION_REFRESHED_STATUS,
 } from '@stuwith/contracts';
 import { RequestMethod } from '@nestjs/common';
 // The metadata KEYS Nest itself writes with. They happen to be `'path'` and
@@ -646,7 +647,7 @@ describe('Matrix: refresh rotation', () => {
     const staleJar = jar.clone();
 
     const refreshed = await harness.request('/v1/auth/refresh', { method: 'POST', jar });
-    expect(refreshed.status).toBe(204);
+    expect(refreshed.status).toBe(SESSION_REFRESHED_STATUS);
     expect(jar.get(SESSION_COOKIE_NAME)).not.toBe(before);
 
     expect((await harness.request(AUTH_ME_PATH, { jar })).status).toBe(200);
@@ -667,7 +668,9 @@ describe('Matrix: a refresh token that comes back after rotation', () => {
     const { jar } = await harness.login('google', googleProfile);
     const stolen = jar.clone();
 
-    expect((await harness.request('/v1/auth/refresh', { method: 'POST', jar })).status).toBe(204);
+    expect((await harness.request('/v1/auth/refresh', { method: 'POST', jar })).status).toBe(
+      SESSION_REFRESHED_STATUS,
+    );
 
     // The attacker replays the refresh token they captured before rotation.
     const replay = await harness.request('/v1/auth/refresh', { method: 'POST', jar: stolen });
@@ -700,7 +703,9 @@ describe('Matrix: an expired session', () => {
     const { jar } = await harness.login('google', googleProfile);
     harness.clock.advance((harness.config.SESSION_TTL_SECONDS + 1) * 1000);
 
-    expect((await harness.request('/v1/auth/refresh', { method: 'POST', jar })).status).toBe(204);
+    expect((await harness.request('/v1/auth/refresh', { method: 'POST', jar })).status).toBe(
+      SESSION_REFRESHED_STATUS,
+    );
     expect((await harness.request(AUTH_ME_PATH, { jar })).status).toBe(200);
   });
 

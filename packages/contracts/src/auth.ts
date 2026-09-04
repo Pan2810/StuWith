@@ -197,6 +197,34 @@ export const SIGN_IN_PATHNAME = '/dang-nhap';
 export const AUTH_REFRESH_PATH = '/v1/auth/refresh';
 
 /**
+ * The three statuses the session seam turns on, spelled once for both processes.
+ *
+ * They were declared inside `apps/web/src/app/session-expiry.ts`, and the renewal
+ * status was WRONG there: `apps/api` answers `204` on a successful refresh
+ * (`auth.flow.test.ts` asserts it in four places) while the seam accepted only
+ * `200`. Every renewal therefore reported failure, and Story 1.3c's whole promise —
+ * renew silently, disturb somebody only as a last resort — was dead on the real
+ * product while both sides' unit tests stayed green: the API suite asserted 204,
+ * the web suite stubbed 200, and nothing ran the middle.
+ *
+ * A status a client branches on IS part of the `/v1` contract (AD-13), the same as
+ * a path or a cookie name, and it breaks the same silent way when each side keeps
+ * its own copy.
+ */
+export const SESSION_REFRESHED_STATUS = 204;
+
+/** The status that means "there is no live session behind this call any more". */
+export const SESSION_EXPIRED_STATUS = 401;
+
+/**
+ * The status `/v1/auth/refresh` answers when the rate limiter has had enough.
+ *
+ * It matters separately from 401 because it is the one refusal that says "asking
+ * again is the problem" rather than "sign in again".
+ */
+export const RATE_LIMITED_STATUS = 429;
+
+/**
  * `GET /v1/auth/me`, spelled once.
  *
  * Here for the same reason {@link AUTH_REFRESH_PATH} is, and it was the last `/v1`

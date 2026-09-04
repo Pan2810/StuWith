@@ -134,7 +134,12 @@ module.exports = {
     // have gone green together, in exactly the scenario the rule exists for.
     doNotFollow: { path: 'node_modules' },
     exclude: {
-      path: '(^|/)(dist|\\.next|\\.tsbuild|coverage|migrations|seeds)(/|$)',
+      // `\\.next(-e2e)?` and not `\\.next.*`: the E2E suite builds `apps/web` into
+      // `.next-e2e` so it cannot overwrite a developer's `.next`, and the anchored
+      // spelling let 46 build artefacts into the graph as orphan warnings. Naming
+      // the one extra directory keeps the exclusion a decision rather than a
+      // prefix that would also swallow a real source folder starting with `.next`.
+      path: '(^|/)(dist|\\.next(-e2e)?|\\.tsbuild|coverage|migrations|seeds)(/|$)',
     },
     // Required to see `import type` and type-only re-exports — the exact routes a
     // reference graph alone would let through.

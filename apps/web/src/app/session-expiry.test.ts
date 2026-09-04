@@ -2,6 +2,7 @@ import { AUTH_REFRESH_PATH, SIGN_IN_RETURN_PATH_QUERY_PARAM } from '@stuwith/con
 import { describe, expect, it } from 'vitest';
 import {
   SESSION_EXPIRED_STATUS,
+  SESSION_REFRESHED_STATUS,
   SIGN_IN_PATHNAME,
   authorizedCall,
   createSessionRefresher,
@@ -421,7 +422,7 @@ describe('Matrix: the renewal that happens before anybody is disturbed', () => {
 
 describe('Matrix: several 401s at once share ONE renewal', () => {
   it('sends exactly one POST /v1/auth/refresh for two simultaneous callers', async () => {
-    const { fetchImpl, calls } = scriptedFetch([answering(200)]);
+    const { fetchImpl, calls } = scriptedFetch([answering(SESSION_REFRESHED_STATUS)]);
     const renew = createSessionRefresher({ fetchImpl, apiBaseUrl: 'https://api.test' });
 
     const [first, second] = await Promise.all([renew(), renew()]);
@@ -447,7 +448,7 @@ describe('Matrix: several 401s at once share ONE renewal', () => {
     const renew = createSessionRefresher({
       fetchImpl: (input) => {
         refreshCalls.push(input);
-        return Promise.resolve(answering(200));
+        return Promise.resolve(answering(SESSION_REFRESHED_STATUS));
       },
       apiBaseUrl: '',
     });
@@ -469,7 +470,7 @@ describe('Matrix: several 401s at once share ONE renewal', () => {
   it('renews again for a LATER expiry, once the first renewal has finished', async () => {
     // The single-flight rule is about concurrency, not about a lifetime budget: an
     // hour later the access token ages out again and that is an ordinary renewal.
-    const { fetchImpl, calls } = scriptedFetch([answering(200), answering(200)]);
+    const { fetchImpl, calls } = scriptedFetch([answering(SESSION_REFRESHED_STATUS), answering(SESSION_REFRESHED_STATUS)]);
     const renew = createSessionRefresher({ fetchImpl, apiBaseUrl: '' });
 
     expect(await renew()).toBe(true);
@@ -493,7 +494,7 @@ describe('Matrix: several 401s at once share ONE renewal', () => {
   it('treats a network failure as no answer at all, and will try again', async () => {
     // Nothing was answered, so nothing was learnt: the session may be perfectly
     // alive and the next 401 deserves a real attempt.
-    const { fetchImpl, calls } = scriptedFetch([new Error('offline'), answering(200)]);
+    const { fetchImpl, calls } = scriptedFetch([new Error('offline'), answering(SESSION_REFRESHED_STATUS)]);
     const renew = createSessionRefresher({ fetchImpl, apiBaseUrl: '' });
 
     expect(await renew()).toBe(false);
@@ -502,7 +503,7 @@ describe('Matrix: several 401s at once share ONE renewal', () => {
   });
 
   it('builds the renewal URL from the contract path and a normalised base', async () => {
-    const { fetchImpl, calls } = scriptedFetch([answering(200)]);
+    const { fetchImpl, calls } = scriptedFetch([answering(SESSION_REFRESHED_STATUS)]);
     const renew = createSessionRefresher({ fetchImpl, apiBaseUrl: '/' });
 
     await renew();

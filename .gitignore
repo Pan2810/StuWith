@@ -5,6 +5,9 @@ node_modules/
 # Build output
 dist/
 .next/
+# The E2E build of apps/web. Separate from .next so `pnpm test:e2e` cannot
+# overwrite the bundle a developer is running (see apps/web/next.config.ts).
+.next-e2e/
 out/
 *.tsbuildinfo
 .tsbuild/
