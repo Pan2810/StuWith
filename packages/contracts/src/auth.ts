@@ -430,6 +430,50 @@ export const AGE_VOCABULARY = [
 ] as const;
 
 /**
+ * The sentence behind every `unauthenticated` envelope `/v1` produces, declared
+ * ONCE.
+ *
+ * It lived as a private constant inside `AuthService`, which was fine while that
+ * file was the only thing that could answer 401. Story 1.5 adds a GUARD that
+ * answers 401 before any handler runs — and the two 401s have to be
+ * indistinguishable, because a caller that can tell "no session" from "no session,
+ * refused by the money gate" has been told something about a person the system has
+ * not identified. One literal, no second copy to edit alone.
+ *
+ * It says what happened and what to do. It does not say which of the three
+ * reasons applied — no cookie, an expired session, a profile that no longer
+ * exists — because distinguishing them tells somebody probing which of the three
+ * they achieved.
+ */
+export const UNAUTHENTICATED_MESSAGE = 'Phiên đăng nhập không hợp lệ. Hãy thử đăng nhập lại.';
+
+/**
+ * The sentence somebody reads when an inbound-money endpoint refuses them.
+ *
+ * ## What it must not contain, and why that is a rule rather than a preference
+ *
+ * Not their age, not their date of birth, not the threshold, not the word for
+ * either side of it — {@link AGE_VOCABULARY} is the list, and
+ * `packages/contracts/src/auth.test.ts` holds this sentence against it. The date
+ * of birth is PII under the epic's own definition and the release gate is "no PII
+ * leaves the API"; the THRESHOLD is a separate matter, and the reason is the same
+ * one {@link DATE_OF_BIRTH_INVALID_MESSAGE} gives: telling somebody which side of
+ * it they fell on is free calibration for anybody who would rather be on the other
+ * side, and the only way back across this particular line is to lie about a value
+ * that is written exactly once.
+ *
+ * So it states the refusal and the direction it applies to, and stops. "Nhận coin
+ * từ người dùng khác" is the whole scope of the gate — coins the system grants and
+ * coins this person SPENDS are untouched — and naming it keeps the refusal from
+ * reading as "your account is suspended", which it is not.
+ *
+ * AD-13 puts it here rather than in `apps/api`: Story 3.3 hides the controls this
+ * refusal belongs to, and it will need the same sentence.
+ */
+export const MONEY_IN_FORBIDDEN_MESSAGE =
+  'Tài khoản của bạn chưa được phép nhận coin từ người dùng khác.';
+
+/**
  * How the last sign-in attempt ended, in the vocabulary the login page is allowed
  * to read.
  *

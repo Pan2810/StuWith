@@ -155,6 +155,37 @@ product code.
   `tests/gates/config-fail-fast.test.ts` spawns the real built `apps/api` with a
   variable removed and asserts the port never accepts a connection. Moving
   `loadApiConfig()` below `app.listen()` fails there and nowhere else.
+- **The money gate is a SECOND global guard, and its posture is the opposite of the
+  rate limiter's.** `MoneyGateGuard` (`apps/api/src/money/`) is registered as an
+  `APP_GUARD` and is a true no-op on any route without `@MoneyIn()` — it returns
+  before it fetches the request, so an unmarked route reads no cookie and touches
+  no database. On a marked route it **fails closed, with no fail-open branch**: a
+  date of birth that is absent, unusable or under eighteen is 403; a session store
+  that cannot answer propagates and becomes a 500. The trade that makes
+  `RateLimitGuard`'s fail-open defensible — an unchecked login flood for the length
+  of a Valkey incident — has no counterpart when what would be let through is money
+  moving to a child. Do not add one, and do not turn a store fault into a 403: that
+  tells somebody they are too young when the truth is that we are broken.
+
+  Three things about `@MoneyIn()` are load-bearing and none is obvious from the
+  call site:
+  - it is typed `MethodDecorator`, so writing it on a class is a compile error. A
+    class-level mark would gate a money controller's READ routes too, and "you may
+    not look at your own Số dư" is a refusal nobody would think to test for;
+  - it gates the **CALLER**, because the guard asks `canReceiveMoney(caller)`. It is
+    correct only where the caller IS the recipient. On an endpoint where a sender
+    posts a payment it gets the rule backwards in both directions at once —
+    refusing a seventeen-year-old payer, and letting an adult pay a minor. Epic 3
+    owns that decision; `deferred-work.md` records it;
+  - the age rule itself is `canReceiveMoney` in `packages/domain`, which is one call
+    to `isAdult`. There is no threshold, no date arithmetic and no reading of
+    `dateOfBirth` anywhere in `apps/api`. Two age rules on one column is what
+    `date-of-birth.ts` cost four review rounds to remove; a NestJS guard is the
+    worst place for the second one, because the realtime process cannot read it and
+    no test can execute it without a request.
+
+  `apps/realtime-gateway` has no equivalent gate today. That is recorded, not
+  decided.
 - **AD-12 — the audit trail is append-only.** No role holds `DELETE`. Do not add one.
 - **AD-15 — an inbound `x-request-id` is never trusted verbatim.** It is stamped on
   every log line for the request and echoed in a response header, so a raw value

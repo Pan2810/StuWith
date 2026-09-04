@@ -9,6 +9,7 @@ import {
   DATE_OF_BIRTH_INVALID_MESSAGE,
   SIGN_IN_OUTCOME_QUERY_PARAM,
   SIGN_IN_PATHNAME,
+  UNAUTHENTICATED_MESSAGE,
   currentUserSchema,
   isAuthProvider,
   makeError,
@@ -60,6 +61,7 @@ import {
   sessionCookie,
 } from './cookies';
 import { redirectUriFor, type ProviderRegistry } from './providers/registry';
+import { SESSION_AUTHENTICATOR, SessionAuthenticator } from './session-authenticator';
 import { ProviderExchangeError } from './providers/types';
 import {
   createPkcePair,
@@ -158,13 +160,17 @@ const DEFAULT_RETURN_PATH = SIGN_IN_PATHNAME;
  * read lives in `apps/web`.
  */
 const MESSAGES = {
-  unauthenticated: 'Phiên đăng nhập không hợp lệ. Hãy thử đăng nhập lại.',
   notFound: 'Không tìm thấy nội dung.',
   upstreamUnavailable: 'Chưa kết nối được với dịch vụ đăng nhập. Hãy thử lại sau ít phút.',
 } as const;
 
+/**
+ * The SAME sentence `MoneyGateGuard` answers with, which is why it moved to
+ * `packages/contracts`. Two 401s that a caller can tell apart is a caller being
+ * told something about a person the system has not identified.
+ */
 function unauthenticated(): ErrorEnvelope {
-  return makeError('unauthenticated', MESSAGES.unauthenticated);
+  return makeError('unauthenticated', UNAUTHENTICATED_MESSAGE);
 }
 
 function notFound(): ErrorEnvelope {
@@ -219,6 +225,16 @@ export class AuthService {
     // Shared with the guard, deliberately: one outage must produce one log line,
     // not one per request from each of the two places that touch the store.
     private readonly health: RateLimitHealth,
+    /**
+     * The SAME instance `MoneyGateGuard` authenticates through — built once in
+     * `AppModule.forConfig` and handed to both modules.
+     *
+     * It used to be a private method here. A guard runs before the handler, so
+     * the money gate would otherwise have had to answer "who is calling" a second
+     * way, and a gate that resolves one person while the handler serves another
+     * is not a gate at all.
+     */
+    @Inject(SESSION_AUTHENTICATOR) private readonly authenticator: SessionAuthenticator,
   ) {
     this.identity = runtime.identity;
     this.sessions = runtime.sessions;
@@ -631,13 +647,16 @@ export class AuthService {
    * out of their own session" row of the story matrix.
    */
   async me(cookieHeader: unknown): Promise<AuthOutcome> {
-    const user = await this.userFromSession(cookieHeader);
-    if (user === null) {
+    const caller = await this.authenticator.authenticate(cookieHeader);
+    if (caller === null) {
       return { kind: 'json', status: 401, body: unauthenticated(), cookies: [] };
     }
 
-    // Read ONCE, here, and handed down as an instant. See `toCurrentUser`.
-    const now = this.clock.now();
+    // Read ONCE, by the authenticator, and handed down as an instant. See
+    // `toCurrentUser`. It is the same instant the session's expiry was judged
+    // against, so "the session is live" and "this profile is complete" cannot
+    // answer about two different days.
+    const { user, at: now } = caller;
     this.reportUnusableDateOfBirth(user, now);
     return { kind: 'json', status: 200, body: toCurrentUser(user, now), cookies: [] };
   }
@@ -700,8 +719,8 @@ export class AuthService {
    * not part of this epic.
    */
   async recordDateOfBirth(cookieHeader: unknown, body: unknown): Promise<AuthOutcome> {
-    const user = await this.userFromSession(cookieHeader);
-    if (user === null) {
+    const caller = await this.authenticator.authenticate(cookieHeader);
+    if (caller === null) {
       return { kind: 'json', status: 401, body: unauthenticated(), cookies: [] };
     }
 
@@ -712,7 +731,11 @@ export class AuthService {
     // a story whose central principle is that a value must not have two readings —
     // and the gap between them straddles a midnight, so a declaration made in that
     // millisecond is judged against one day and stamped with the next.
-    const now = this.clock.now();
+    //
+    // It is now the instant the SESSION was resolved at, which folds the third
+    // reading in as well: authenticating and judging the submitted day are two
+    // questions about one request, and they answer about the same millisecond.
+    const { user, at: now } = caller;
 
     // `unknown` all the way in: a JSON body is whatever the caller sent, and
     // `parseDateOfBirth` is total over `unknown` for exactly this reason.
@@ -761,36 +784,6 @@ export class AuthService {
       body: toCurrentUser(outcome.user, now),
       cookies: [],
     };
-  }
-
-  /**
-   * The person behind a session cookie, or `null` for every reason there is.
-   *
-   * Extracted because `/me` and the declaration endpoint have to authenticate
-   * IDENTICALLY. Written twice, the second copy is where a missing expiry check
-   * or a different hash eventually appears, and the difference would show up as
-   * one endpoint accepting a session the other rejects.
-   *
-   * It collapses "no cookie", "unknown or expired session" and "the session
-   * points at a user that no longer exists" into one `null` on purpose: all three
-   * are a 401 to the caller, and distinguishing them in the response tells
-   * somebody probing which of the three they achieved.
-   */
-  private async userFromSession(cookieHeader: unknown): Promise<User | null> {
-    const presented = parseCookies(cookieHeader)[SESSION_COOKIE_NAME];
-    if (presented === undefined) {
-      return null;
-    }
-
-    const read = await this.sessions.readByAccessTokenHash(
-      this.hash(presented),
-      this.clock.now(),
-    );
-    if (!read.ok) {
-      return null;
-    }
-
-    return this.identity.findUserById(read.session.userId);
   }
 
   /**

@@ -15,6 +15,12 @@ import {
 } from './auth/__testing__/auth-harness';
 import { SIGN_IN_FAILURE_REASONS } from './auth/audit';
 import { buildLoggerParams } from './logging';
+import {
+  MONEY_FIXTURE_FAILURE,
+  MONEY_FIXTURE_IN_PATH,
+  MONEY_FIXTURE_THROWS_PATH,
+  MoneyFixtureController,
+} from './money/__testing__/money-fixture.controller';
 
 /**
  * The redaction list lives in packages/config and is tested there. What is tested
@@ -463,5 +469,192 @@ describe('a declared date of birth leaks nothing into a real pino (AD-15)', () =
     // assertions above would pass against a logger that writes nothing at all.
     expect(output).toContain('request_id');
     expect(output).toContain('/v1/auth/me');
+  });
+});
+
+/**
+ * Story 1.5's half of the same claim, and the reason it is here rather than in
+ * `deferred-work.md`.
+ *
+ * The money gate creates a NEW route by which a date of birth can reach a log
+ * line, and it is not one any earlier story had: `MoneyGateGuard` resolves the
+ * caller and leaves the whole `User` — `dateOfBirth` included — ON THE REQUEST
+ * OBJECT, which is the one object a web framework serialises without being asked.
+ * The spec's frozen boundary says "không ngày sinh trong log ở bất kỳ mức nào
+ * (AD-15)", and that sentence is about the surface as it is today, not as it was
+ * before the guard existed.
+ *
+ * ## What is already closed structurally, measured rather than assumed
+ *
+ * Two of the three obvious leak routes cannot fire today, and both were checked by
+ * mutation rather than reasoned about:
+ *
+ * - The caller is stored under a `Symbol`, which `Object.keys` and
+ *   `JSON.stringify` skip, so no generic serialisation of that object reaches it.
+ * - pino's `req` serialiser in `logging.ts` never sees this object AT ALL.
+ *   `pino-http` serialises the raw Node request; the guard attaches to the FASTIFY
+ *   request that wraps it. A serialiser rewritten to walk `Object.getOwnPropertySymbols(req)`
+ *   and read `.user.dateOfBirth` was tried here and changed nothing — it is looking
+ *   at a different object.
+ *
+ * So the honest description of what this suite catches is narrower than "any
+ * serialiser", and saying so is the point: the live route is anything in
+ * `apps/api` that reads the resolved caller into a MESSAGE, a metadata object or
+ * an error — the value is now in scope for every handler, filter and interceptor
+ * that runs after the guard, which it was not before this story. Making the
+ * fixture's throw carry the date turns two of the examples below red, which is how
+ * that was confirmed to be a live assertion rather than a decorative one.
+ *
+ * Three requests, chosen because each hands the request object to a different
+ * piece of machinery:
+ *
+ *  1. **Allowed (200).** The guard attached the caller and the handler ran. The
+ *     ordinary path, and the one every later money endpoint will take.
+ *  2. **Refused (403).** The user has been LOADED — `canReceiveMoney` was asked
+ *     about them — but the throw happens before `attachMoneyInCaller`, so the
+ *     caller never reaches the request object on this path. What is in scope at the
+ *     moment the refusal is built is the local variable inside `canActivate`, which
+ *     is the shape a hand-written "helpful" refusal message would leak from, and
+ *     the exception layer serialising a request the guard has already read.
+ *  3. **Failed (500).** An unhandled throw inside a gated handler, where Nest's own
+ *     exception layer writes an error line nobody in this repository wrote. This is
+ *     the only one of the three where the logging is out of our hands.
+ */
+describe('a request through the money gate leaks nothing into a real pino (AD-15)', () => {
+  const adult = {
+    subject: 'google-subject-money-gate-adult',
+    email: 'money.gate.adult@fpt.edu.vn',
+    name: 'Money Gate Adult',
+    picture: 'https://lh3.googleusercontent.com/a/mga',
+  };
+  const minor = {
+    subject: 'google-subject-money-gate-minor',
+    email: 'money.gate.minor@fpt.edu.vn',
+    name: 'Money Gate Minor',
+    picture: 'https://lh3.googleusercontent.com/a/mgm',
+  };
+
+  /**
+   * Two REAL dates for the two profiles being logged in, distinctive enough that a
+   * substring match cannot hit either by accident — and, more importantly, dates
+   * that are actually stored on the users whose requests are being made. A
+   * random-looking string that was never written to a row would make every
+   * assertion below pass for the wrong reason.
+   *
+   * The harness clock is fixed at 2026-09-04, so `1988-11-07` is an adult for ever
+   * and `2012-04-17` is under eighteen for ever.
+   */
+  const ADULT_DOB = '1988-11-07';
+  const MINOR_DOB = '2012-04-17';
+
+  let harness: AuthHarness;
+  let output: string;
+  let allowed: Response;
+  let refused: Response;
+  let failed: Response;
+
+  const declare = (jar: CookieJar, dateOfBirth: string): Promise<Response> =>
+    harness.request(AUTH_DATE_OF_BIRTH_PATH, {
+      method: 'POST',
+      jar,
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ date_of_birth: dateOfBirth }),
+    });
+
+  beforeAll(async () => {
+    harness = await createAuthHarness({
+      captureLogs: true,
+      controllers: [MoneyFixtureController],
+    });
+
+    const grownUp = await harness.login('google', adult);
+    expect((await declare(grownUp.jar, ADULT_DOB)).status).toBe(200);
+
+    const child = await harness.login('google', minor);
+    expect((await declare(child.jar, MINOR_DOB)).status).toBe(200);
+
+    // 1. Allowed: the guard attached the caller, the handler ran.
+    allowed = await harness.request(MONEY_FIXTURE_IN_PATH, {
+      method: 'POST',
+      jar: grownUp.jar,
+    });
+    // 2. Refused: the 403 is built from a request whose user has been loaded.
+    refused = await harness.request(MONEY_FIXTURE_IN_PATH, {
+      method: 'POST',
+      jar: child.jar,
+    });
+    // 3. Failed: an unhandled throw, logged by machinery nobody here wrote.
+    failed = await harness.request(MONEY_FIXTURE_THROWS_PATH, {
+      method: 'POST',
+      jar: grownUp.jar,
+    });
+
+    output = harness.logLines.join('\n');
+  }, 60_000);
+
+  afterAll(async () => {
+    await harness?.close();
+  });
+
+  it('actually drove all three paths — otherwise every assertion below is vacuous', () => {
+    // The golden rule of this file: a "does not contain" test passes perfectly
+    // against a run in which nothing happened. These are the assertions that make
+    // the rest mean something.
+    expect(allowed.status).toBe(200);
+    expect(refused.status).toBe(403);
+    expect(failed.status).toBe(500);
+    expect(harness.logLines.length).toBeGreaterThan(0);
+    expect(output).toContain(MONEY_FIXTURE_IN_PATH);
+    expect(output).toContain(MONEY_FIXTURE_THROWS_PATH);
+    // The 500 really was logged as an error, so path 3 exercised the branch it was
+    // written for rather than being swallowed somewhere silent.
+    expect(output).toContain(MONEY_FIXTURE_FAILURE);
+  });
+
+  it('never writes either declared date, on the allowed, refused or failed path', () => {
+    expect(output).not.toContain(ADULT_DOB);
+    expect(output).not.toContain(MINOR_DOB);
+  });
+
+  it('never writes a date-shaped fragment of either year', () => {
+    /**
+     * A partially-redacted structure leaves the year behind, and a year alone is
+     * enough to narrow somebody down.
+     *
+     * Anchored to a date-SHAPED token rather than asserted as a bare substring:
+     * the harness listens on an ephemeral port, and a port like `51988` would
+     * otherwise fail this for a reason that has nothing to do with a date of
+     * birth. The anchored form still catches every spelling the product could
+     * produce, because `User.dateOfBirth` is only ever `YYYY-MM-DD`.
+     */
+    expect(output).not.toMatch(/\b1988-\d{2}/);
+    expect(output).not.toMatch(/\b2012-\d{2}/);
+  });
+
+  it('never writes the field name with a value beside it, in either vocabulary', () => {
+    // `date_of_birth` on the wire, `dateOfBirth` on the domain type — and it is the
+    // camelCase half that this story put on the request object.
+    expect(output).not.toMatch(/"date_of_birth"\s*:\s*"/);
+    expect(output).not.toMatch(/"dateOfBirth"\s*:\s*"/);
+  });
+
+  it('never writes the caller the guard attached, by any of its parts', () => {
+    // The rest of the object, not just the date. `User` also carries the email,
+    // which is PII under the same release gate, and the symbol's own description
+    // is what would appear as a key beside whatever dragged it into a line.
+    expect(output).not.toContain('money-in-caller');
+    expect(output).not.toContain(adult.email);
+    expect(output).not.toContain(minor.email);
+  });
+
+  it('still records the paths and the request id, so the log is worth keeping', () => {
+    // The redaction has to stop short of making the log useless: without this, the
+    // assertions above would pass against a logger that writes nothing at all.
+    // The 1.4 suite this mirrors asserts the PATH as well as the id, and the name
+    // of this example promised the same thing before it did so.
+    expect(output).toContain('request_id');
+    expect(output).toContain(MONEY_FIXTURE_IN_PATH);
+    expect(output).toContain(MONEY_FIXTURE_THROWS_PATH);
+    expect(output).toContain(AUTH_DATE_OF_BIRTH_PATH);
   });
 });

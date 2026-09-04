@@ -9,10 +9,12 @@ import {
   DATE_OF_BIRTH_PATHNAME,
   MAX_SIGN_IN_RETURN_PATH_LENGTH,
   MIN_DATE_OF_BIRTH_YEAR,
+  MONEY_IN_FORBIDDEN_MESSAGE,
   SIGN_IN_OUTCOME_QUERY_PARAM,
   SIGN_IN_PATHNAME,
   SIGN_IN_RETRY_AFTER_QUERY_PARAM,
   SIGN_IN_RETURN_PATH_QUERY_PARAM,
+  UNAUTHENTICATED_MESSAGE,
   currentUserSchema,
   isCalendarDate,
   isOver18,
@@ -542,16 +544,46 @@ describe('the two Story 1.4 paths are distinct and go to different places', () =
     expect(AGE_VOCABULARY).toContain('trưởng thành');
   });
 
-  it.each(AGE_VOCABULARY)('says nothing about "%s" in either message', (word) => {
-    for (const message of [DATE_OF_BIRTH_INVALID_MESSAGE, DATE_OF_BIRTH_ALREADY_SET_MESSAGE]) {
+  /**
+   * Story 1.5 adds the third message the rule has to hold, and it is the one with
+   * the most to give away: the money gate refuses somebody FOR their age, so the
+   * refusal is the natural place for a helpful sentence to explain exactly which
+   * side of the threshold they fell on — which is free calibration for anybody who
+   * would rather be on the other side, and the only way back across that line is
+   * to lie about a value written exactly once.
+   */
+  it.each(AGE_VOCABULARY)('says nothing about "%s" in any of the three messages', (word) => {
+    for (const message of [
+      DATE_OF_BIRTH_INVALID_MESSAGE,
+      DATE_OF_BIRTH_ALREADY_SET_MESSAGE,
+      MONEY_IN_FORBIDDEN_MESSAGE,
+    ]) {
       expect(message.toLowerCase()).not.toContain(word.toLowerCase());
     }
   });
 
   it('still says something, so the rule above is not passing on empty strings', () => {
-    // Every "must not contain" needs a positive counterpart; two empty constants
+    // Every "must not contain" needs a positive counterpart; three empty constants
     // would satisfy the whole block above perfectly.
     expect(DATE_OF_BIRTH_INVALID_MESSAGE.length).toBeGreaterThan(20);
     expect(DATE_OF_BIRTH_ALREADY_SET_MESSAGE.length).toBeGreaterThan(20);
+    expect(MONEY_IN_FORBIDDEN_MESSAGE.length).toBeGreaterThan(20);
+  });
+
+  it('names the direction it refuses, so it cannot be read as a suspension', () => {
+    // "Nhận coin từ người dùng khác" is the whole scope of the gate. Spending
+    // coins and coins the SYSTEM grants are untouched, and a sentence that said
+    // only "không được phép" would read as an account-wide refusal.
+    expect(MONEY_IN_FORBIDDEN_MESSAGE).toContain('nhận coin');
+  });
+
+  it('keeps ONE sentence behind every unauthenticated envelope', () => {
+    // `/v1/auth/me` and the money gate both answer 401 with this. A caller that
+    // could tell the two apart would have been told something about a person the
+    // system has not identified.
+    expect(UNAUTHENTICATED_MESSAGE.length).toBeGreaterThan(20);
+    for (const word of AGE_VOCABULARY) {
+      expect(UNAUTHENTICATED_MESSAGE.toLowerCase()).not.toContain(word.toLowerCase());
+    }
   });
 });
