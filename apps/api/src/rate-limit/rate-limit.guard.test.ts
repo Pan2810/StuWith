@@ -1,6 +1,5 @@
 import { Logger, type ExecutionContext } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import type { ApiEnv } from '@stuwith/config';
 import type { RateLimitDecision, RateLimitPort } from '@stuwith/domain';
 import { RateLimitInputError, bruteForceLockKey, rateLimitKey } from '@stuwith/domain';
 import type { FastifyRequest } from 'fastify';
@@ -9,6 +8,7 @@ import { RateLimitHealth } from './rate-limit-health';
 import { RATE_LIMIT_ACTION_METADATA } from './rate-limit.decorator';
 import { RateLimitGuard } from './rate-limit.guard';
 import { RateLimitedException } from './rate-limited.exception';
+import { testApiEnv } from '../__testing__/api-env';
 
 /**
  * Every branch of the guard, without an HTTP server.
@@ -20,16 +20,18 @@ import { RateLimitedException } from './rate-limited.exception';
  * in. Those are asserted here.
  */
 
-const CONFIG = {
+const CONFIG = testApiEnv({
   TRUSTED_PROXY_ADDRESSES: 'none',
   SESSION_COOKIE_SECRET: 'guard-test-secret'.padEnd(48, 'x'),
-  RATE_LIMIT_IP_MAX: 5,
-  RATE_LIMIT_IP_WINDOW_SECONDS: 60,
-  RATE_LIMIT_USER_MAX: 3,
-  RATE_LIMIT_USER_WINDOW_SECONDS: 60,
-  RATE_LIMIT_BRUTE_FORCE_MAX: 2,
-  RATE_LIMIT_BRUTE_FORCE_LOCK_SECONDS: 900,
-} as unknown as ApiEnv;
+  // Small on purpose: the point of this file is what happens AT the limit, and
+  // production numbers would need thousands of requests to reach it.
+  RATE_LIMIT_IP_MAX: '5',
+  RATE_LIMIT_IP_WINDOW_SECONDS: '60',
+  RATE_LIMIT_USER_MAX: '3',
+  RATE_LIMIT_USER_WINDOW_SECONDS: '60',
+  RATE_LIMIT_BRUTE_FORCE_MAX: '2',
+  RATE_LIMIT_BRUTE_FORCE_LOCK_SECONDS: '900',
+});
 
 const CLIENT = '203.0.113.7';
 

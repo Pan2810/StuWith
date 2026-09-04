@@ -5,6 +5,7 @@ import { clientIpOf } from './rate-limit/request-identity';
 import Fastify from 'fastify';
 import { afterEach, describe, expect, it } from 'vitest';
 import { fastifyAdapterOptions } from './http-setup';
+import { testApiEnv } from './__testing__/api-env';
 
 /**
  * Three docblocks call `trustProxy` "the most dangerous setting in the story" and
@@ -24,7 +25,13 @@ import { fastifyAdapterOptions } from './http-setup';
  * an IPv4-mapped peer, an IPv6 peer.
  */
 function configWith(addresses: string): ApiEnv {
-  return { TRUSTED_PROXY_ADDRESSES: addresses } as unknown as ApiEnv;
+  // The base is a real parsed configuration; only this one field is set behind the
+  // schema's back, and deliberately. Two cases below pass a value the schema
+  // REJECTS — `0.0.0.0/0` and a lone comma — to prove `fastifyAdapterOptions`
+  // re-checks instead of trusting that startup already did. Routing them through
+  // `testApiEnv` would move the throw to the wrong place and stop testing the
+  // guard that matters.
+  return { ...testApiEnv(), TRUSTED_PROXY_ADDRESSES: addresses };
 }
 
 describe('fastifyAdapterOptions', () => {
