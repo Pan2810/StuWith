@@ -5,6 +5,7 @@ import {
   SESSION_COOKIE_NAME,
   SESSION_COOKIE_PATH,
   SIGN_IN_OUTCOME_QUERY_PARAM,
+  SIGN_IN_RETURN_PATH_QUERY_PARAM,
   errorEnvelopeSchema,
   currentUserSchema,
   type SignInOutcome,
@@ -1193,5 +1194,125 @@ describe('a provider that cannot be reached on the START leg', () => {
     ).text();
     expect(raw.toLowerCase()).not.toContain('google');
     expect(raw.toLowerCase()).not.toContain('discovery');
+  });
+});
+
+describe('Matrix: coming back to where you were standing', () => {
+  /**
+   * Story 1.3 part 3. A session that dies mid-visit must not cost somebody their
+   * place, and the mechanism is general on purpose — Epic 2's live room plugs into
+   * it, and nothing on this side knows a room exists.
+   *
+   * The security argument fits in one sentence: the destination is read from the
+   * SIGNED state and from nowhere else, so choosing one means signing one. The
+   * examples below are therefore not "does the validator work" —
+   * `packages/contracts/src/auth.test.ts` sweeps that by class — they are "does a
+   * hostile proposal that travels the real road, through real HTTP and a real
+   * signed cookie, end up anywhere other than our own origin".
+   */
+  const internalPath = '/phong-hoc/abc-123?tab=chat';
+
+  const startWith = (proposal: string, jar: CookieJar): Promise<Response> =>
+    harness.request(
+      `/v1/auth/google/start?${SIGN_IN_RETURN_PATH_QUERY_PARAM}=${encodeURIComponent(proposal)}`,
+      { jar },
+    );
+
+  it('sends the browser back to the proposed internal path', async () => {
+    const { callback } = await harness.login('google', googleProfile, undefined, internalPath);
+
+    expect(callback.status).toBe(302);
+    expect(callback.headers.get('location')).toBe(`${harness.webBaseUrl}${internalPath}`);
+  });
+
+  it('still clears that handshake cookie and still opens the session', async () => {
+    const { jar } = await harness.login('google', googleProfile, undefined, internalPath);
+
+    // A changed redirect target must not quietly cost the flow its cleanup.
+    expect(jar.namesMatching(OAUTH_STATE_COOKIE_PREFIX)).toEqual([]);
+    expect(jar.get(SESSION_COOKIE_NAME)).toBeDefined();
+    expect(jar.get(REFRESH_COOKIE_NAME)).toBeDefined();
+  });
+
+  it('lands on the login page when nothing was proposed', async () => {
+    const { callback } = await harness.login('google', googleProfile);
+
+    // The row this story must not break: `/start` exactly as it was before, and
+    // the destination it has always had.
+    expect(callback.headers.get('location')).toBe(`${harness.webBaseUrl}/dang-nhap`);
+  });
+
+  it.each([
+    ['an absolute URL', 'https://evil.com/x'],
+    ['protocol-relative', '//evil.com'],
+    ['a backslash spelling of protocol-relative', '/\\evil.com'],
+    ['an encoded slash pair', '/%2F%2Fevil.com'],
+    ['a parent segment', '/../x'],
+    ['userinfo punctuation', '/@evil.com'],
+    ['a scheme behind a leading slash', '/https://evil.com'],
+    ['an empty proposal', ''],
+  ])('drops %s and completes the login on our own origin', async (_label, proposal) => {
+    const { callback } = await harness.login('google', googleProfile, undefined, proposal);
+
+    // Not an error: the login SUCCEEDS and simply lands where it always did.
+    // Refusing would turn "here is a login link" into a way to break somebody's
+    // login, and the visitor did nothing wrong either way.
+    expect(callback.status).toBe(302);
+    const location = new URL(callback.headers.get('location') ?? '');
+    expect(location.origin).toBe(new URL(harness.webBaseUrl).origin);
+    expect(callback.headers.get('location')).toBe(`${harness.webBaseUrl}/dang-nhap`);
+    expect(location.toString()).not.toContain('evil.com');
+  });
+
+  it('never lets a proposal move the redirect onto the API origin', async () => {
+    // `OAUTH_REDIRECT_BASE_URL` is one line away from `WEB_BASE_URL` in the same
+    // config object, which is why every failure path has asserted the whole origin
+    // since Story 1.3 part 1. The success path is where a variable path made that
+    // breakable for the first time.
+    const { callback } = await harness.login('google', googleProfile, undefined, internalPath);
+
+    expect(new URL(callback.headers.get('location') ?? '').origin).not.toBe(
+      new URL(harness.baseUrl).origin,
+    );
+  });
+
+  it('writes nothing about a rejected proposal into the audit trail', async () => {
+    // `audit_events` is append-only (AD-12) — no role holds DELETE — so an
+    // attacker-chosen string that reached a row could never be taken back out.
+    const marker = 'kokoro-marker-9x';
+    await harness.login('google', googleProfile, undefined, `//evil.com/${marker}`);
+
+    expect(JSON.stringify(harness.audit.all())).not.toContain(marker);
+  });
+
+  it('drops the return path on the FAILURE branch, keeping exactly one parameter', async () => {
+    const jar = new CookieJar();
+    const started = await startWith(internalPath, jar);
+    expect(started.status).toBe(302);
+
+    // A real signed state, then a code the provider will not honour.
+    const authorized = harness.fake.authorize(started.headers.get('location') ?? '', googleProfile);
+    const target = new URL(authorized.callbackUrl);
+    target.searchParams.set('code', 'not-a-real-code');
+    const callback = await harness.request(target.toString(), { jar });
+
+    // `expectOutcomeRedirect` re-asserts the whole invariant, including "exactly
+    // one query parameter rides back" — which is what forbids the return path
+    // here even though this attempt signed a perfectly valid one.
+    const location = expectOutcomeRedirect(callback, 'that-bai');
+    expect(location.pathname).toBe('/dang-nhap');
+    expect(location.toString()).not.toContain('phong-hoc');
+  });
+
+  it('takes the ordinary failure road when the state has expired', async () => {
+    const jar = new CookieJar();
+    const started = await startWith(internalPath, jar);
+    const authorized = harness.fake.authorize(started.headers.get('location') ?? '', googleProfile);
+
+    // The signed path is bounded by the same clock the rest of the handshake is,
+    // so there is no separate lifetime for it to outlive.
+    harness.clock.advance((harness.config.OAUTH_STATE_TTL_SECONDS + 1) * 1000);
+
+    expectOutcomeRedirect(await harness.request(authorized.callbackUrl, { jar }), 'that-bai');
   });
 });

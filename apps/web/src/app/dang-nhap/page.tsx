@@ -2,6 +2,7 @@
 
 import type { CurrentUser } from '@stuwith/contracts';
 import { useCallback, useEffect, useState } from 'react';
+import { useAuthorizedFetch } from '../session-expiry-provider';
 import {
   SignInPanel,
   nextLocationAfterOutcome,
@@ -20,11 +21,13 @@ import {
  * the provider list and the response type both come from `@stuwith/contracts`, and
  * there is no business rule in this file.
  *
- * What is left here is only what needs a browser: two `fetch` calls, `setState`,
- * and `history.replaceState`. Every DECISION — which notice to show, whether the
- * login links may be offered, what a 429 from `/me` means — is an exported
- * function or component in `sign-in-outcome.tsx`, because this project has no DOM
- * environment and a decision left in this file is a decision no test can execute.
+ * What is left here is only what needs a browser: two calls through the shared
+ * `authorizedFetch` seam, `setState`, and `history.replaceState`. Every DECISION —
+ * which notice to show, whether the login links may be offered, what a 429 from
+ * `/me` means, whether a 401 raises the session-expiry dialog — is an exported
+ * function or component in `sign-in-outcome.tsx` or `session-expiry.ts`, because
+ * this project has no DOM environment and a decision left in this file is a
+ * decision no test can execute.
  */
 
 /**
@@ -50,14 +53,22 @@ export default function DangNhapPage() {
    */
   const [notice, setNotice] = useState<SignInNotice | null>(null);
 
+  /**
+   * The shared seam, not a bare `fetch`.
+   *
+   * It carries `credentials: 'include'` — the session lives in an `httpOnly`
+   * cookie and only travels on a credentialed request — and it reports the status
+   * so a 401 anywhere in the app raises the session-expiry dialog. Here that
+   * dialog is deliberately suppressed: `nextSessionExpiry` never opens it on
+   * `/dang-nhap`, because a 401 from `/v1/auth/me` on this page is the ordinary
+   * signed-out answer rather than a session that just died.
+   */
+  const authorizedFetch = useAuthorizedFetch();
+
   const load = useCallback(async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/v1/auth/me`, {
-        // The session lives in an httpOnly cookie, so it only travels if the
-        // request is explicitly credentialed.
-        credentials: 'include',
-      });
-      if (!response.ok) {
+      const response = await authorizedFetch(`${API_BASE_URL}/v1/auth/me`);
+      if (response.status !== 200) {
         /**
          * A 429 here is not "signed out", and treating it as one was the bug.
          *
@@ -75,13 +86,13 @@ export default function DangNhapPage() {
       }
       setState({ status: 'signed-in', user: (await response.json()) as CurrentUser });
     } catch {
-      // A network failure is not a signed-in state. Telling the person about a
-      // session that dropped mid-visit — the dialog, and returning them to where
-      // they were — was split out of Story 1.3 and is in `deferred-work.md`; the
-      // outcome banner is only about the attempt they just made.
+      // A network failure is not a signed-in state, and it is not an expired
+      // session either: nothing came back, so there is no status to report and the
+      // seam is never told. The outcome banner is only about the attempt the
+      // person just made.
       setState({ status: 'signed-out' });
     }
-  }, []);
+  }, [authorizedFetch]);
 
   useEffect(() => {
     void load();
@@ -112,9 +123,12 @@ export default function DangNhapPage() {
   }, []);
 
   const logout = useCallback(async () => {
-    await fetch(`${API_BASE_URL}/v1/auth/logout`, { method: 'POST', credentials: 'include' });
+    // Through the seam as well. Logging out answers 204, so it raises nothing
+    // today — but a `fetch` written by hand beside one that goes through the seam
+    // is how the next authenticated call in this file quietly skips it.
+    await authorizedFetch(`${API_BASE_URL}/v1/auth/logout`, { method: 'POST' });
     await load();
-  }, [load]);
+  }, [authorizedFetch, load]);
 
   return (
     <main>

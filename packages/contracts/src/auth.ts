@@ -230,3 +230,113 @@ export function parseSignInRetryAfterSeconds(raw: unknown): number | null {
   const parsed = Number(raw);
   return signInRetryAfterSecondsSchema.safeParse(parsed).success ? parsed : null;
 }
+
+/**
+ * Where to send the browser once a re-login succeeds, proposed by the client on
+ * the way IN to `/v1/auth/:provider/start`.
+ *
+ * Vietnamese, like `ket-qua` and `giay`, and for the same reason: the URL is a
+ * user-facing surface in a product whose default locale is Vietnamese.
+ *
+ * It is a PROPOSAL and it is only ever read at `/start`. The callback reads the
+ * path back out of the signed OAuth state, never out of a query parameter, a
+ * cookie or a header — an attacker cannot sign a payload, so an attacker cannot
+ * choose a destination. That asymmetry is the whole defence, and it only holds
+ * while this parameter appears on exactly one leg.
+ */
+export const SIGN_IN_RETURN_PATH_QUERY_PARAM = 'quay-ve';
+
+/**
+ * The ceiling on a proposed return path.
+ *
+ * It rides in a cookie (inside the signed OAuth state) on every `/v1/auth`
+ * request for the life of the handshake, and the browser sends every state cookie
+ * it holds on each of them. A long path from a URL anybody can write is therefore
+ * a way to grow the `Cookie` header until the server answers 431 instead of a
+ * login page — the same failure mode `deadAttemptCookies` exists to bound from
+ * the other side.
+ */
+export const MAX_SIGN_IN_RETURN_PATH_LENGTH = 512;
+
+/**
+ * Every character a proposed return path may contain, as an ALLOW-list.
+ *
+ * A deny-list here is the shape that fails: three review rounds on the trusted
+ * proxy list each patched the named example and each left the class open. So this
+ * names what is permitted — unreserved characters, the path separator, and the
+ * handful of query punctuation an internal link actually uses — and everything
+ * else is refused without having to be enumerated.
+ *
+ * Four exclusions are load-bearing, and each closes a family rather than an
+ * example:
+ *
+ * - **`%`** — no percent-encoding at all, so there is no decode step and
+ *   therefore no way for two readings of the same string to disagree. `%2F%2F`,
+ *   `%5C`, `%00` and `%0A` are all gone by one rule instead of four. The cost is
+ *   real and deliberate: a path carrying an escaped character cannot be proposed
+ *   and the person lands on the default instead. Losing a convenience is the
+ *   right side of that trade.
+ * - **`\`** — browsers fold a backslash onto `/` inside a path, so `/\evil.com`
+ *   is `//evil.com` written in a spelling a naive `startsWith('//')` misses.
+ * - **`:` and `@`** — the two characters that turn a string into an authority.
+ *   No internal route of this product needs either.
+ * - **control characters, whitespace and `#`** — a CR or LF in a value that ends
+ *   up in a `Location` header is response splitting; a fragment never reaches the
+ *   server and has nothing to contribute here.
+ */
+const RETURN_PATH_ALLOWED = /^\/[A-Za-z0-9\-._~/?=&,+]*$/;
+
+/**
+ * The one place an internal return path is judged, used by BOTH processes
+ * (AD-13) — `apps/api` at `/start` to decide whether a proposal is worth signing
+ * into the OAuth state, and `apps/web` to decide whether the path it is standing
+ * on is worth proposing.
+ *
+ * Same shape as {@link parseSignInRetryAfterSeconds}: everything that is not
+ * valid is `null`, nothing throws, and `null` means "use the default" rather than
+ * "this is an error". A person whose location cannot be expressed as an internal
+ * path simply lands on the login page, which is exactly where they would have
+ * landed before this existed.
+ *
+ * What "internal" means here, stated as rules over the whole string rather than
+ * as a list of the tricks that have been seen:
+ *
+ * - it begins with exactly one `/`, so it can never carry a scheme or a host;
+ * - it does not begin with `//`, the spelling that makes `new URL(path, base)`
+ *   adopt a brand new origin — the one way a *validated-looking* path still
+ *   becomes an open redirect;
+ * - no path segment is `.` or `..`, so the string means what it reads as and no
+ *   normalisation step can move it somewhere else;
+ * - every character is in {@link RETURN_PATH_ALLOWED}, which is where the encoded
+ *   spellings, the backslash, the authority punctuation and the header-splitting
+ *   bytes all die at once;
+ * - it is no longer than {@link MAX_SIGN_IN_RETURN_PATH_LENGTH}.
+ *
+ * The `..` check looks at the PATH only. A `//` or a `..` inside a query string is
+ * an ordinary value — it cannot change the origin and it cannot be normalised
+ * away — and refusing it would break real links for nothing.
+ */
+export function parseInternalReturnPath(raw: unknown): string | null {
+  if (typeof raw !== 'string') {
+    return null;
+  }
+  if (raw.length === 0 || raw.length > MAX_SIGN_IN_RETURN_PATH_LENGTH) {
+    return null;
+  }
+  if (!RETURN_PATH_ALLOWED.test(raw)) {
+    return null;
+  }
+  // Protocol-relative. The character class above cannot express "not twice at the
+  // start", and this is the spelling that changes the origin.
+  if (raw.startsWith('//')) {
+    return null;
+  }
+  const queryAt = raw.indexOf('?');
+  const path = queryAt === -1 ? raw : raw.slice(0, queryAt);
+  for (const segment of path.split('/')) {
+    if (segment === '.' || segment === '..') {
+      return null;
+    }
+  }
+  return raw;
+}

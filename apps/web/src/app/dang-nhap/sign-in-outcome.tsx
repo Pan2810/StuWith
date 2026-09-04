@@ -25,6 +25,7 @@ import {
   parseSignInRetryAfterSeconds,
   type SignInOutcome,
 } from '@stuwith/contracts';
+import { signInStartHref } from '../session-expiry';
 import { SignInCountdown } from './countdown';
 
 /**
@@ -385,7 +386,16 @@ export function SignInPanel({
                   carry the SameSite=Lax state cookie on the way in. An XHR cannot
                   do any of that.
                 */}
-                <a href={`${apiBaseUrl}/v1/auth/${provider}/start`}>
+                {/*
+                  Built through `signInStartHref`, which is also what the session
+                  expiry dialog uses. There is one place a `/start` URL is
+                  assembled, so there is one place a return path can be attached
+                  to it — and here there is nothing to attach: somebody signing in
+                  FROM the login page is already where a login lands by default,
+                  and a `?quay-ve=/dang-nhap` would be a parameter that changes
+                  nothing while looking like it changes something.
+                */}
+                <a href={signInStartHref(apiBaseUrl, provider, null)}>
                   Tiếp tục với {PROVIDER_LABELS[provider]}
                 </a>
               </li>
@@ -401,8 +411,14 @@ export function SignInPanel({
   );
 }
 
-/** Vietnamese is the default locale; full i18n arrives with Story 1.6. */
-const PROVIDER_LABELS: Record<(typeof AUTH_PROVIDERS)[number], string> = {
+/**
+ * Vietnamese is the default locale; full i18n arrives with Story 1.6.
+ *
+ * Exported because the session-expiry dialog offers the same four choices, and
+ * two tables of the same four labels is how one of them ends up saying something
+ * the other does not.
+ */
+export const PROVIDER_LABELS: Record<(typeof AUTH_PROVIDERS)[number], string> = {
   google: 'Google',
   facebook: 'Facebook',
   apple: 'Apple',

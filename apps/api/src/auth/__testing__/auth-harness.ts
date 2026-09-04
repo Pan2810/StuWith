@@ -1,7 +1,7 @@
 import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
 import { NO_TRUSTED_PROXIES, type ApiEnv } from '@stuwith/config';
-import type { AuthProvider } from '@stuwith/contracts';
+import { SIGN_IN_RETURN_PATH_QUERY_PARAM, type AuthProvider } from '@stuwith/contracts';
 import {
   InMemoryAuditAdapter,
   InMemoryIdentityAdapter,
@@ -220,11 +220,19 @@ export interface AuthHarness {
   readonly rateLimit: RateLimitPort;
   readonly logLines: readonly string[];
   request(path: string, init?: RequestInit & { jar?: CookieJar }): Promise<Response>;
-  /** Drives start -> consent -> callback and returns the resulting cookie jar. */
+  /**
+   * Drives start -> consent -> callback and returns the resulting cookie jar.
+   *
+   * `returnPath` is the RAW value of the `quay-ve` parameter on the `/start` leg,
+   * so a hostile spelling can travel the whole road — real HTTP, a real signed
+   * state cookie, a real callback — rather than being checked against the
+   * validator in isolation. Omit it for the shape every pre-existing call has.
+   */
   login(
     provider: AuthProvider,
     profile: FakeProfile,
     jar?: CookieJar,
+    returnPath?: string,
   ): Promise<{ jar: CookieJar; callback: Response }>;
   close(): Promise<void>;
 }
@@ -388,13 +396,29 @@ export async function createAuthHarness(options: HarnessOptions = {}): Promise<A
     return response;
   };
 
+  /**
+   * A whole login, `/start` through `/callback`.
+   *
+   * `returnPath` is the RAW string to put in the `quay-ve` parameter, not a
+   * validated one — the point of driving it from here is that the hostile
+   * spellings (`//evil.com`, an absolute URL, an encoded slash) travel the same
+   * road a real proposal does, through real HTTP and a real signed state cookie,
+   * rather than being asserted against the validator in isolation. `undefined`
+   * means the parameter is absent altogether, which is the shape every call site
+   * written before this story still has.
+   */
   const login = async (
     provider: AuthProvider,
     profile: FakeProfile,
     existing?: CookieJar,
+    returnPath?: string,
   ): Promise<{ jar: CookieJar; callback: Response }> => {
     const jar = existing ?? new CookieJar();
-    const started = await request(`/v1/auth/${provider}/start`, { jar });
+    const startPath =
+      returnPath === undefined
+        ? `/v1/auth/${provider}/start`
+        : `/v1/auth/${provider}/start?${SIGN_IN_RETURN_PATH_QUERY_PARAM}=${encodeURIComponent(returnPath)}`;
+    const started = await request(startPath, { jar });
     const location = started.headers.get('location');
     if (started.status !== 302 || location === null) {
       throw new Error(`start did not redirect: ${started.status}`);
