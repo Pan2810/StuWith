@@ -108,6 +108,16 @@ export class FakeAuthorizationServer {
    */
   failDiscovery = false;
 
+  /**
+   * Forces the token endpoint to answer with this status instead of doing the
+   * exchange — the shape of a provider refusing US rather than the caller.
+   *
+   * 401 `invalid_client` is our client secret being wrong or expired (Apple's is
+   * rotated every six months); 429 is our own quota. Neither is anything the
+   * visitor did, and both used to be classified as "somebody is guessing codes".
+   */
+  tokenEndpointStatus: number | null = null;
+
   async start(): Promise<void> {
     const { privateKey, publicKey } = await generateKeyPair('RS256', { extractable: true });
     this.privateKey = privateKey;
@@ -257,6 +267,10 @@ export class FakeAuthorizationServer {
     init: RequestInit | undefined,
   ): Promise<Response> {
     this.tokenExchanges += 1;
+
+    if (this.tokenEndpointStatus !== null) {
+      return json({ error: 'invalid_client' }, this.tokenEndpointStatus);
+    }
 
     const body = new URLSearchParams(typeof init?.body === 'string' ? init.body : '');
     const code = body.get('code') ?? '';

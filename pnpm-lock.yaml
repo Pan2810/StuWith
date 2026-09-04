@@ -6,6 +6,7 @@ settings:
 
 overrides:
   '@nestjs/cli>typescript': npm:@typescript/typescript6@6.0.2
+  '@fastify/proxy-addr': 5.1.0
 
 packageExtensionsChecksum: sha256-yO3rUISp2Y4ah1jg/R+Tkn/ZrTP8tMj6B0BkRdDGQqQ=
 

@@ -20,7 +20,7 @@ import { RateLimitHealth } from './rate-limit-health';
 import { RATE_LIMIT_ACTION_METADATA } from './rate-limit.decorator';
 import { RATE_LIMIT_PORT } from './rate-limit.tokens';
 import { RateLimitedException } from './rate-limited.exception';
-import { clientIpOf, userHandleOf } from './request-identity';
+import { rateLimitSubjectOf } from './request-identity';
 import { isStoreFault } from './store-fault';
 
 /**
@@ -90,10 +90,14 @@ export class RateLimitGuard implements CanActivate {
     const request = context.switchToHttp().getRequest<FastifyRequest>();
 
     try {
-      // Reading the address and the credential is INSIDE the try. They parse a
-      // header and a cookie header, both attacker-supplied; outside, a value that
-      // made either of them throw would be a 500 on a layer whose entire posture
-      // is to fail open.
+      // Reading the address and the credential is inside the try only so that the
+      // `RateLimitedException` path below is the same shape for both; it is NOT a
+      // safety net for them. The `catch` lets through store faults and nothing
+      // else, so a `TypeError` out of `clientIpOf` is a 500 exactly as it would be
+      // outside this block. Both functions are total in themselves — a header and
+      // a cookie header are attacker-supplied, so neither may throw at all — and
+      // that, rather than this `try`, is what keeps a hostile value from becoming
+      // a 500 on a layer whose whole posture is to fail open.
       await this.enforce(action, this.subjectOf(request));
       this.health.recordSuccess();
     } catch (error) {
@@ -123,11 +127,14 @@ export class RateLimitGuard implements CanActivate {
     return true;
   }
 
+  /**
+   * The same FUNCTION `AuthController` calls, not the same pair of calls written
+   * out twice. The leg that counts an attempt and the leg that records a failure
+   * have to key on identical values, and two call sites inferring "who is this"
+   * separately is how they stop doing so.
+   */
   private subjectOf(request: FastifyRequest): RateLimitSubject {
-    return {
-      clientIp: clientIpOf(request, this.trust),
-      userHandle: userHandleOf(request, this.config.SESSION_COOKIE_SECRET),
-    };
+    return rateLimitSubjectOf(request, this.trust, this.config.SESSION_COOKIE_SECRET);
   }
 
   /**
@@ -155,14 +162,14 @@ export class RateLimitGuard implements CanActivate {
         bruteForceLockKey(bruteForce.dimension, bruteForce.value),
       );
       if (locked !== null) {
-        throw new RateLimitedException(channel, locked);
+        throw new RateLimitedException(channel, locked, action);
       }
     }
 
     for (const rule of rateLimitRulesFor(action, subject, this.settings)) {
       const decision = await this.rateLimit.hit(rule.key, rule.limit, rule.windowSeconds);
       if (!decision.ok) {
-        throw new RateLimitedException(channel, decision.retryAfterSeconds);
+        throw new RateLimitedException(channel, decision.retryAfterSeconds, action);
       }
     }
   }

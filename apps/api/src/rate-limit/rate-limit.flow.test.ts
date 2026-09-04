@@ -5,9 +5,20 @@ import {
   SIGN_IN_RETRY_AFTER_QUERY_PARAM,
   errorEnvelopeSchema,
 } from '@stuwith/contracts';
-import { RateLimitInputError, type RateLimitDecision, type RateLimitPort } from '@stuwith/domain';
+import {
+  RateLimitInputError,
+  isRateLimitAction,
+  type RateLimitDecision,
+  type RateLimitPort,
+} from '@stuwith/domain';
 import { afterEach, describe, expect, it } from 'vitest';
-import { INNOCENT_SIGN_IN_FAILURES, SIGN_IN_FAILURE_REASONS } from '../auth/audit';
+import { AuthController } from '../auth/auth.controller';
+import { RATE_LIMIT_ACTION_METADATA } from './rate-limit.decorator';
+import {
+  COUNTED_SIGN_IN_FAILURES,
+  INNOCENT_SIGN_IN_FAILURES,
+  SIGN_IN_FAILURE_REASONS,
+} from '../auth/audit';
 import { CookieJar, createAuthHarness, type AuthHarness } from '../auth/__testing__/auth-harness';
 
 /**
@@ -263,6 +274,64 @@ describe('Matrix row: the brute-force lock', () => {
     expect((await harness.request('/v1/auth/google/start')).status).toBe(302);
   }, 60_000);
 
+  /**
+   * H2: which provider status codes are "somebody is guessing", and which are ours.
+   *
+   * `fetchJson` treated every 4xx as "the provider refused what we sent", so a 401
+   * `invalid_client` — our client secret being wrong or expired, and Apple rotates
+   * that one every six months — became `code_rejected` and counted towards a lock.
+   * On the day the secret expires, nobody can sign in AND everybody is then locked
+   * out for fifteen minutes, with the log calling it a brute-force attempt.
+   */
+  it.each([
+    [401, 'our client secret is wrong or has expired'],
+    [403, 'our app has been disabled at the provider'],
+    [429, 'we have exhausted our own quota'],
+  ])('does not count HTTP %s from the token endpoint — %s', async (status) => {
+    harness = await createAuthHarness({
+      enabledProviders: ['google'],
+      ipLimit: 1_000,
+      bruteForceLimit: 1,
+      bruteForceLockSeconds: 600,
+    });
+    harness.fake.tokenEndpointStatus = status;
+
+    // Well past the threshold. Every one of these is the provider refusing US.
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const failed = await failSignIn(harness);
+      expect(failed.status).toBe(303);
+    }
+
+    expect(
+      (await harness.request('/v1/auth/google/start')).status,
+      'a configuration fault of ours must not lock out every visitor',
+    ).toBe(302);
+  }, 60_000);
+
+  /**
+   * The other side of the same line, so the change above is not simply "count
+   * nothing". A 400 is the provider rejecting the `code` the caller sent, which is
+   * exactly what somebody working through guessed codes produces.
+   */
+  it('still counts HTTP 400 from the token endpoint, which is a guessed code', async () => {
+    harness = await createAuthHarness({
+      enabledProviders: ['google'],
+      ipLimit: 1_000,
+      bruteForceLimit: 1,
+      bruteForceLockSeconds: 600,
+    });
+    harness.fake.tokenEndpointStatus = 400;
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await failSignIn(harness);
+    }
+
+    const blocked = await harness.request('/v1/auth/google/start');
+    expect(
+      new URL(blocked.headers.get('location') ?? '').searchParams.get(SIGN_IN_OUTCOME_QUERY_PARAM),
+    ).toBe('bi-khoa');
+  }, 60_000);
+
   it('does not count a cancellation at the consent screen', async () => {
     harness = await createAuthHarness({
       enabledProviders: ['google'],
@@ -289,6 +358,23 @@ describe('Matrix row: the brute-force lock', () => {
 });
 
 describe('Matrix row: a success clears the failure counter', () => {
+  /**
+   * A COUNTED failed sign-in — a real `/start` for a state cookie we signed, then
+   * a `code` the provider refuses.
+   *
+   * This example used `?code=nope&state=nope` with no jar, which is
+   * `state_missing` — an INNOCENT reason, so `countFailure` returned before the
+   * counter ever moved. Deleting `forgetFailures` from `AuthService.callback`
+   * entirely left it green: nothing had been counted, so nothing needed clearing.
+   * That is the same trap H9 fell into once already.
+   */
+  const failSignIn = async (h: AuthHarness) => {
+    const jar = new CookieJar();
+    const started = await h.request('/v1/auth/google/start', { jar });
+    const state = new URL(started.headers.get('location') ?? '').searchParams.get('state') ?? '';
+    return h.request(`/v1/auth/google/callback?code=wrong&state=${state}`, { jar });
+  };
+
   it('lets somebody who finally got in start from zero again', async () => {
     harness = await createAuthHarness({
       enabledProviders: ['google'],
@@ -298,8 +384,8 @@ describe('Matrix row: a success clears the failure counter', () => {
     });
 
     // Two failures — one short of the lock.
-    await harness.request('/v1/auth/google/callback?code=nope&state=nope');
-    await harness.request('/v1/auth/google/callback?code=nope&state=nope');
+    expect((await failSignIn(harness)).status).toBe(303);
+    expect((await failSignIn(harness)).status).toBe(303);
 
     const { callback } = await harness.login('google', GOOGLE_PROFILE);
     expect(callback.status).toBe(302);
@@ -307,10 +393,35 @@ describe('Matrix row: a success clears the failure counter', () => {
     // Two more. Without the clear, this would be attempts three and four and the
     // lock would already have snapped shut on somebody who has just proved who
     // they are.
-    await harness.request('/v1/auth/google/callback?code=nope&state=nope');
-    await harness.request('/v1/auth/google/callback?code=nope&state=nope');
+    expect((await failSignIn(harness)).status).toBe(303);
+    expect((await failSignIn(harness)).status).toBe(303);
 
     expect((await harness.request('/v1/auth/google/start')).status).toBe(302);
+  }, 60_000);
+
+  /**
+   * The other half, and the one that says the counter was really moving.
+   *
+   * Without it the example above still passes when `countFailure` does nothing at
+   * all — no failures counted, no lock, green. Four consecutive counted failures
+   * with no success in between must lock.
+   */
+  it('and locks when there is no success in between', async () => {
+    harness = await createAuthHarness({
+      enabledProviders: ['google'],
+      ipLimit: 1_000,
+      bruteForceLimit: 2,
+      bruteForceLockSeconds: 600,
+    });
+
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      await failSignIn(harness);
+    }
+
+    const blocked = await harness.request('/v1/auth/google/start');
+    expect(
+      new URL(blocked.headers.get('location') ?? '').searchParams.get(SIGN_IN_OUTCOME_QUERY_PARAM),
+    ).toBe('bi-khoa');
   }, 60_000);
 });
 
@@ -430,6 +541,33 @@ describe('Matrix rows: Valkey is down, and Valkey is slow', () => {
   }
 
   /**
+   * A port with a BUG rather than a broken connection, and only on the path
+   * `AuthService` owns.
+   *
+   * The guard's own calls succeed, so the request reaches the handler exactly as it
+   * would in production; only the brute-force COUNTER — which nothing but
+   * `countFailure` reaches with `hit` — throws the shape a property read on
+   * `undefined` produces.
+   */
+  class BuggyBookkeepingPort implements RateLimitPort {
+    async hit(key: string, limit: number): Promise<RateLimitDecision> {
+      if (key.startsWith('rl:brute_force:')) {
+        throw new TypeError("Cannot read properties of undefined (reading 'dimension')");
+      }
+      return { ok: true, count: 1, remaining: limit - 1 };
+    }
+    async remainingSeconds(): Promise<number | null> {
+      return null;
+    }
+    async lock(): Promise<number> {
+      return 600;
+    }
+    async clear(): Promise<void> {
+      return undefined;
+    }
+  }
+
+  /**
    * `captureLogs` and not a spy on `Logger.prototype`.
    *
    * A spy intercepts the method and throws the message away, so it proves a call
@@ -529,6 +667,45 @@ describe('Matrix rows: Valkey is down, and Valkey is slow', () => {
     expect(lines, 'a degraded store must not write one stack per request').toHaveLength(1);
   }, 60_000);
 
+  /**
+   * H3: the OTHER half of the fail-open decision, which kept the old rule.
+   *
+   * `RateLimitGuard` moved to `isStoreFault` while `AuthService.withRateLimitStore`
+   * still swallowed everything that was not a `RateLimitInputError` — and that is
+   * the half running `countFailure`/`forgetFailures` on `/callback` and
+   * `/refresh`. So a plain bug in the brute-force bookkeeping was reported for ever
+   * as "the counter store did not answer": the alert pointed at Valkey, the counter
+   * stayed off, and nothing said the defect was ours. AGENTS.md claimed both layers
+   * were closed.
+   */
+  it('reports a DEFECT in the bookkeeping as a defect, not as a Valkey outage', async () => {
+    harness = await createAuthHarness({
+      enabledProviders: ['google'],
+      ipLimit: 1_000,
+      bruteForceLimit: 1_000,
+      captureLogs: true,
+      rateLimitPort: new BuggyBookkeepingPort(),
+    });
+
+    // A counted failed sign-in: the callback leg, which is `AuthService`'s half
+    // rather than the guard's.
+    const jar = new CookieJar();
+    const started = await harness.request('/v1/auth/google/start', { jar });
+    const state = new URL(started.headers.get('location') ?? '').searchParams.get('state') ?? '';
+    const failed = await harness.request(`/v1/auth/google/callback?code=wrong&state=${state}`, {
+      jar,
+    });
+
+    const outage = harness.logLines
+      .join('')
+      .split('\n')
+      .filter((line) => line.includes('rate limiting is not working'));
+
+    expect(outage, 'a TypeError of ours is not an outage of theirs').toEqual([]);
+    // And it surfaces as the 500 it is, rather than as a quiet fail-open.
+    expect(failed.status).toBe(500);
+  }, 60_000);
+
   it('never puts the store failure in front of the user', async () => {
     harness = await degraded();
 
@@ -538,6 +715,105 @@ describe('Matrix rows: Valkey is down, and Valkey is slow', () => {
     expect(body.toLowerCase()).not.toContain('timed out');
     expect(body).not.toContain('rate limiting is not working');
   }, 60_000);
+});
+
+/**
+ * M6: the POST half of `/callback`, which carried the decorator and had no example.
+ *
+ * `RateLimitGuard.actionFor` reads the metadata of the HANDLER, deliberately —
+ * `getAllAndOverride` would also read the class and would have rate-limited
+ * `logout`. The consequence is that the GET handler's decorator does not cover the
+ * POST one, and every `/callback` request in this file was a GET: deleting
+ * `@RateLimited('auth_callback')` from `callbackFormPost` turned nothing red while
+ * leaving Apple's entire callback leg uncounted.
+ */
+describe('Matrix row: the POST callback is limited too', () => {
+  const postCallback = (h: AuthHarness) =>
+    h.request('/v1/auth/apple/callback', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ code: 'nope', state: 'nope' }).toString(),
+    });
+
+  it('refuses the second form_post from one address', async () => {
+    harness = await createAuthHarness({ enabledProviders: ['apple'], ipLimit: 1 });
+
+    const first = await postCallback(harness);
+    expect(first.status).toBe(303);
+    expect(
+      new URL(first.headers.get('location') ?? '').searchParams.get(SIGN_IN_OUTCOME_QUERY_PARAM),
+      'the first POST is a normal failed sign-in, not a refusal',
+    ).toBe('that-bai');
+
+    const second = await postCallback(harness);
+    expect(second.status).toBe(303);
+    expect(
+      new URL(second.headers.get('location') ?? '').searchParams.get(SIGN_IN_OUTCOME_QUERY_PARAM),
+    ).toBe('bi-khoa');
+    expect(second.headers.get('retry-after')).not.toBeNull();
+  }, 60_000);
+
+  it('shares one budget with the GET callback, because it is one action', async () => {
+    harness = await createAuthHarness({ enabledProviders: ['apple'], ipLimit: 1 });
+
+    await harness.request('/v1/auth/apple/callback?code=nope&state=nope');
+    const viaPost = await postCallback(harness);
+
+    expect(
+      new URL(viaPost.headers.get('location') ?? '').searchParams.get(SIGN_IN_OUTCOME_QUERY_PARAM),
+    ).toBe('bi-khoa');
+  }, 60_000);
+});
+
+/**
+ * M7: the decorator's default is "no limit", so a seventh endpoint added later is
+ * unlimited and nothing goes red.
+ *
+ * This reads the metadata off `AuthController` itself rather than driving HTTP,
+ * because the property is about the CLASS: every route carries an action except
+ * the one that must never carry one.
+ */
+describe('every /v1/auth route is limited, and logout is the only exception', () => {
+  /** Method name -> the action written on it, or `null`. */
+  function declaredActions(): Map<string, unknown> {
+    const prototype = AuthController.prototype as unknown as Record<string, unknown>;
+    const routes = Object.getOwnPropertyNames(prototype).filter((name) => {
+      if (name === 'constructor') return false;
+      const descriptor = Object.getOwnPropertyDescriptor(prototype, name);
+      if (typeof descriptor?.value !== 'function') return false;
+      // A route is a method Nest gave a path to; the private helpers have none.
+      return Reflect.getMetadata('path', descriptor.value) !== undefined;
+    });
+
+    return new Map(
+      routes.map((name) => [
+        name,
+        Reflect.getMetadata(RATE_LIMIT_ACTION_METADATA, prototype[name] as object) ?? null,
+      ]),
+    );
+  }
+
+  it('finds every route, so the assertions below are about all of them', () => {
+    // If this drops to one or zero the two examples underneath become vacuous.
+    expect(declaredActions().size).toBeGreaterThanOrEqual(6);
+  });
+
+  it('gives every route but logout an action from the closed set', () => {
+    const unlimited = [...declaredActions()]
+      .filter(([, action]) => action === null)
+      .map(([name]) => name);
+
+    expect(unlimited).toEqual(['logout']);
+  });
+
+  it('writes only names the policy actually knows', () => {
+    // A typo builds a key under a name nothing else uses: a limit that exists,
+    // counts, and never blocks anything.
+    for (const [name, action] of declaredActions()) {
+      if (action === null) continue;
+      expect(isRateLimitAction(action), `${name} declares ${String(action)}`).toBe(true);
+    }
+  });
 });
 
 describe('Matrix row: signing out is never blocked', () => {
@@ -898,12 +1174,26 @@ describe('the failures that must never walk anybody towards a lock', () => {
     },
   );
 
-  it('classifies every declared reason one way or the other', () => {
-    // Adding a reason and forgetting to decide is how a new failure path silently
-    // starts (or stops) counting.
-    for (const reason of SIGN_IN_FAILURE_REASONS) {
-      expect(typeof INNOCENT_SIGN_IN_FAILURES.has(reason)).toBe('boolean');
-    }
+  /**
+   * The classification is TOTAL, and this is the assertion that says so.
+   *
+   * What stood here was `expect(typeof SET.has(reason)).toBe('boolean')`, which is
+   * true of every input to every `Set` ever built — it could not fail, so adding a
+   * thirteenth reason and forgetting to classify it changed nothing here. The two
+   * sets now come from one `Record` over the union in `audit.ts`, so a missing key
+   * is a typecheck error, and these two assertions prove the pair really does
+   * partition the declared reasons rather than merely both existing.
+   */
+  it('splits every declared reason into exactly one of the two sets', () => {
+    const union = [...INNOCENT_SIGN_IN_FAILURES, ...COUNTED_SIGN_IN_FAILURES].sort();
+    expect(union).toEqual([...SIGN_IN_FAILURE_REASONS].sort());
+  });
+
+  it('puts no reason in both sets', () => {
+    const both = [...COUNTED_SIGN_IN_FAILURES].filter((reason) =>
+      INNOCENT_SIGN_IN_FAILURES.has(reason),
+    );
+    expect(both).toEqual([]);
   });
 });
 

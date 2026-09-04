@@ -75,29 +75,34 @@ export const SIGN_IN_FAILURE_REASONS = [
 export type SignInFailureReason = (typeof SIGN_IN_FAILURE_REASONS)[number];
 
 /**
- * The failure reasons that are NOT the user's fault, and therefore must not walk
- * anybody towards a lock.
+ * Every reason, classified: does it walk somebody towards a brute-force lock?
  *
- * A brute-force counter exists to answer "is somebody working through a list".
- * A provider having a bad afternoon, or a consent screen left open past its
- * state expiry, answers a different question — and counting those means an
- * outage at Google locks out every person who tried during it, on top of the
- * outage they already suffered. `user_cancelled` is here for the reason Story
- * 1.3 part 1 gave: changing your mind is not a failure, and presenting it as one
- * is both untrue and mildly accusing.
+ * A `Record` over the union rather than a set of the counted ones, and that is
+ * the point rather than a style choice. A set has a DEFAULT — whatever is absent
+ * falls on one side — so adding a thirteenth reason and forgetting to think about
+ * it silently made it count, which is the dangerous direction: an honest failure
+ * path shipped as evidence of an attack. Here a missing key is a compile error,
+ * and there is no default to fall into.
  *
- * What IS counted is the shape of an attack, and only that: a `state` that does
- * not match one we signed, a `code` the provider refused (`code_rejected`), an
- * identity the store rejected, a reused refresh token, a refresh token nobody
- * issued.
+ * `false` means "not the user's doing". A brute-force counter exists to answer
+ * "is somebody working through a list"; a provider having a bad afternoon, or a
+ * consent screen left open past its state expiry, answers a different question,
+ * and counting those means an outage at Google locks out every person who tried
+ * during it on top of the outage they already suffered. `user_cancelled` is
+ * `false` for the reason Story 1.3 part 1 gave: changing your mind is not a
+ * failure, and presenting it as one is both untrue and mildly accusing.
+ *
+ * `true` is the shape of an attack, and only that: a `state` that does not match
+ * one we signed, a `code` the provider refused, an identity the store rejected, a
+ * reused refresh token, a refresh token nobody issued.
  */
-export const INNOCENT_SIGN_IN_FAILURES: ReadonlySet<SignInFailureReason> = new Set([
+const COUNTS_TOWARDS_LOCK = {
   // Sign-in legs: the person changed their mind, or the provider was unwell.
-  'user_cancelled',
-  'provider_start_failed',
-  'provider_authorize_failed',
-  'provider_exchange_failed',
-  'state_expired',
+  user_cancelled: false,
+  provider_start_failed: false,
+  provider_authorize_failed: false,
+  provider_exchange_failed: false,
+  state_expired: false,
   /**
    * `state_missing` means the browser sent no state cookie AT ALL, which is what
    * a browser that blocks the cookie looks like — ITP, strict privacy settings,
@@ -107,14 +112,31 @@ export const INNOCENT_SIGN_IN_FAILURES: ReadonlySet<SignInFailureReason> = new S
    * HAS a valid state cookie and guesses codes is caught by `code_rejected`
    * instead, which is the path that actually costs them something.
    */
-  'state_missing',
+  state_missing: false,
   // Refresh leg. A tab left open overnight, or a session ended from another
   // device, is not an attack — and locking somebody out because their own
   // client retried a stale token would be the product punishing normal use.
-  'refresh_cookie_missing',
-  'refresh_token_expired',
-  'session_revoked',
-]);
+  refresh_cookie_missing: false,
+  refresh_token_expired: false,
+  session_revoked: false,
+
+  state_mismatch: true,
+  code_missing: true,
+  code_rejected: true,
+  identity_rejected: true,
+  refresh_token_unknown: true,
+  session_reuse_detected: true,
+} as const satisfies Record<SignInFailureReason, boolean>;
+
+/** The reasons that must never walk anybody towards a lock. */
+export const INNOCENT_SIGN_IN_FAILURES: ReadonlySet<SignInFailureReason> = new Set(
+  SIGN_IN_FAILURE_REASONS.filter((reason) => !COUNTS_TOWARDS_LOCK[reason]),
+);
+
+/** Its complement, exported so a test can assert the two really do partition. */
+export const COUNTED_SIGN_IN_FAILURES: ReadonlySet<SignInFailureReason> = new Set(
+  SIGN_IN_FAILURE_REASONS.filter((reason) => COUNTS_TOWARDS_LOCK[reason]),
+);
 
 export interface SignedInInput {
   readonly requestId: string;

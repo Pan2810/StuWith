@@ -24,13 +24,13 @@ import type {
 } from '@stuwith/domain';
 import {
   IdentityInputError,
-  RateLimitInputError,
   bruteForceCounterKey,
   bruteForceSubjectFor,
   bruteForceLockKey,
 } from '@stuwith/domain';
 import { APP_CONFIG, type AppConfig } from '../config.token';
 import { RateLimitHealth } from '../rate-limit/rate-limit-health';
+import { isStoreFault } from '../rate-limit/store-fault';
 import { AUTH_RUNTIME, type AuthRuntime } from './auth.runtime';
 import {
   INNOCENT_SIGN_IN_FAILURES,
@@ -770,7 +770,7 @@ export class AuthService {
     };
   }
 
-      /**
+  /**
    * One consecutive failure, in the ONE dimension this channel both counts and
    * enforces.
    *
@@ -867,10 +867,16 @@ export class AuthService {
    * part 1 established — the person did everything right, or wrong, and the store
    * they have never heard of is the thing that is unwell.
    *
-   * `RateLimitInputError` is deliberately NOT swallowed. That is a defect in this
-   * code — a malformed key, a hashing bug — and reporting it for ever as a Valkey
-   * outage would leave the brute-force counter permanently off with an alarm
-   * pointing at the wrong system.
+   * Only a STORE FAULT is swallowed, and `isStoreFault` is the same judge the
+   * guard uses — this is the half that runs `countFailure` and `forgetFailures`
+   * on `/callback` and `/refresh`, so if the two halves disagreed the brute-force
+   * bookkeeping would fail open under conditions the enforcing half calls a bug.
+   *
+   * The rule used to be "anything that is not a `RateLimitInputError`", which
+   * swallowed every `TypeError` and `RangeError` here too: a plain defect in this
+   * file was reported for ever as "the counter store did not answer", pointed the
+   * alert at Valkey, and left the counter off while looking like an infrastructure
+   * incident. A defect in our code must surface as the 500 it is.
    *
    * The reporting goes through the shared {@link RateLimitHealth} rather than
    * straight to a logger, so an outage produces one line and one recovery line
@@ -881,7 +887,7 @@ export class AuthService {
       await work();
       this.health.recordSuccess();
     } catch (error) {
-      if (error instanceof RateLimitInputError) {
+      if (!isStoreFault(error)) {
         throw error;
       }
       this.health.recordFailure(what, error);

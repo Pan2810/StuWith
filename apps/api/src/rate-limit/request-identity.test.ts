@@ -6,7 +6,7 @@ import {
 } from '@stuwith/domain';
 import type { FastifyRequest } from 'fastify';
 import { describe, expect, it } from 'vitest';
-import { clientIpOf, userHandleOf } from './request-identity';
+import { clientIpOf, rateLimitSubjectOf, userHandleOf } from './request-identity';
 
 /**
  * The two functions that turn a request into the values every key is built from.
@@ -132,5 +132,131 @@ describe('clientIpOf', () => {
     const headless = { headers: {}, raw: { headers: {}, socket: {} } } as unknown as FastifyRequest;
     expect(clientIpOf(headless, false)).toBe(UNKNOWN_CLIENT_IP);
     expect(clientIpOf(headless, TRUST_ALL)).toBe(UNKNOWN_CLIENT_IP);
+  });
+
+  /**
+   * What a TRUSTED proxy forwards is still not a fact.
+   *
+   * `@fastify/proxy-addr` answers with the left-most entry of `X-Forwarded-For`
+   * that is not trusted, and it never checks that the entry is an address at all —
+   * that is not its job. So a proxy forwarding junk, or a caller upstream of one
+   * appending junk, turned the junk straight into a rate-limit key: rotate the
+   * junk, rotate the key, and the limit counts nothing. Every one of these is a
+   * value the library will hand back verbatim.
+   */
+  it.each([
+    ['a word', 'not-an-ip'],
+    ['a hostname', 'proxy.internal'],
+    ['an address with a port', '203.0.113.9:443'],
+    ['an out-of-range quad', '999.0.0.1'],
+    ['an IPv6 shape node:net rejects', '1.2.3.4::'],
+    ['punctuation', '@@@@'],
+    ['something long', 'a'.repeat(300)],
+  ])('refuses to key on %s forwarded by a trusted proxy', (_label, forged) => {
+    expect(clientIpOf(requestWith({ 'x-forwarded-for': forged }), TRUST_ALL)).toBe(
+      UNKNOWN_CLIENT_IP,
+    );
+  });
+
+  it('gives two junk values the SAME bucket, so rotating junk buys nothing', () => {
+    const first = clientIpOf(requestWith({ 'x-forwarded-for': 'junk-one' }), TRUST_ALL);
+    const second = clientIpOf(requestWith({ 'x-forwarded-for': 'junk-two' }), TRUST_ALL);
+
+    expect(first).toBe(second);
+  });
+
+  /**
+   * A zone index names an interface on the machine READING the address, not the
+   * machine the address belongs to. Keeping it means `fe80::1%eth0` and
+   * `fe80::1%eth1` are two budgets for one peer.
+   */
+  it.each([
+    ['fe80::1%eth0', 'fe80::1'],
+    ['fe80::1%25eth0', 'fe80::1'],
+    ['FE80::1%eth1', 'fe80::1'],
+  ])('drops the zone index: %s counts as %s', (raw, expected) => {
+    expect(clientIpOf(requestWith({ 'x-forwarded-for': raw }), TRUST_ALL)).toBe(expected);
+  });
+
+  it('folds the mapped spelling of an address onto the plain one', () => {
+    expect(clientIpOf(requestWith({ 'x-forwarded-for': '::ffff:198.51.100.4' }), TRUST_ALL)).toBe(
+      '198.51.100.4',
+    );
+  });
+
+  it('leaves a real IPv6 address alone rather than slicing it', () => {
+    // `::ffff:cb00:7107` is IPv4-mapped written in hex; slicing the prefix would
+    // leave `cb00:7107`, which is not an address, and hand one machine a second
+    // budget for free.
+    expect(clientIpOf(requestWith({ 'x-forwarded-for': '2001:db8::1' }), TRUST_ALL)).toBe(
+      '2001:db8::1',
+    );
+    expect(clientIpOf(requestWith({ 'x-forwarded-for': '::ffff:cb00:7107' }), TRUST_ALL)).toBe(
+      '::ffff:cb00:7107',
+    );
+  });
+});
+
+/**
+ * The whole subject, computed ONCE for both callers.
+ *
+ * The guard and `AuthController` each used to build this pair themselves, and the
+ * copies had drifted: the controller's wrapped both calls in a single `try`, so a
+ * throw out of the cookie half discarded the address as well. The guard, on the
+ * same request, had resolved that address fine — so a failed sign-in was recorded
+ * against the unresolved bucket while the guard was counting the real one, and the
+ * two halves of the brute-force bookkeeping keyed on different values.
+ */
+describe('rateLimitSubjectOf', () => {
+  const TRUST_NONE = false as const;
+
+  it('answers with both halves for an ordinary request', () => {
+    const subject = rateLimitSubjectOf(
+      requestWith({ cookie: 'stuwith_refresh=bbb' }),
+      TRUST_NONE,
+      SECRET,
+    );
+
+    expect(subject.clientIp).toBe('203.0.113.7');
+    expect(subject.userHandle).toBeDefined();
+  });
+
+  /**
+   * The mutation this example exists for: put the two calls back under one `try`
+   * and the credential disappears with the address.
+   */
+  it('keeps the credential when reading the ADDRESS is what failed', () => {
+    const hostile = {
+      // A socket that cannot be read at all. `clientIpOf` does not wrap this
+      // branch, so the throw escapes it.
+      get socket(): never {
+        throw new TypeError('socket is not readable');
+      },
+      headers: { cookie: 'stuwith_refresh=bbb' },
+      raw: { headers: {}, socket: {} },
+    } as unknown as FastifyRequest;
+
+    const subject = rateLimitSubjectOf(hostile, TRUST_NONE, SECRET);
+
+    expect(subject.clientIp).toBe(UNKNOWN_CLIENT_IP);
+    expect(
+      subject.userHandle,
+      'a fault in one half must not discard the other half',
+    ).toBe(userHandleOf(requestWith({ cookie: 'stuwith_refresh=bbb' }), SECRET));
+  });
+
+  it('is total, so neither half can turn a login into a 500', () => {
+    const hostile = {
+      get socket(): never {
+        throw new TypeError('socket is not readable');
+      },
+      get headers(): never {
+        throw new TypeError('headers are not readable');
+      },
+      raw: { headers: {}, socket: {} },
+    } as unknown as FastifyRequest;
+
+    expect(() => rateLimitSubjectOf(hostile, TRUST_NONE, SECRET)).not.toThrow();
+    expect(rateLimitSubjectOf(hostile, TRUST_NONE, SECRET).clientIp).toBe(UNKNOWN_CLIENT_IP);
   });
 });

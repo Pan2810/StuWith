@@ -1,4 +1,9 @@
-import { RATE_LIMITED_MESSAGE, SIGN_IN_OUTCOMES, type SignInOutcome } from '@stuwith/contracts';
+import {
+  MAX_SIGN_IN_RETRY_AFTER_SECONDS,
+  RATE_LIMITED_MESSAGE,
+  SIGN_IN_OUTCOMES,
+  type SignInOutcome,
+} from '@stuwith/contracts';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { SignInCountdown } from './countdown';
@@ -36,7 +41,13 @@ import {
  */
 function renderPanel(notice: SignInNotice | null, canSignIn = true): string {
   return renderToStaticMarkup(
-    <SignInPanel notice={notice} canSignIn={canSignIn} loading={false} apiBaseUrl="" />,
+    <SignInPanel
+      notice={notice}
+      canSignIn={canSignIn}
+      loading={false}
+      apiBaseUrl=""
+      onCountdownFinished={() => undefined}
+    />,
   );
 }
 
@@ -630,48 +641,51 @@ describe('the login options and the lock notice agree with each other', () => {
 });
 
 /**
- * A stranger can put anything in the URL, including a very long wait.
+ * The cap on how long a notice may hide the login links.
  *
- * The countdown may SHOW up to a day, because that number came from a real
- * `Retry-After` and a long lock is a real thing. Hiding the only way to sign in is
- * different: `?ket-qua=bi-khoa&giay=86400` sent to somebody who is not
- * rate-limited at all would leave them with a page that has no login links for a
- * day. So the two bounds are deliberately not the same one.
+ * It used to be the hard-coded `900` — the DEFAULT brute-force lock rather than
+ * the configured one. `RATE_LIMIT_BRUTE_FORCE_LOCK_SECONDS` goes up to a day, so
+ * a deployment that set it to 1800 produced real locks that sailed over the cap:
+ * the page showed all four links to somebody genuinely locked out, every click
+ * spent another attempt, and the loop this panel exists to break was back. The
+ * cap is now the contract's own maximum, which is the only bound `apps/web` can
+ * know without asking the server.
  */
-describe('a made-up countdown cannot hide the login links for long', () => {
-  it('hides them for a wait short enough to be a real lock', () => {
-    expect(signInOptionsVisible({ outcome: 'bi-khoa', retryAfterSeconds: 60 }, true)).toBe(false);
-    expect(
-      signInOptionsVisible(
-        { outcome: 'bi-khoa', retryAfterSeconds: MAX_OPTIONS_HIDDEN_SECONDS },
-        true,
-      ),
-    ).toBe(false);
-  });
-
-  it.each([MAX_OPTIONS_HIDDEN_SECONDS + 1, 3_600, 86_400])(
-    'shows them anyway for a wait of %s seconds',
+describe('a lock hides the login links for as long as the lock can really last', () => {
+  it.each([60, 900, 1_800, 3_600, 86_400])(
+    'hides them for a %s second lock',
     (seconds) => {
-      // The person can try, and find out from the server whether they are really
-      // blocked — which is the only source of truth a URL cannot forge.
-      expect(signInOptionsVisible({ outcome: 'bi-khoa', retryAfterSeconds: seconds }, true)).toBe(
-        true,
-      );
+      expect(
+        signInOptionsVisible({ outcome: 'bi-khoa', retryAfterSeconds: seconds }, true),
+      ).toBe(false);
     },
   );
 
-  it('still shows the countdown itself for a long wait', () => {
-    // Only the LINKS are capped. A genuine `Retry-After: 3600` should still be
-    // readable, or the person is told to wait with no idea how long.
+  it('is the contract maximum, so no configured lock can exceed it', () => {
+    // `RATE_LIMIT_BRUTE_FORCE_LOCK_SECONDS` is an operator knob. Any number this
+    // package writes down instead is a number that can be wrong on a deployment
+    // nobody here has seen.
+    expect(MAX_OPTIONS_HIDDEN_SECONDS).toBe(MAX_SIGN_IN_RETRY_AFTER_SECONDS);
+  });
+
+  it('shows them again for a wait the parser could never have produced', () => {
+    // Defensive only: `parseSignInRetryAfterSeconds` refuses anything above the
+    // contract maximum, so this value cannot arrive from a URL or a header.
+    expect(
+      signInOptionsVisible(
+        { outcome: 'bi-khoa', retryAfterSeconds: MAX_OPTIONS_HIDDEN_SECONDS + 1 },
+        true,
+      ),
+    ).toBe(true);
+  });
+
+  it('shows the countdown for a long lock, and no links beside it', () => {
+    // The person is told how long, and given nothing to click that would spend
+    // another attempt — the two halves have to agree.
     const html = renderPanel({ outcome: 'bi-khoa', retryAfterSeconds: 3_600 }, true);
 
     expect(html).toContain(countdownLabel(3_600));
-    expect(html).toContain('<nav>');
-  });
-
-  it('covers the default brute-force lock, so a real lock does hide them', () => {
-    // `RATE_LIMIT_BRUTE_FORCE_LOCK_SECONDS` defaults to 900.
-    expect(MAX_OPTIONS_HIDDEN_SECONDS).toBeGreaterThanOrEqual(900);
+    expect(html).not.toContain('<nav>');
   });
 });
 
@@ -741,7 +755,13 @@ describe('the panel is one decision, not two', () => {
 
   it('builds the provider links from the configured API origin', () => {
     const html = renderToStaticMarkup(
-      <SignInPanel notice={null} canSignIn loading={false} apiBaseUrl="https://api.example" />,
+      <SignInPanel
+        notice={null}
+        canSignIn
+        loading={false}
+        apiBaseUrl="https://api.example"
+        onCountdownFinished={() => undefined}
+      />,
     );
 
     expect(html).toContain('https://api.example/v1/auth/google/start');
@@ -749,7 +769,13 @@ describe('the panel is one decision, not two', () => {
 
   it('says the session is being checked while the answer is not known', () => {
     const html = renderToStaticMarkup(
-      <SignInPanel notice={null} canSignIn={false} loading apiBaseUrl="" />,
+      <SignInPanel
+        notice={null}
+        canSignIn={false}
+        loading
+        apiBaseUrl=""
+        onCountdownFinished={() => undefined}
+      />,
     );
 
     expect(html).toContain('Đang kiểm tra phiên');

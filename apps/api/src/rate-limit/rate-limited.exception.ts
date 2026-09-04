@@ -1,6 +1,6 @@
 import { HttpException } from '@nestjs/common';
 import { RATE_LIMITED_MESSAGE, makeError } from '@stuwith/contracts';
-import type { RateLimitChannel } from '@stuwith/domain';
+import type { RateLimitAction, RateLimitChannel } from '@stuwith/domain';
 
 /**
  * "This caller is over the limit", raised by the guard and turned into a response
@@ -28,6 +28,16 @@ export class RateLimitedException extends HttpException {
   constructor(
     readonly channel: RateLimitChannel,
     readonly retryAfterSeconds: number,
+    /**
+     * Which route was refused.
+     *
+     * The channel decides the SHAPE of the answer; the action decides one detail
+     * the shape does not cover — a refused `/callback` never reaches the handler
+     * that would have cleared this attempt's state cookie, so the filter has to do
+     * it. Clearing on every browser leg instead would kill an in-flight attempt in
+     * another tab whenever `/start` was refused.
+     */
+    readonly action: RateLimitAction,
   ) {
     super(
       makeError('rate_limited', RATE_LIMITED_MESSAGE, {

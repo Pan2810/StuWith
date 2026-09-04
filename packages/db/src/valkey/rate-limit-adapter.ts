@@ -1,5 +1,6 @@
 import type { RateLimitDecision, RateLimitPort } from '@stuwith/domain';
 import {
+  DEFAULT_REPAIR_SECONDS,
   assertValidLimit,
   assertValidRateLimitKey,
   assertValidWindowSeconds,
@@ -27,11 +28,27 @@ import { HIT_COMMAND, LOCK_COMMAND, REMAINING_COMMAND, type ValkeyClient } from 
  * in `apps/api/src/rate-limit/rate-limit.guard.ts`, where there is enough context
  * to write the `error` line that says the layer is not working.
  */
+
+
 /**
- * The expiry given to a key found alive with none. Long enough that a repaired
- * lock is still a lock, short enough that a mistake ages out within the hour.
+ * The reply from a script was not the shape this adapter expects.
+ *
+ * A distinct class, and not a plain `Error` mentioning Valkey, because of what
+ * `apps/api` does with the difference. `isStoreFault` there decides whether a
+ * failure earns the fail-open, and it used to match the WORD "valkey" anywhere in
+ * a message — so this error, which means the script or this file is wrong while
+ * Valkey is perfectly healthy, was classified as "the store could not answer".
+ * The layer then failed open silently and the log pointed the operator at a
+ * service that had nothing wrong with it. A bug of ours has to surface as the 500
+ * it is, and a named class is what lets the other side tell the two apart without
+ * reading prose.
+ *
+ * It is recognised across the package boundary by `name`, so `apps/api` needs no
+ * import of `@stuwith/db` in the module that classifies errors.
  */
-const DEFAULT_REPAIR_SECONDS = 900;
+export class ValkeyReplyShapeError extends Error {
+  override readonly name = 'ValkeyReplyShapeError';
+}
 
 export class ValkeyRateLimitAdapter implements RateLimitPort {
   constructor(private readonly client: ValkeyClient) {}
@@ -88,7 +105,7 @@ export class ValkeyRateLimitAdapter implements RateLimitPort {
  */
 function readPair(reply: unknown): [number, number] {
   if (!Array.isArray(reply) || reply.length < 2) {
-    throw new Error('valkey: unexpected reply shape from the rate-limit script');
+    throw new ValkeyReplyShapeError('unexpected reply shape from the rate-limit script');
   }
   return [readNumber(reply[0]), readNumber(reply[1])];
 }
@@ -104,5 +121,5 @@ function readNumber(value: unknown): number {
   if (typeof value === 'string' && /^-?[0-9]+$/.test(value)) {
     return Number(value);
   }
-  throw new Error('valkey: expected an integer reply');
+  throw new ValkeyReplyShapeError('expected an integer reply');
 }

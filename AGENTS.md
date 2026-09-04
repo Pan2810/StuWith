@@ -390,13 +390,51 @@ required check is a silent pass, so both the workflow and
   policy only, so AD-1 is untouched.
 
   **One rule is still ours, because the library has no opinion on it:** a list that
-  trusts addresses out on the public internet is refused. `compileTrustedProxies`
-  asks the compiled predicate about a spread of public probe addresses, and a list
-  that trusts any of them is a configuration error. The rule is about REACH rather
-  than notation, so `0.0.0.0/0`, a single `/1` and whatever the next spelling turns
-  out to be are all caught by the same check — which is exactly what the two
-  bit-counting rounds could not do. The trade: a deployment whose edge really is
-  one of those addresses is refused, and the error names the address it tripped on.
+  reaches out onto the public internet is refused. A fourth round found the third
+  version of that rule — nine public PROBE addresses handed to the compiled
+  predicate — was a SAMPLE: `32.0.0.0/3`, `40.0.0.0/5`, `96.0.0.0/4` and
+  `132.0.0.0/6` all fitted between the nine points and were accepted, so a peer
+  connecting directly from `40.1.2.3` could forge `X-Forwarded-For` again. Every
+  round until then had patched the example it was shown.
+
+  The rule now DECIDES, over sets rather than over examples, and it is written into
+  the spec under "Bất biến của danh sách proxy":
+
+  > a range is accepted if and only if it lies entirely inside internal/special
+  > address space, OR it covers no more addresses than the ceiling for its family.
+
+  Both halves are computed from the range's own prefix length, so they hold for
+  every spelling including ones nobody has thought of. The ceilings are `2^20` for
+  IPv4 (a `/12`, which is the largest range a real edge operator publishes —
+  Cloudflare's `104.16.0.0/12`) and `2^16` for IPv6. The IPv6 one is deliberately
+  much tighter, and not for symmetry: `::ffff:0:0/96` is where the library maps
+  every IPv4 address, so a token that reads like an ordinary IPv6 subnet would
+  otherwise trust the whole IPv4 internet. Any ceiling below `2^32` makes that
+  impossible by arithmetic rather than by spotting the mapped spelling.
+
+  **There is still no address parsing of ours.** The prefix length is read from the
+  token's own text as a decimal integer; the address half is validated by
+  `node:net`; "is this range inside internal space" is answered by asking a
+  predicate `@fastify/proxy-addr` compiled, using the fact that two CIDR blocks are
+  either nested or disjoint. `packages/config/src/trusted-proxies.test.ts` is a
+  PROPERTY test that sweeps every prefix length across every `/8` of IPv4 and a
+  spread of IPv6 against an independent model of the invariant — not a list of
+  examples, which is what failed four times.
+
+  Two spellings are refused that a permissive reading would allow, both on purpose:
+  a netmask (`10.0.0.0/255.0.0.0`), because measuring its width means parsing an
+  address, and anything `@fastify/proxy-addr` compiles that `node:net` does not
+  recognise, because that is the round-three failure where the config validated
+  while the two views of the list disagreed. The trade on the main rule: a
+  deployment whose edge really is a wide public range is refused, and the error
+  names the token, its size and what to write instead.
+
+  **The library is pinned to one copy by `overrides` in `pnpm-workspace.yaml`, and
+  `tests/gates/proxy-addr-single-copy.test.ts` proves it.** "Fastify and we cannot
+  disagree" was true only by coincidence: two workspace packages declared `5.1.0`
+  and Fastify resolved its own, which happened to match. A Fastify bump carrying a
+  different version would have split the process into two readings of the proxy
+  list, silently, in a green CI run.
 
   **Near-empty values are refused too, and each was a real bypass.** `''` (read
   with `z.coerce.number()` when this was a hop count: `Number('')` is `0`, `0`
@@ -423,6 +461,13 @@ required check is a silent pass, so both the workflow and
   the process does another — but it is a change somebody could meet during a
   deploy, so it is written down here.
 
+  A LEADING ZERO is refused too, and that is the same rule rather than an extra
+  one: `SESSION_TTL_SECONDS=03600` started yesterday and exits non-zero today.
+  `Number('030')` is 30, an octal reader says 24, and the operator meant "thirty,
+  padded" — three answers to one string, which is exactly what this change is
+  about. A bare `0` is still a digit string; whether zero is a legal value is the
+  range check's question.
+
   `API_PORT` and `GATEWAY_PORT` deliberately still use `z.coerce`: they are
   pre-existing, have their own tests, and were out of this story's scope. That
   inconsistency is known, not accidental.
@@ -443,12 +488,24 @@ required check is a silent pass, so both the workflow and
   If you add a third place that touches the counter store, report through
   `RateLimitHealth` rather than a logger.
 
-- **The fail-open branch catches STORE FAULTS only.** It used to be "anything that
-  is not a `RateLimitInputError`", which swallowed every `TypeError` and
-  `RangeError` in `apps/api` as well: a plain bug was reported for ever as "the
+- **The fail-open branch catches STORE FAULTS only, in BOTH places.** It used to be
+  "anything that is not a `RateLimitInputError`", which swallowed every `TypeError`
+  and `RangeError` in `apps/api` as well: a plain bug was reported for ever as "the
   counter store did not answer", pointed the alert at Valkey, and left the layer
   off. `isStoreFault` decides positively — a connection, timeout or protocol
   failure from the client library — and everything else surfaces as the 500 it is.
+
+  Both places, and that needed saying because for one round it was one: the guard
+  used `isStoreFault` while `AuthService.withRateLimitStore` — the half that runs
+  `countFailure` and `forgetFailures` on `/callback` and `/refresh` — still kept
+  the old rule.
+
+  `isStoreFault` does NOT match the words "valkey" or "redis" any more. They
+  matched a product name rather than a failure, so the adapter's own
+  `ValkeyReplyShapeError` (a bug in the script or in `packages/db`, thrown while
+  Valkey is healthy) was classified as an outage: the layer failed open in silence
+  and the alert pointed at a service with nothing wrong with it. That class is now
+  recognised BY NAME as a defect of ours.
 
 - **The Valkey client's offline queue is ON, and that is not the obvious choice.**
   It was `false`, reasoning that a command must reject rather than park. What that
@@ -509,6 +566,21 @@ required check is a silent pass, so both the workflow and
 
   A successful `/refresh` clears its own credential counter, for the same reason
   and with none of the sharing.
+
+- **A provider's 401, 403 or 429 is OUR problem, not evidence of an attack.**
+  `fetchJson` treated every 4xx from a provider as "the provider refused what we
+  sent" and mapped it to `code_rejected`, which counts towards the brute-force
+  lock. But `401 invalid_client` means our client secret is wrong or expired —
+  Apple's is rotated every six months — and 403/429 are our app being disabled or
+  our own quota. On the day the secret expires, nobody could sign in AND everybody
+  would then be locked out for fifteen minutes, with the log calling it a
+  brute-force attempt. Only `400` and `404` count now; the rest travel as
+  `provider_exchange_failed`, which is on the innocent list.
+
+  The innocent/counted split is a `Record` over the reason union in `audit.ts`, not
+  a `Set` of one side. A set has a default, so a thirteenth reason added later
+  silently fell into "counted" — the dangerous direction. A missing key is now a
+  typecheck error.
 
 - **`POST /v1/auth/logout` is not rate limited, and cannot become so by accident.**
   Every other `/v1/auth` route carries `@RateLimited(...)`. Logout carries nothing,

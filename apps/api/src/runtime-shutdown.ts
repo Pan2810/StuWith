@@ -44,11 +44,30 @@ export class RuntimeShutdown implements OnApplicationShutdown {
         timer.unref?.();
       });
 
-      const outcome = await Promise.race([this.runtime.close().then(() => 'closed' as const), bounded]);
+      const closing = this.runtime.close().then(() => 'closed' as const);
+      const outcome = await Promise.race([closing, bounded]);
       if (outcome === 'timeout') {
         this.logger.warn(
           `the runtime did not finish closing within ${this.timeoutMs}ms; exiting anyway`,
         );
+        /**
+         * A failure that arrives AFTER the timeout has already won the race.
+         *
+         * `Promise.race` subscribes to both promises, so a late rejection is
+         * already *handled* — there is no `unhandledRejection` here, and adding a
+         * blanket `.then(ok, ok)` to make sure would also swallow the ordinary
+         * failure the `catch` below reports. What was actually missing is that a
+         * late failure went nowhere at all: the only line written said "did not
+         * finish in time", and the reason it never finished — a pool wedged
+         * against an unresponsive database, a socket that refused to close — was
+         * dropped. It is the one thing that would explain the timeout.
+         */
+        void closing.catch((late: unknown) => {
+          this.logger.warn(
+            'the runtime failed to close after the shutdown timeout had already passed',
+            late instanceof Error ? late.stack : String(late),
+          );
+        });
       }
     } catch (error) {
       this.logger.error(

@@ -23,10 +23,12 @@
  * unreadable — hands anybody who can produce an unreadable address a way past the
  * whole feature. It is never LOCKED on, though: see `bruteForceSubjectFor`.
  *
- * It starts with `!` so that nothing arriving from outside can equal it. The value
- * was once the bare word `unknown`, which RFC 7239 explicitly permits as a real
- * node identifier and which `keySegment('')` also produced — three unrelated
- * situations sharing one bucket.
+ * It lives in a namespace {@link keySegment} cannot write into. Every value from
+ * outside comes back prefixed with {@link EXTERNAL_SEGMENT_PREFIX} and made of
+ * `[a-z0-9._-]` only, so no outside value — however it is spelled — can come out
+ * as `!unresolved`. The value was once the bare word `unknown`, which RFC 7239
+ * explicitly permits as a real node identifier and which `keySegment('')` also
+ * produced: three unrelated situations sharing one bucket.
  */
 export const UNKNOWN_CLIENT_IP = '!unresolved';
 
@@ -82,14 +84,35 @@ const UNSAFE_KEY_SEGMENT = /[^a-z0-9._:-]/g;
 const MAX_KEY_SEGMENT_LENGTH = 80;
 
 /**
+ * The namespace every value from OUTSIDE is written into.
+ *
+ * This is what keeps the sentinels below unforgeable, and it replaces a claim that
+ * was simply false. The old rule was "both sentinels start with `!`, and `!` is
+ * not in the safe alphabet" — but cleaning REPLACES `!` with `_` rather than
+ * rejecting it, so `keySegment('!unresolved')`, `keySegment('_unresolved')` and
+ * `keySegment('@unresolved')` all produced the one string `_unresolved`, which was
+ * also what `keySegment(UNKNOWN_CLIENT_IP)` produced. Three outside spellings and
+ * the sentinel, one bucket — while the docblock promised the opposite.
+ *
+ * With a prefix the two spaces are separated by CONSTRUCTION rather than by which
+ * characters happen to survive: a segment either begins with `x.`, in which case
+ * something outside produced it, or it begins with `!`, in which case this file
+ * did. The two cannot meet whatever anybody writes in a header.
+ */
+const EXTERNAL_SEGMENT_PREFIX = 'x.';
+
+/**
  * What an empty value becomes — distinct from `UNKNOWN_CLIENT_IP`.
  *
  * They used to be the same string, so "the address could not be read" and "the
  * caller passed an empty segment" shared one bucket with each other and with any
  * chain entry that literally said `unknown` (RFC 7239 permits that word). Three
- * unrelated situations, one budget. Both sentinels now start with `!`, which no
- * address `normalizeIpAddress` returns can contain and no external value can
- * produce once it has been through this function.
+ * unrelated situations, one budget.
+ *
+ * Nothing outside can reach it: an outside value is prefixed and cleaned, and the
+ * empty string is the only input that produces this branch at all, because
+ * cleaning replaces characters rather than dropping them and therefore never
+ * shortens a value.
  */
 export const EMPTY_KEY_SEGMENT = '!empty';
 
@@ -98,14 +121,24 @@ export const EMPTY_KEY_SEGMENT = '!empty';
  *
  * Keys are built from a header and from a cookie, so this is the boundary where a
  * hostile value stops being able to change the SHAPE of the key — a segment
- * containing a `:` could otherwise impersonate a different dimension.
+ * containing a `:` could otherwise impersonate a different dimension — and, since
+ * the `x.` prefix, the boundary where it stops being able to impersonate one of
+ * this file's own sentinels either.
+ *
+ * There is deliberately NO branch that returns a value unchanged. A sentinel is
+ * never produced by this function for a non-empty input, whatever the input is —
+ * which is what makes "an outside value cannot become a sentinel" a property of
+ * the code rather than a claim about which characters survive cleaning. The one
+ * place a sentinel is legitimately the value of a key is
+ * {@link rateLimitRulesFor}, which composes the segment itself rather than asking
+ * this function to recognise one.
  */
 export function keySegment(value: string): string {
   const cleaned = value.toLowerCase().replace(UNSAFE_KEY_SEGMENT, '_').replace(/:/g, '.');
   if (cleaned.length === 0) {
-    return EMPTY_KEY_SEGMENT.replace(UNSAFE_KEY_SEGMENT, '_');
+    return EMPTY_KEY_SEGMENT;
   }
-  return cleaned.slice(0, MAX_KEY_SEGMENT_LENGTH);
+  return `${EXTERNAL_SEGMENT_PREFIX}${cleaned}`.slice(0, MAX_KEY_SEGMENT_LENGTH);
 }
 
 /** `rl:<dimension>:<action>:<value>` — one namespace, so a flush is possible later. */
@@ -114,7 +147,23 @@ export function rateLimitKey(
   action: RateLimitAction | 'sign_in',
   value: string,
 ): string {
-  return `rl:${dimension}:${action}:${keySegment(value)}`;
+  return keyFromSegment(dimension, action, keySegment(value));
+}
+
+/**
+ * The same key, from a segment this file already owns.
+ *
+ * Separate from {@link rateLimitKey} so that {@link keySegment} needs no
+ * "unless it is one of ours" branch. That branch is what made the sentinels
+ * forgeable: recognising `!unresolved` on the way IN means an outside value
+ * spelled that way is recognised too.
+ */
+function keyFromSegment(
+  dimension: RateLimitDimension,
+  action: RateLimitAction | 'sign_in',
+  segment: string,
+): string {
+  return `rl:${dimension}:${action}:${segment}`;
 }
 
 /**
@@ -261,7 +310,20 @@ export function rateLimitRulesFor(
   const rules: RateLimitRule[] = [
     {
       dimension: 'ip',
-      key: rateLimitKey('ip', action, subject.clientIp),
+      /**
+       * The one place a sentinel is the value of a key, and the reason it is
+       * composed here rather than recognised inside `keySegment`.
+       *
+       * `clientIpOf` returns either an address `node:net` validated or exactly
+       * {@link UNKNOWN_CLIENT_IP}; nothing else can be in this field. So the
+       * comparison is on a value this codebase produced, while `keySegment` — the
+       * function that sees strings from headers and cookies — keeps no branch that
+       * could be tricked into producing a sentinel.
+       */
+      key:
+        subject.clientIp === UNKNOWN_CLIENT_IP
+          ? keyFromSegment('ip', action, UNKNOWN_CLIENT_IP)
+          : rateLimitKey('ip', action, subject.clientIp),
       limit: settings.ipLimit,
       windowSeconds: settings.ipWindowSeconds,
     },

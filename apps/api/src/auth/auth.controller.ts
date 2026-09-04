@@ -5,12 +5,12 @@ import {
   resolveRequestId,
   type TrustedProxyTrust,
 } from '@stuwith/config';
-import { UNKNOWN_CLIENT_IP, type RateLimitSubject } from '@stuwith/domain';
+import type { RateLimitSubject } from '@stuwith/domain';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import { APP_CONFIG, type AppConfig } from '../config.token';
 import { RateLimited } from '../rate-limit/rate-limit.decorator';
-import { clientIpOf, userHandleOf } from '../rate-limit/request-identity';
+import { rateLimitSubjectOf } from '../rate-limit/request-identity';
 import { AuthService, type AuthOutcome } from './auth.service';
 
 /**
@@ -147,16 +147,17 @@ export class AuthController {
    * 500 rather than the 303 Story 1.3 part 1 established. `clientIpOf` and
    * `userHandleOf` are now total in themselves, and this is the belt to that
    * braces — the brute-force bookkeeping is never worth failing a request over.
+   *
+   * It is now literally the same FUNCTION the guard calls, not the same pair of
+   * calls written out twice, and the difference mattered: this copy wrapped both
+   * in ONE `try`, so a throw out of the cookie half discarded an address the
+   * guard had resolved perfectly well on the same request — the two halves of the
+   * brute-force bookkeeping then keyed on different values, which is the exact
+   * disagreement the shared answer exists to prevent. `rateLimitSubjectOf` gives
+   * each half its own `try`.
    */
   private subjectOf(request: FastifyRequest): RateLimitSubject {
-    try {
-      return {
-        clientIp: clientIpOf(request, this.trust),
-        userHandle: userHandleOf(request, this.config.SESSION_COOKIE_SECRET),
-      };
-    } catch {
-      return { clientIp: UNKNOWN_CLIENT_IP };
-    }
+    return rateLimitSubjectOf(request, this.trust, this.config.SESSION_COOKIE_SECRET);
   }
 }
 

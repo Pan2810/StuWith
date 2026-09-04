@@ -179,13 +179,22 @@ export interface HarnessOptions {
   readonly captureLogs?: boolean;
 
   /**
-   * Story 1.3 part 2. The defaults are deliberately HIGH — every existing example
-   * in `auth.flow.test.ts` makes dozens of requests from `127.0.0.1`, and a
-   * production-sized budget would turn them all into a cascade of 429s that had
+   * Story 1.3 part 2. The proxy list the harness's server is started with.
+   *
+   * It defaults to {@link NO_TRUSTED_PROXIES}: the harness connects to the server
+   * directly, so the socket address IS the client and `X-Forwarded-For` must be
+   * ignored entirely. A test that wants the proxy rows of the matrix declares the
+   * loopback peer here.
+   */
+  readonly trustedProxies?: string;
+
+  /**
+   * The rate-limit knobs. The defaults are deliberately HIGH — every existing
+   * example in `auth.flow.test.ts` makes dozens of requests from `127.0.0.1`, and
+   * a production-sized budget would turn them all into a cascade of 429s that had
    * nothing to do with what they are testing. The rate-limit suite sets them low
    * on purpose.
    */
-  readonly trustedProxies?: string;
   readonly ipLimit?: number;
   readonly ipWindowSeconds?: number;
   readonly userLimit?: number;

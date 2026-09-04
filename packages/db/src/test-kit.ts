@@ -1219,7 +1219,7 @@ export function runRateLimitPortContract(options: RateLimitPortContractOptions):
        * The harness plants one directly, because nothing this port does can produce
        * it — which is why the branch had no coverage at all.
        */
-      it('repairs a key that is alive with no expiry', async () => {
+      it('repairs a key that is alive with no expiry, on all THREE paths', async () => {
         const active = await use();
         const plant = active.plantKeyWithoutExpiry;
         if (plant === undefined) {
@@ -1229,14 +1229,46 @@ export function runRateLimitPortContract(options: RateLimitPortContractOptions):
           );
         }
 
+        /**
+         * The repair value is CHECKED, not just its existence.
+         *
+         * `remainingSeconds` took a `repairSeconds` argument that only its own
+         * default could supply — it was on neither the port nor any call site — so
+         * the branch healed to a constant nothing could observe and this example
+         * could only say "not null". Healing to fifteen minutes and healing to a
+         * century were the same assertion.
+         */
+        const REPAIR_SECONDS = 42;
+
         await plant.call(active, 'c:no-expiry');
         // Reading it heals it: this is the path a LOCK is read through, where a key
         // with no expiry is a lockout with nothing to release it.
-        expect(await active.port.remainingSeconds('c:no-expiry')).not.toBeNull();
+        const healed = await active.port.remainingSeconds('c:no-expiry', REPAIR_SECONDS);
+        expect(healed).not.toBeNull();
+        expect(healed ?? 0).toBeGreaterThan(0);
+        expect(healed ?? 0).toBeLessThanOrEqual(REPAIR_SECONDS);
 
         await plant.call(active, 'c:no-expiry-hit');
         await active.port.hit('c:no-expiry-hit', LIMIT, WINDOW_SECONDS);
-        expect(await active.port.remainingSeconds('c:no-expiry-hit')).not.toBeNull();
+        const afterHit = await active.port.remainingSeconds('c:no-expiry-hit');
+        expect(afterHit).not.toBeNull();
+        // `hit` heals to the WINDOW, which is the only lifetime it knows about.
+        expect(afterHit ?? 0).toBeLessThanOrEqual(WINDOW_SECONDS);
+
+        /**
+         * `lock` was the path with no coverage at all, and the in-memory adapter
+         * did not repair there while the Lua script did — so the two stores
+         * disagreed on exactly the key whose missing expiry is a permanent
+         * lockout. `SET … NX` is a no-op against an existing key, so without the
+         * repair nothing would ever give that key an expiry.
+         */
+        await plant.call(active, 'c:no-expiry-lock');
+        const relocked = await active.port.lock('c:no-expiry-lock', LOCK_SECONDS);
+        expect(relocked).toBeGreaterThan(0);
+        expect(relocked).toBeLessThanOrEqual(LOCK_SECONDS);
+        const afterLock = await active.port.remainingSeconds('c:no-expiry-lock');
+        expect(afterLock).not.toBeNull();
+        expect(afterLock ?? 0).toBeLessThanOrEqual(LOCK_SECONDS);
       }, exampleTimeoutMs);
 
       it('does not push the window out when a refused attempt arrives', async () => {

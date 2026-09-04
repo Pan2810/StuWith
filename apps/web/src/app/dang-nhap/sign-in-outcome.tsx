@@ -17,6 +17,7 @@
 
 import {
   AUTH_PROVIDERS,
+  MAX_SIGN_IN_RETRY_AFTER_SECONDS,
   RATE_LIMITED_MESSAGE,
   SIGN_IN_OUTCOME_QUERY_PARAM,
   SIGN_IN_RETRY_AFTER_QUERY_PARAM,
@@ -255,19 +256,26 @@ export function nextLocationAfterOutcome(location: PageLocation): OutcomeLocatio
  * with no login buttons under it is an instruction that cannot be followed.
  */
 /**
- * The longest a notice from the URL may hide the login links.
+ * The longest a notice may hide the login links: the absolute ceiling the
+ * contract puts on a retry-after value, and nothing narrower.
  *
- * The countdown itself may show up to `MAX_SIGN_IN_RETRY_AFTER_SECONDS` (a day),
- * because the number came from a real `Retry-After` and a long lock is a real
- * thing. Hiding the only way to sign in is different: `?ket-qua=bi-khoa&giay=86400`
- * is a link a stranger can send to somebody who is not rate-limited at all, and a
- * page with no login links for a day is a denial of service delivered by URL.
+ * It was `900`, the DEFAULT brute-force lock, and that was a number this package
+ * had no right to know. `RATE_LIMIT_BRUTE_FORCE_LOCK_SECONDS` is configurable up
+ * to a day, so a deployment that set it to 1800 produced real locks that sailed
+ * over this cap: the page then showed all four provider links to somebody who was
+ * genuinely locked out, and every click spent another attempt and bounced them
+ * back — the exact loop `SignInPanel` exists to break, re-opened by a constant in
+ * the wrong package.
  *
- * Fifteen minutes is the default brute-force lock, so a genuine lock is covered
- * and anything beyond it falls back to showing the links — the person can try, and
- * find out from the server whether they are really blocked.
+ * The remaining reason for a cap at all is that `?ket-qua=bi-khoa&giay=86400` is a
+ * link a stranger can send to somebody who is not rate-limited. Two things bound
+ * that, and neither needs a guessed number: the value is filtered through
+ * `parseSignInRetryAfterSeconds`, so nothing beyond the contract's own maximum is
+ * ever shown, and `nextLocationAfterOutcome` strips both parameters from the
+ * address bar immediately — so a reload clears the notice rather than serving out
+ * a day of it.
  */
-export const MAX_OPTIONS_HIDDEN_SECONDS = 900;
+export const MAX_OPTIONS_HIDDEN_SECONDS = MAX_SIGN_IN_RETRY_AFTER_SECONDS;
 
 /**
  * Whether to offer the four provider links.
@@ -320,8 +328,15 @@ export function SignInPanel({
   readonly canSignIn: boolean;
   readonly loading: boolean;
   readonly apiBaseUrl: string;
-  /** Told when the wait ends, so the links come back. */
-  readonly onCountdownFinished?: () => void;
+  /**
+   * Told when the wait ends, so the links come back.
+   *
+   * REQUIRED, for the same reason `notice` is one prop rather than two: while it
+   * was optional, forgetting it typechecked and shipped a page whose countdown
+   * reached zero and left the four links hidden for ever — the person is told to
+   * wait, waits, and is then given nothing to click.
+   */
+  readonly onCountdownFinished: () => void;
 }) {
   const presentation = notice === null ? null : OUTCOME_NOTICES[notice.outcome];
   // Only one outcome has anything to count, and a number that arrived beside any

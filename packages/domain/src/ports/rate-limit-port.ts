@@ -31,6 +31,17 @@
 export const MAX_RATE_LIMIT_KEY_LENGTH = 200;
 
 /**
+ * The expiry given to a key found alive with none.
+ *
+ * Long enough that a repaired lock is still a lock, short enough that a mistake
+ * ages out within the hour. It lives here rather than in each adapter because
+ * both stores must heal to the same place — two different constants would mean
+ * the in-memory pass and the Valkey pass disagreed about a value no test could
+ * see.
+ */
+export const DEFAULT_REPAIR_SECONDS = 900;
+
+/**
  * A caller passed something that cannot be a rate-limit question. A defect in the
  * calling code, not an outcome of the rule, so it throws rather than occupying a
  * branch every correct caller would have to handle.
@@ -97,9 +108,22 @@ export interface RateLimitPort {
    * Never creates the key and never counts an attempt — this is how a lock is
    * checked without the check itself extending the lock.
    *
+   * A key found ALIVE WITH NO EXPIRY is repaired to `repairSeconds` rather than
+   * reported as "wait for ever". That state is reachable in Valkey (an older
+   * build, a manual `SET`, a partially applied script) and this is the path a LOCK
+   * is read through, so leaving it alone is a permanent lockout with nothing to
+   * release it.
+   *
+   * The parameter is on the PORT, not only on the adapters. Both implementations
+   * grew it as a default argument that no caller could reach, so the repair ran on
+   * a constant nothing could see and the contract suite could only assert "not
+   * null" — the difference between healing to fifteen minutes and healing to a
+   * century was untestable. {@link DEFAULT_REPAIR_SECONDS} is the value production
+   * uses; a test passes its own and checks the TTL it gets back.
+   *
    * @throws {RateLimitInputError} when `key` is not a usable key.
    */
-  remainingSeconds(key: string): Promise<number | null>;
+  remainingSeconds(key: string, repairSeconds?: number): Promise<number | null>;
 
   /**
    * Start a lock on `key` for `seconds`, and answer with its REAL remaining time.

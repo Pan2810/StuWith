@@ -1,11 +1,13 @@
 import { Catch, Inject, type ArgumentsHost, type ExceptionFilter } from '@nestjs/common';
 import {
+  AUTH_COOKIE_PATH,
   RATE_LIMITED_MESSAGE,
   SIGN_IN_OUTCOME_QUERY_PARAM,
   SIGN_IN_RETRY_AFTER_QUERY_PARAM,
   makeError,
 } from '@stuwith/contracts';
-import type { FastifyReply } from 'fastify';
+import type { FastifyReply, FastifyRequest } from 'fastify';
+import { clearCookie, oauthStateCookies, parseCookies } from '../auth/cookies';
 import { APP_CONFIG, type AppConfig } from '../config.token';
 import { RateLimitedException } from './rate-limited.exception';
 import { RATE_LIMITED_OUTCOME } from './request-identity';
@@ -26,8 +28,33 @@ export class RateLimitedFilter implements ExceptionFilter<RateLimitedException> 
 
   catch(exception: RateLimitedException, host: ArgumentsHost): void {
     const reply = host.switchToHttp().getResponse<FastifyReply>();
+    const request = host.switchToHttp().getRequest<FastifyRequest>();
 
     if (exception.channel === 'browser') {
+      /**
+       * The attempt cookies this refused request would have cleared itself.
+       *
+       * A guard runs BEFORE the handler, so a refused `/callback` never reaches
+       * `failedSignIn` — the one place that clears the per-attempt state cookie.
+       * Each blocked attempt therefore left its cookie behind until `Max-Age` ran
+       * out, and since `/start` mints one per attempt, a burst against a locked
+       * address grew the `Cookie` header on every later request from that browser
+       * until the server refused the header itself.
+       *
+       * Only the callback leg, deliberately. A refused `/start` has minted
+       * nothing, and clearing there would kill an attempt that is in flight in
+       * another tab.
+       */
+      const doomed =
+        exception.action === 'auth_callback'
+          ? oauthStateCookies(parseCookies(request.headers?.cookie)).map(([name]) =>
+              clearCookie(name, AUTH_COOKIE_PATH),
+            )
+          : [];
+      if (doomed.length > 0) {
+        reply.header('set-cookie', doomed);
+      }
+
       const location = new URL(`${this.config.WEB_BASE_URL}/dang-nhap`);
       location.searchParams.set(SIGN_IN_OUTCOME_QUERY_PARAM, RATE_LIMITED_OUTCOME);
       location.searchParams.set(

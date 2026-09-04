@@ -48,6 +48,14 @@ const httpUrl = z
  * in `.env.example`, so the strictness costs nothing and removes a whole class of
  * "the config says 1e3 and the log says 1000".
  *
+ * A leading zero is refused too, and that is the same rule rather than an extra
+ * one. `'030'` is `30` under `Number()`, `24` if anything ever reads it as octal,
+ * and "thirty written oddly" to the person who typed it — three answers to one
+ * string, which is exactly the class of silent coercion this function exists to
+ * stop and the one `parseSignInRetryAfterSeconds` already refuses on the wire. A
+ * bare `'0'` is still a digit string; the range checks decide whether zero is
+ * allowed for that particular variable.
+ *
  * The `unknown` input type is deliberate: `process.env` values are strings, but a
  * test may pass a number, and a number that is already a whole number is fine.
  */
@@ -55,7 +63,7 @@ function onlyDigits(value: unknown): unknown {
   if (typeof value === 'number') {
     return value;
   }
-  if (typeof value === 'string' && /^[0-9]{1,12}$/.test(value)) {
+  if (typeof value === 'string' && /^(0|[1-9][0-9]{0,11})$/.test(value)) {
     return Number(value);
   }
   // Anything else reaches `z.number()` unchanged and is rejected there, naming

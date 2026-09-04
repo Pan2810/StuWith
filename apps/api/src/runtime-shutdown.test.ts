@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { Logger } from '@nestjs/common';
+import { describe, expect, it, vi } from 'vitest';
 import type { AuthRuntime } from './auth/auth.runtime';
 import { RuntimeShutdown } from './runtime-shutdown';
 
@@ -67,6 +68,53 @@ describe('RuntimeShutdown', () => {
     await expect(shutdown.onApplicationShutdown()).resolves.toBeUndefined();
 
     expect(Date.now() - startedAt).toBeLessThan(2_000);
+  });
+
+  /**
+   * A close that FAILS after the timeout has already won the race.
+   *
+   * It is not an `unhandledRejection` — `Promise.race` subscribes to both
+   * promises, so a late rejection is handled, and a blanket `.then(ok, ok)` to
+   * "make sure" would also swallow the ordinary failure the `catch` reports. What
+   * was genuinely lost is the REASON: the only line written said "did not finish
+   * in time", and the failure that explains why it never finished — a pool wedged
+   * against an unresponsive database, a socket that refused to close — went
+   * nowhere at all.
+   */
+  it('reports a failure that arrives after it has already given up', async () => {
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const unhandled: unknown[] = [];
+    const record = (reason: unknown): void => {
+      unhandled.push(reason);
+    };
+    process.on('unhandledRejection', record);
+
+    try {
+      const shutdown = new RuntimeShutdown(
+        runtimeWith(
+          () =>
+            new Promise<void>((_resolve, reject) => {
+              setTimeout(() => reject(new Error('pool.end never returned')), 40).unref?.();
+            }),
+        ),
+        5,
+      );
+
+      await shutdown.onApplicationShutdown();
+      // Long enough for the rejection to land after the hook has returned.
+      await new Promise((resolve) => setTimeout(resolve, 150));
+
+      const written = warn.mock.calls.map((call) => String(call[0])).join(' | ');
+      expect(written, 'the timeout line alone never explains itself').toContain(
+        'failed to close after the shutdown timeout',
+      );
+      expect(unhandled, 'and the late rejection is still handled, not thrown at the process').toEqual(
+        [],
+      );
+    } finally {
+      process.off('unhandledRejection', record);
+      warn.mockRestore();
+    }
   });
 
   it('still waits for a close that finishes inside the bound', async () => {

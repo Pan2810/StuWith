@@ -114,3 +114,39 @@ Việc đã được xác nhận là thật nhưng cố ý hoãn. Mỗi mục gh
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-3b-rate-limit-dang-nhap.md`
   summary: Ba dòng cuối của đồng hồ đếm ngược — việc React thực sự gọi callback trong setTimeout — chưa có test, vì project `web` cố ý không có môi trường DOM.
   evidence: Đã thu hẹp qua ba vòng: vòng 1 chỉ grep source tìm chữ setTimeout; vòng 2 test hàm thuần nextTickDelayMs; vòng 3 tiêm `clock` thành prop nên renderToStaticMarkup render được component thật ở hai thời điểm và so số. Phần dư còn lại là hợp đồng của chính React chứ không phải logic của ta — làm rỗng callback trong setTimeout thì test vẫn xanh. Con người chọn chấp nhận ngày 2026-09-04 thay vì thêm jsdom. Story 1.6 dựng lại trọn trang này; nếu 1.6 cần DOM cho việc khác thì gánh luôn chỗ này.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-3b-rate-limit-dang-nhap.md`
+  summary: Offline queue của iovalkey không có trần, nên một sự cố Valkey kéo dài trong lúc /v1/auth bị bắn dồn dập sẽ phình bộ nhớ tiến trình API.
+  evidence: Vòng 3 đổi `enableOfflineQueue` về `true` để sửa lỗi request đầu tiên bị từ chối oan, và đó là sửa đúng. Nhưng iovalkey xếp hàng lệnh không giới hạn khi client chưa `ready`; mỗi lệnh giữ tham chiếu cho tới khi `commandTimeout` cắt. Ở tải bình thường thì vô hại vì timeout ngắn, nên đây là rủi ro vận hành chứ không phải lỗi — cần một trần hàng đợi hoặc bỏ lệnh khi `client.status !== 'ready'` quá N lệnh chờ. Nằm ngoài 1.3b vì nó đụng chính sách kết nối, không phải chính sách đếm.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-3b-rate-limit-dang-nhap.md`
+  summary: Trong lúc Valkey treo, mỗi request /v1/auth phải chờ cộng dồn khoảng ba lần `VALKEY_COMMAND_TIMEOUT_MS` trước khi được cho đi tiếp.
+  evidence: Guard đọc khoá lock rồi gọi `hit` hai lần (theo IP và theo user), mỗi lệnh tự chịu một timeout riêng. Fail-open nghĩa là mọi request đó chắc chắn sẽ được cho qua — nên độ trễ này là thuần lãng phí, đúng thứ mà một timeout nhỏ được đặt ra để tránh. Cần một ngân sách thời gian cho cả lượt enforce thay vì cho từng lệnh, hoặc một circuit breaker ngắn mạch sau lần hỏng đầu. Không phải lỗi đúng-sai nên không vá trong vòng review.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-3b-rate-limit-dang-nhap.md`
+  summary: `apps/api/src/main.ts` không đóng Nest app ở nhánh catch, nên `RuntimeShutdown` có thể gọi `close()` lần thứ hai.
+  evidence: Nếu `NestFactory.create` thành công mà `configureHttpApp` hoặc `app.listen` ném, code gọi tay `runtime.close()` còn app vẫn sống với `enableShutdownHooks()` đã bật; `onApplicationShutdown` sau đó có thể `pool.end()` lần hai. `RuntimeShutdown` nuốt lỗi nên hiện không vỡ, và đường thoát này chưa có test nào (`app.shutdown.test.ts` chỉ đi đường thành công). Là lỗi khởi động của Story 1.2, không phải 1.3b.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-3b-rate-limit-dang-nhap.md`
+  summary: Bốn file test dựng `ApiEnv` bằng `as unknown as ApiEnv`, vô hiệu hoá đúng lớp an toàn mà `packages/config` tồn tại để cung cấp.
+  evidence: `app.shutdown.test.ts`, `http-setup.test.ts`, `rate-limit.guard.test.ts`, `rate-limited.filter.test.ts`. Thêm một biến env bắt buộc sau này sẽ không làm file nào trong số đó đỏ, dù chúng đang mô phỏng cấu hình production — tức AD-14 (fail-fast lúc khởi động) không được các test này bảo vệ. Cần một builder `testApiEnv()` trả về `ApiEnv` thật, có kiểu đầy đủ. Đụng nhiều story nên tách riêng.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-3b-rate-limit-dang-nhap.md`
+  summary: `RATE_LIMITED_OUTCOME` (mã UI `bi-khoa`) đang nằm trong `apps/api/src/rate-limit/request-identity.ts`, một file tự mô tả là chỉ suy ra hai giá trị chính sách cần.
+  evidence: `rate-limited.filter.ts` import ngược lên đó để lấy hằng số trình bày. Chỗ đúng của nó là cạnh `SIGN_IN_OUTCOMES` trong `packages/contracts`, hoặc trong chính filter. Thuần phân lớp, không đổi hành vi, nên không vá giữa vòng review đang tập trung vào bảo mật.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-3b-rate-limit-dang-nhap.md`
+  summary: Nhánh `refusedByProvider = true` cho lỗi nonce không khớp trong `oidc-provider.ts` chưa có ví dụ nào chạm tới.
+  evidence: `FakeAuthorizationServer` luôn phát lại đúng `nonce` của request nên không đường test nào tạo được nonce lệch; ví dụ duy nhất chứng minh `code_rejected` có đếm lại đi qua nhánh 400 `invalid_grant` của `fetchJson`. Đổi đối số `true` về `false` thì replay id_token quay lại tập vô tội và không test nào đỏ. Cần một cờ trong fake server để phát nonce sai. Ghi nhận riêng vì vòng 4 đã sửa chính cách phân loại 4xx, nên nhánh này cần được xem lại cùng lúc với việc đó chứ không vá vội.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-3b-rate-limit-dang-nhap.md`
+  summary: Hằng số 900 giây được nhân bản trong hai adapter dưới tên `DEFAULT_REPAIR_SECONDS`, không nơi nào là nguồn.
+  evidence: `packages/db/src/in-memory/rate-limit-adapter.ts` và `packages/db/src/valkey/rate-limit-adapter.ts` cùng khai 900, trùng giá trị mặc định của `RATE_LIMIT_BRUTE_FORCE_LOCK_SECONDS` nhưng không đọc từ đó. Người vận hành đổi biến env thì TTL vá của một khoá mất hạn vẫn là 900. Gắn với M16 (chữ ký `remainingSeconds` lệch giữa port và adapter) nên nên xử lý cùng lúc.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-3b-rate-limit-dang-nhap.md`
+  summary: Trần "quá rộng" của danh sách proxy áp cho TỪNG token, không cho tổng cả danh sách, nên nhiều token hợp lệ cộng lại vẫn phủ rất rộng.
+  evidence: Probe thật sau vòng 4: `1.0.0.0/12,2.0.0.0/12,3.0.0.0/12,4.0.0.0/12` được chấp nhận — mỗi token đúng 2^20 nên qua trần, tổng là 4 triệu địa chỉ công cộng; danh sách 100 token thì 100 triệu. Bất biến ghi trong spec phát biểu theo một dải, nên hiện thực làm đúng thứ được yêu cầu; thiếu sót nằm ở phát biểu. Chưa vá trong vòng 4 vì nó cần một quyết định mới của con người: trần tổng là bao nhiêu, và có nên tính riêng phần công cộng với phần nội bộ không (danh sách nội bộ dài là chuyện bình thường). Rủi ro thực tế thấp — cần người vận hành cố ý dán một danh sách dài — nhưng nó là cạnh duy nhất còn lại của luật này.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-3b-rate-limit-dang-nhap.md`
+  summary: Luật proxy mới vẫn cho phép tin tới 2^20 địa chỉ công cộng mỗi token, nên một lỗi gõ một chữ số có thể âm thầm mở rộng vùng tin cậy.
+  evidence: `192.168.0.0/15` được chấp nhận vì 2^17 dưới trần, nhưng nó phủ cả `192.169.0.0/16` vốn là không gian công cộng — trong khi ý định của người gõ gần như chắc chắn là `/16`. Trần 2^20 là quyết định có chủ đích để một token chứa được `104.16.0.0/12` của Cloudflare, nên đây không phải lỗi mà là bề mặt còn lại của đánh đổi đó. Cần cân nhắc: cảnh báo (không chặn) khi một dải công cộng được khai mà không phải dải đã biết của một CDN, hoặc bắt khai riêng biến `TRUSTED_PROXY_PUBLIC_RANGES` để việc tin địa chỉ công cộng luôn là hành động cố ý.

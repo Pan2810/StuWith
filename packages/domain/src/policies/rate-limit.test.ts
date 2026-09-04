@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   BRUTE_FORCE_DIMENSIONS,
+  EMPTY_KEY_SEGMENT,
   RATE_LIMIT_ACTIONS,
   UNKNOWN_CLIENT_IP,
   bruteForceCounterKey,
@@ -29,11 +30,11 @@ const CLIENT = '203.0.113.7';
 
 describe('keys cannot be reshaped by the value inside them', () => {
   it('strips characters that could impersonate another dimension', () => {
-    expect(keySegment('ip:auth_me:victim')).toBe('ip.auth_me.victim');
+    expect(keySegment('ip:auth_me:victim')).toBe('x.ip.auth_me.victim');
   });
 
   it('replaces anything outside the safe alphabet', () => {
-    expect(keySegment('a b/c\nd')).toBe('a_b_c_d');
+    expect(keySegment('a b/c\nd')).toBe('x.a_b_c_d');
   });
 
   it('caps the length, so a long header cannot grow the key without bound', () => {
@@ -47,11 +48,65 @@ describe('keys cannot be reshaped by the value inside them', () => {
     expect(keySegment('')).not.toBe(keySegment(UNKNOWN_CLIENT_IP));
   });
 
-  it('keeps the unknown bucket out of reach of anything arriving from outside', () => {
-    // RFC 7239 permits the literal word `unknown` as a node identifier, so a real
-    // chain entry can say it. It must not land in the bucket reserved for "this
-    // address could not be read".
-    expect(keySegment(UNKNOWN_CLIENT_IP)).not.toBe(keySegment('unknown'));
+  /**
+   * The sentinels, against outside values written to LOOK like them.
+   *
+   * This is the hole M1 found: cleaning replaced `!` with `_` rather than
+   * rejecting it, so `'!unresolved'`, `'_unresolved'` and `'@unresolved'` from
+   * outside all cleaned to the single string `_unresolved` — which was exactly
+   * what `keySegment(UNKNOWN_CLIENT_IP)` produced too. Anybody who could put one
+   * of those in a header shared the bucket reserved for "this address could not
+   * be read", while the docblock promised that could not happen.
+   *
+   * The separation is now the `x.` prefix on every outside value, so it holds for
+   * spellings nobody has thought of rather than for the three below.
+   */
+  it.each([
+    'unknown',
+    '!unresolved',
+    '_unresolved',
+    '@unresolved',
+    '!empty',
+    '_empty',
+  ])('no outside value, however spelled, becomes a sentinel segment (%s)', (outside) => {
+    expect(keySegment(outside)).not.toBe(UNKNOWN_CLIENT_IP);
+    expect(keySegment(outside)).not.toBe(EMPTY_KEY_SEGMENT);
+  });
+
+  /**
+   * The bucket, not just the segment — this is the assertion that would have gone
+   * red on the old code.
+   *
+   * `keySegment` used to replace `!` with `_`, so `'!unresolved'`, `'_unresolved'`
+   * and `'@unresolved'` from a header all cleaned to `_unresolved`, which was
+   * exactly what the unresolved sentinel cleaned to as well. Anybody who could
+   * put one of those in the address field shared the bucket reserved for "this
+   * address could not be read". The separation is now the `x.` prefix, so it
+   * holds for spellings nobody has thought of rather than for the three below.
+   *
+   * The literal string `!unresolved` is deliberately absent from the table: it IS
+   * the sentinel, so "an outside value equal to it" is not a distinguishable case
+   * at this layer. It is unreachable one layer up instead — `clientIpOf` returns
+   * either an address `node:net` validated or the constant itself, and no IP
+   * address contains `!`.
+   */
+  it.each(['unknown', '_unresolved', '@unresolved', '!!unresolved', 'x.!unresolved'])(
+    'an outside address spelled like the sentinel (%s) gets a different key',
+    (outside) => {
+      const ours = rateLimitRulesFor('auth_start', { clientIp: UNKNOWN_CLIENT_IP }, SETTINGS);
+      const theirs = rateLimitRulesFor('auth_start', { clientIp: outside }, SETTINGS);
+
+      expect(theirs[0]?.key).not.toBe(ours[0]?.key);
+    },
+  );
+
+  it('puts every outside value in one namespace and the sentinels in another', () => {
+    // Structural, not alphabetical: the prefix is added unconditionally, so there
+    // is no input at all that produces a segment in the sentinels' namespace.
+    expect(keySegment('203.0.113.7').startsWith('x.')).toBe(true);
+    expect(UNKNOWN_CLIENT_IP.startsWith('x.')).toBe(false);
+    expect(EMPTY_KEY_SEGMENT.startsWith('x.')).toBe(false);
+    expect(keySegment('')).toBe(EMPTY_KEY_SEGMENT);
   });
 
   it('keeps the counter and the lock distinct, which is what makes both rows true', () => {
@@ -250,7 +305,7 @@ describe('the unresolved bucket', () => {
     const rules = rateLimitRulesFor('auth_start', { clientIp: UNKNOWN_CLIENT_IP }, SETTINGS);
 
     expect(rules).toHaveLength(1);
-    expect(rules[0]?.key).toBe(rateLimitKey('ip', 'auth_start', UNKNOWN_CLIENT_IP));
+    expect(rules[0]?.key).toBe(`rl:ip:auth_start:${UNKNOWN_CLIENT_IP}`);
   });
 
   it('never LOCKS on it, so one such caller cannot lock out the rest', () => {

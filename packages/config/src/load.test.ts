@@ -524,6 +524,11 @@ describe('numeric knobs are digits, not whatever Number() will swallow', () => {
     ['a trailing decimal', '30.0'],
     ['a leading plus', '+30'],
     ['infinity', 'Infinity'],
+    // `Number('030')` is 30, an octal reader says 24, and the operator meant
+    // "thirty, padded" — three answers to one string. It is the same coercion
+    // `parseSignInRetryAfterSeconds` refuses on the wire.
+    ['a leading zero', '030'],
+    ['several leading zeros', '0030'],
   ])('refuses %s for a limit', (_label, raw) => {
     const result = parseApiEnv({ ...completeApiEnv, RATE_LIMIT_IP_MAX: raw });
 
@@ -534,8 +539,21 @@ describe('numeric knobs are digits, not whatever Number() will swallow', () => {
     ['hexadecimal', '0x10'],
     ['exponential', '1e3'],
     ['padded', ' 3600 '],
+    ['a leading zero', '03600'],
   ])('refuses %s for a duration', (_label, raw) => {
     expect(parseApiEnv({ ...completeApiEnv, SESSION_TTL_SECONDS: raw }).ok).toBe(false);
+  });
+
+  it('still accepts a bare zero where the range allows one', () => {
+    // `'0'` is a digit string; whether zero is a legal VALUE is the range check's
+    // question, and for a limit the answer is no — but for the right reason.
+    const result = parseApiEnv({ ...completeApiEnv, RATE_LIMIT_IP_MAX: '0' });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.problems).toContainEqual(
+      expect.objectContaining({ variable: 'RATE_LIMIT_IP_MAX' }),
+    );
   });
 
   it('still accepts an ordinary digit string', () => {

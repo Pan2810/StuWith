@@ -4,7 +4,7 @@ type: 'feature'
 created: '2026-09-04'
 baseline_commit: 'eaceeff266bdb8901e25d86e6bb691671fdb918c'
 status: 'done'
-review_loop_iteration: 3
+review_loop_iteration: 4
 context:
   - '{project-root}/_bmad-output/implementation-artifacts/epic-1-context.md'
   - '{project-root}/AGENTS.md'
@@ -115,15 +115,62 @@ context:
 
 ## Spec Change Log
 
+### Vòng 4 — 2026-09-04
+
+**Finding kích hoạt:** `compileTrustedProxies` chấp nhận `32.0.0.0/3`, `40.0.0.0/5`,
+`96.0.0.0/4`, `132.0.0.0/6`. Chạy thật: peer nối trực tiếp từ `40.1.2.3` đặt
+`X-Forwarded-For: 9.9.9.9` và hệ thống trả về `9.9.9.9`. Đây là lần thứ tư của cùng một lớp
+lỗi trong cùng một hàm.
+
+**Đã sửa gì trong spec:** thêm mục "Bất biến của danh sách proxy" (ngoài khối frozen), phát
+biểu điều kiện chấp nhận theo tập hợp và bắt buộc test phải là property test duyệt không gian
+prefix. Ba vòng trước spec chỉ nêu *ví dụ* cần chặn, nên mỗi vòng lập trình viên lại đoán lại
+ranh giới và đoán hụt. Cũng sửa bốn liên kết chết trỏ tới `client-address.ts` đã xoá, và một
+câu trong Design Notes vẫn khẳng định phép suy IP là hàm thuần trong `packages/domain`.
+
+**Trạng thái xấu đã tránh:** theo đúng chữ của workflow, finding này là `bad_spec` và phải
+revert toàn bộ story rồi re-derive. Con người đã hai lần chốt "vá tới, không revert" cho đúng
+vùng này (vòng 1 và vòng 3), nên giữ nguyên quyết định đó — nhưng bất biến được ghi vào spec
+để lần sau không phải suy ra từ ví dụ.
+
+**KEEP — phải sống sót qua mọi lần re-derive:**
+- Không tự parse IP hay CIDR ở bất kỳ đâu trong repo. Chỉ `@fastify/proxy-addr`.
+- Luật "quá rộng" quyết định chính xác, không lấy mẫu. Không thêm địa chỉ mẫu để bịt ví dụ mới.
+- `trustProxy` nhận **chuỗi**, không bao giờ nhận số.
+- Adapter Valkey không có `try/catch`.
+- `logout` không bao giờ bị rate limit.
+- Đếm ngược lấy từ `PTTL` thật, làm tròn lên.
+- Lỗi 4xx của provider **không** mặc nhiên là "ai đó đoán code": 401 và 429 là lỗi cấu hình
+  hoặc quota của chính ta và không được tính vào khoá brute-force.
+
 ## Design Notes
 
-**Vì sao `trustProxy` là phần nguy hiểm nhất, không phải bộ đếm:** bộ đếm sai thì thấy ngay. `trustProxy` sai thì im lặng và sai theo hai chiều đối nghịch — để mặc định `false` sau Caddy thì **mọi người dùng chung một IP**, một người bị khoá là cả sản phẩm bị khoá; bật `true` thì `X-Forwarded-For` hoàn toàn do client đặt, thêm một hop giả là vượt được giới hạn, tức lớp chặn tồn tại mà không chặn gì. Cả hai đều cho ra CI xanh. Vì vậy phép suy IP là **hàm thuần trong domain**, test được với chuỗi XFF dựng sẵn, chứ không phải một cờ boolean chôn trong bootstrap.
+**Vì sao `trustProxy` là phần nguy hiểm nhất, không phải bộ đếm:** bộ đếm sai thì thấy ngay. `trustProxy` sai thì im lặng và sai theo hai chiều đối nghịch — để mặc định `false` sau Caddy thì **mọi người dùng chung một IP**, một người bị khoá là cả sản phẩm bị khoá; bật `true` thì `X-Forwarded-For` hoàn toàn do client đặt, thêm một hop giả là vượt được giới hạn, tức lớp chặn tồn tại mà không chặn gì. Cả hai đều cho ra CI xanh. Vì vậy phép suy IP phải nằm ở **một chỗ duy nhất, test được**, chứ không phải một cờ boolean chôn trong bootstrap. (Vòng 3 đổi chỗ đó từ một hàm thuần trong `packages/domain` sang `apps/api/src/rate-limit/request-identity.ts` gọi `@fastify/proxy-addr` — xem Change Log.)
 
 **Vì sao adapter không được tự fail open:** cám dỗ là `try/catch` ngay trong adapter Valkey rồi trả "cho phép". Làm vậy thì fault biến thành refusal — chính điều `heartbeat-port.ts` cấm — và caller mất khả năng phân biệt "còn lượt" với "hệ thống mù". Adapter để lỗi bay lên; guard ở `apps/api` bắt, quyết định cho qua, **và ghi log**. Quyết định nằm ở nơi biết đủ ngữ cảnh để ghi lại nó.
 
 **Vì sao đếm ngược lấy từ TTL:** trả về hằng số cấu hình thì người dùng chờ đủ số giây được bảo rồi vẫn bị từ chối, vì cửa sổ thật bắt đầu sớm hơn. AC viết "đếm ngược **thật**", và thứ duy nhất biết sự thật là khoá đang sống trong Valkey.
 
 **Vì sao `logout` được miễn:** mọi endpoint khác bị chặn là bất tiện; `logout` bị chặn là giữ người ta trong một phiên họ đang muốn thoát — nhất là trên máy dùng chung. Đó là lý do bảo mật, không phải ngoại lệ cho tiện.
+
+### Bất biến của danh sách proxy
+
+`compileTrustedProxies` phải từ chối một dải **quá rộng**, và phép kiểm đó phải **quyết định
+chính xác**, không được lấy mẫu. Ba vòng review đầu đều vá theo ví dụ được nêu — đếm hop, rồi
+`/0`, rồi `/1`–`/7` — và vòng 4 lại tìm ra `32.0.0.0/3`, `40.0.0.0/5`, `96.0.0.0/4`,
+`132.0.0.0/6` đi lọt, vì luật khi đó hỏi predicate xem nó có tin **chín địa chỉ mẫu** không.
+Dải nào nằm lọt giữa chín điểm đó thì qua. Lấy mẫu không trả lời được câu hỏi bao phủ.
+
+Bất biến, phát biểu theo tập hợp chứ không theo ví dụ: **một dải được chấp nhận khi và chỉ khi
+nó nằm trọn trong không gian địa chỉ nội bộ/đặc biệt, HOẶC nó đủ nhỏ để là một đội proxy có
+thật.** "Đủ nhỏ" là một trần đếm địa chỉ, không phải một ngưỡng số bit đặt tay — `/12` IPv4
+(1.048.576 địa chỉ) đủ chứa dải lớn nhất của Cloudflare, còn `10.0.0.0/8` được nhận nhờ nhánh
+thứ nhất chứ không nhờ kích thước.
+
+Test cho luật này phải là **property test duyệt toàn không gian prefix** — mọi độ dài prefix
+từ `/0` tới `/24` ở nhiều offset trải khắp IPv4, cộng phần IPv6 tương ứng — chứ không phải một
+danh sách ví dụ. Một test liệt kê ví dụ chỉ chứng minh được rằng ví dụ đã biết đã được vá, mà
+đó đúng là thứ đã hỏng bốn lần liên tiếp.
 
 ## Verification
 
@@ -185,16 +232,15 @@ và không mất bộ test hợp đồng hai lượt vốn đã chạy trên Val
 **Suy IP thật — đọc trước tiên, đây là chỗ cả story sống hoặc chết**
 
 - Điểm vào: header chỉ được đọc khi peer đúng là proxy đã khai; nối trực tiếp thì bỏ hẳn.
-  [`client-address.ts:495`](../../packages/domain/src/policies/client-address.ts#L495)
+  Không tự parse IP — gọi thẳng `@fastify/proxy-addr`, cùng bản Fastify 5 dùng.
+  [`request-identity.ts`](../../apps/api/src/rate-limit/request-identity.ts)
 
-- `/0` bị từ chối như cấu hình sai: một prefix rộng vô hạn là `trustProxy: true` trá hình.
-  [`client-address.ts:403`](../../packages/domain/src/policies/client-address.ts#L403)
+- Dải khai quá rộng bị từ chối lúc khởi động, và phép kiểm phải **chính xác** chứ không
+  lấy mẫu: xem bất biến ở mục "Bất biến của danh sách proxy" bên dưới.
+  [`trusted-proxies.ts`](../../packages/config/src/trusted-proxies.ts)
 
 - Parse ra không proxy nào cũng là lỗi, trừ khi người vận hành viết đúng chữ `none`.
-  [`client-address.ts:338`](../../packages/domain/src/policies/client-address.ts#L338)
-
-- Chốt chặn thứ hai: từ chối prefix 0 ngay tại chỗ so khớp, phòng khi khâu parse bị nới.
-  [`client-address.ts:440`](../../packages/domain/src/policies/client-address.ts#L440)
+  [`trusted-proxies.ts`](../../packages/config/src/trusted-proxies.ts)
 
 **Chính sách khoá**
 

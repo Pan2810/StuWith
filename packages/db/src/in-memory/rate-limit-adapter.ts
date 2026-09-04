@@ -1,5 +1,6 @@
 import type { ClockPort, RateLimitDecision, RateLimitPort } from '@stuwith/domain';
 import {
+  DEFAULT_REPAIR_SECONDS,
   assertValidLimit,
   assertValidRateLimitKey,
   assertValidWindowSeconds,
@@ -35,12 +36,6 @@ interface Entry {
  * sleeps for fifteen minutes. With `FixedClock` the same assertions are exact and
  * instant, and the Valkey pass then proves the real store agrees.
  */
-/**
- * The expiry given to a key found alive with none — the same value the Valkey
- * adapter uses, so both stores heal to the same place.
- */
-const DEFAULT_REPAIR_SECONDS = 900;
-
 export class InMemoryRateLimitAdapter implements RateLimitPort {
   private readonly entries = new Map<string, Entry>();
 
@@ -116,6 +111,16 @@ export class InMemoryRateLimitAdapter implements RateLimitPort {
     const nowMs = this.clock.now().getTime();
     const existing = this.live(key, nowMs);
     if (existing !== null) {
+      // The same repair `hit` and `remainingSeconds` do, and the same one
+      // `LOCK_SCRIPT` does on the Valkey side. `SET … NX` is a no-op against an
+      // existing key, so a lock key that somehow has no expiry would never gain
+      // one — a permanent lockout with nothing to release it. This adapter used
+      // to skip the repair here alone, so the two stores disagreed on the branch
+      // that matters most, and the contract suite could not see it because it
+      // only planted keys for `hit` and `remainingSeconds`.
+      if (!Number.isFinite(existing.expiresAtMs)) {
+        existing.expiresAtMs = nowMs + seconds * 1_000;
+      }
       // Never shorten, and never restart. Re-locking on every later failure would
       // make the number the person is watching jump back up, and a lock that
       // cannot run out is a ban rather than a cool-down.

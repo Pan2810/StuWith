@@ -10,8 +10,19 @@ packages:
 # compiler for `nest build` is @typescript/typescript6@6.0.2. This override is what
 # makes `pnpm --filter api build` actually run on 6.0.2 rather than on whatever the
 # CLI happened to ship. Root `typecheck` still runs on typescript@7.0.2.
+#
+# `@fastify/proxy-addr` is pinned for a different reason, and it is a security
+# one. `packages/config` compiles `TRUSTED_PROXY_ADDRESSES` with it and
+# `apps/api` resolves the client address with the same compiled predicate, while
+# Fastify resolves its own copy for `request.ip`. "Fastify and we cannot disagree
+# about who is trusted" is stated as a property of the WIRING in three docblocks
+# and in AGENTS.md — but nothing enforced it: all three declarations happened to
+# resolve to 5.1.0 today, and a Fastify bump carrying a different version would
+# have made the two views of the proxy list differ silently, in a CI run that
+# stays green. The override makes one copy the only copy.
 overrides:
   '@nestjs/cli>typescript': 'npm:@typescript/typescript6@6.0.2'
+  '@fastify/proxy-addr': '5.1.0'
 
 # pnpm 11 refuses to run a dependency's install scripts unless it is listed here.
 # All three are optional native/codegen accelerations pulled in transitively by
