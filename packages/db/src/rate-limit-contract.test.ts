@@ -56,6 +56,9 @@ runRateLimitPortContract({
         clock.advance(milliseconds);
       },
       createFaultingPort: async () => new UnreachableRateLimitAdapter(),
+      plantKeyWithoutExpiry: async (key: string) => {
+        adapter.plantKeyWithoutExpiry(key);
+      },
     };
   },
 });

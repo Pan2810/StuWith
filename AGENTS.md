@@ -119,7 +119,9 @@ apps/realtime-gateway    NestJS on Fastify. WebSocket, coin scheduler, sessions.
 packages/domain          Pure rules and ports. No infrastructure, ever.
 packages/contracts       Wire vocabulary for /v1 and the audit row shape. Emits OpenAPI.
 packages/db              Postgres AND Valkey adapters, migrations, the shared contract test-kit.
-packages/config          Env schema, fail-fast startup validation, logging policy.
+packages/config          Env schema, fail-fast startup validation, logging policy,
+                         and the trusted-proxy list (compiled by @fastify/proxy-addr,
+                         the same library and version Fastify itself resolves).
 infra/                   docker compose stack: postgres, valkey, livekit, coturn.
 ```
 
@@ -349,12 +351,11 @@ required check is a silent pass, so both the workflow and
   `heartbeat-port.ts` forbids) and there is nowhere in `packages/db` with the
   context to write that log line.
 
-- **`TRUSTED_PROXY_ADDRESSES` is required, rejects an empty value, and every wrong
-  value is silent.** It is the only non-secret in `.env.example` treated like a
-  secret, and the file ships it **commented out** on purpose — a working default
-  there would drop a copy-paste deployment straight into the failure the comment
-  spends fifteen lines warning about. It holds the addresses/CIDRs of the proxies
-  in front of `apps/api`, or the single word `none`.
+- **`TRUSTED_PROXY_ADDRESSES` is required, rejects every near-empty spelling, and
+  is compiled by `@fastify/proxy-addr` — not by us.** It is the only non-secret in
+  `.env.example` treated like a secret, and the file ships it **commented out** on
+  purpose. It holds the addresses/CIDRs of the proxies in front of `apps/api`, or
+  the single word `none`.
 
   - Declare too FEW (or `none` behind Caddy) and `X-Forwarded-For` is ignored, so
     every visitor is counted as the proxy — the first person to trip the limit
@@ -363,90 +364,116 @@ required check is a silent pass, so both the workflow and
     can forge the header and pick their own rate-limit key, so the blocking layer
     exists and blocks nothing.
 
-  Both produce a green CI run and a healthy-looking deployment, which is why the
-  IP inference is a pure function in `packages/domain`
-  (`resolveClientIp` in `policies/client-address.ts`) rather than a boolean in
-  `main.ts`: it is unit-tested with hand-written header strings, proxy and all.
+  Both produce a green CI run and a healthy-looking deployment.
 
-  **This replaced a hop COUNT, and the reason is worth keeping.** Hop-count trust
-  cannot check who the immediate peer is, so one declared hop plus a direct
-  connection carrying `X-Forwarded-For: 1.2.3.4` made the attacker's own header the
-  key. `fastify@5.12.1` removed numeric `trustProxy` for exactly that reason —
-  `lib/request.js`: *"Hop-count-only trust cannot validate the immediate peer. Fail
-  closed so direct clients cannot spoof X-Forwarded-\* values by supplying enough
-  hops."* The header is now read **only** when the socket peer matches a declared
-  proxy, and the walk stops at the first chain entry that is not one.
+  **There is no IP or CIDR parser in this repository, and there must not be one
+  again.** There was: `packages/domain/src/policies/client-address.ts`. Three
+  review rounds found three different holes in it, each time in the fix for the
+  last one:
 
-  **Three near-empty spellings and one too-wide range are refused explicitly, and
-  every one of them was a real bypass.** Each passed validation with an empty
-  problem list, so nothing was said:
+  1. it counted HOPS rather than checking the peer, so a direct client with a
+     forged `X-Forwarded-For` chose its own rate-limit key;
+  2. it accepted `0.0.0.0/0`, which matches everything;
+  3. it accepted `0.0.0.0/1` and `128.0.0.0/1` — two tokens that between them
+     cover all of IPv4 — because the fix for (2) was a one-bit floor. It also
+     accepted `1.2.3.4::` and `2001:db8:1.2.3.4::1`, which `net.isIP` rejects,
+     while handing the same raw string to Fastify: the config validated while the
+     two views of the list disagreed.
 
-  - the empty string — read with `z.coerce.number()` back when this was a hop
-    count. `Number('')` is `0`, `0` passed `.min(0)`, and because zod raised
-    nothing, `toProblems` in `packages/config/src/load.ts` never ran its
-    empty-string-means-missing mapping either.
-  - `,` and `" , "` — length 1, so `.trim().min(1)` was satisfied, and the parser
-    returned zero proxies with nothing invalid. The process came up with
-    `trustProxy: false`; behind Caddy that is every visitor in one bucket, and the
-    first person to trip the limit locks out the product.
-  - `0.0.0.0/0` and `::/0` — a zero-bit prefix compares nothing, so every address
-    of the family matched and a direct client's own `X-Forwarded-For` became the
-    rate-limit key again. One token, and the deployment was back to `trustProxy:
-    true`.
+  Every round patched the named example instead of the class. The file is deleted.
+  `packages/config/src/trusted-proxies.ts` compiles the list with
+  **`@fastify/proxy-addr@5.1.0`** — the FORK Fastify 5 resolves, not upstream
+  `proxy-addr` — and `apps/api/src/rate-limit/request-identity.ts` resolves the
+  address with the same library and the same compiled predicate. "Fastify and we
+  cannot disagree about who is trusted" is now a property of the wiring, not of a
+  test comparing two implementations. `packages/domain` keeps key building and
+  policy only, so AD-1 is untouched.
 
-  `parseTrustedProxies` reports all four as configuration errors. Any future
-  variable added here needs a schema that refuses the empty string on its own —
-  `z.coerce.number()` with a minimum of `0` does not — and any future range check
-  needs a floor on the prefix.
+  **One rule is still ours, because the library has no opinion on it:** a list that
+  trusts addresses out on the public internet is refused. `compileTrustedProxies`
+  asks the compiled predicate about a spread of public probe addresses, and a list
+  that trusts any of them is a configuration error. The rule is about REACH rather
+  than notation, so `0.0.0.0/0`, a single `/1` and whatever the next spelling turns
+  out to be are all caught by the same check — which is exactly what the two
+  bit-counting rounds could not do. The trade: a deployment whose edge really is
+  one of those addresses is refused, and the error names the address it tripped on.
 
-  **The declared list and the candidate addresses are normalised by ONE function.**
-  They were not: candidates were folded from IPv4-mapped IPv6 to plain IPv4 and
-  declarations were not, while `withinPrefix` refuses to compare across families.
-  So an operator who wrote `::ffff:10.0.0.2` — the spelling Node hands back on a
-  dual-stack socket — had a config that validated as correct and trusted nothing.
-  Both sides go through `parseIpAddress` now; a third caller must use it too.
+  **Near-empty values are refused too, and each was a real bypass.** `''` (read
+  with `z.coerce.number()` when this was a hop count: `Number('')` is `0`, `0`
+  passed `.min(0)`, and `toProblems` never saw it), `,` and `" , "` (length 1, so
+  `.trim().min(1)` was satisfied and the parser returned zero proxies with nothing
+  invalid). All produced `trustProxy: false` in silence. Any future variable added
+  here needs a schema that refuses `''` on its own.
 
-  **The three runtime call sites throw rather than continue.** `http-setup.ts`,
-  `RateLimitGuard` and `AuthController` read the parsed list through
-  `requireTrustedProxies`, which raises on a non-empty `invalid`. They used to read
-  `.proxies` and ignore the rest, so a typo silently NARROWED trust. The config
-  layer validates first, so reaching that throw means a bug — which is worth
-  stopping for.
+  **Never a NUMBER for `trustProxy`.** Two copies of Fastify are installed and they
+  disagree about what one means: `fastify@5.11.3` — the copy
+  `@nestjs/platform-fastify` resolves, so the one that runs — honours "trust this
+  many hops", while `5.12.1` returns `() => false` for a number as a security fix.
+  `fastifyAdapterOptions` passes the comma-separated string, or `false`.
 
-  **Trap, measured not assumed:** `fastifyAdapterOptions` passes `trustProxy` as a
-  comma-separated **string** (or `false`), never a number. Two copies of Fastify are
-  installed and they disagree about what a number means: `fastify@5.11.3` — the copy
-  `@nestjs/platform-fastify` resolves, so the one that actually runs — honours "trust
-  this many hops", while `5.12.1` returns `() => false` for a number. A numeric
-  literal would therefore mean one thing today and "trust nothing" after a routine
-  dependency bump, silently changing every visitor's counted address. Both versions
-  hand a string to `proxy-addr.compile` unchanged, which is the same list the domain
-  function is given.
+- **The numeric env knobs are digit strings, and that is a BREAKING change for an
+  existing `.env`.** `z.coerce.number()` is `Number()` underneath, so it accepted
+  `0x10` (16), `1e3` (1000), `' 30 '` and `'30.0'` — none of which is the number
+  the operator typed. The rate-limit knobs and the pre-existing `SESSION_*` /
+  `OAUTH_STATE_TTL_SECONDS` TTLs now take digits only.
 
-- **A rate-limit outage logs ONCE, not once per request.** `RateLimitHealth` holds
-  the degraded state that the guard and `AuthService` share; the first failure
-  writes the `error` line with the stack, every failure after it is counted
-  silently, and the first success writes one recovery line saying how many requests
-  went through unchecked. The earlier version wrote a full stack per request from
-  two call sites, which during the exact incident this design anticipates buried the
-  one line an operator needs under thousands of copies of itself. If you add a third
-  place that touches the counter store, report through `RateLimitHealth` rather than
-  a logger.
+  Concretely: a deployment whose `.env` says `SESSION_TTL_SECONDS=3600.0` or
+  ` 3600` started yesterday and exits non-zero today, naming the variable. That is
+  the intended trade — the alternative is a config file that says one thing while
+  the process does another — but it is a change somebody could meet during a
+  deploy, so it is written down here.
 
-- **`RateLimitInputError` is never swallowed by the fail-open path.** A malformed
-  key or a hashing bug is a defect in our code, not an outage; catching it with the
-  store faults would report a permanent bug as a Valkey incident for ever while the
-  layer never blocked anybody again. Both the guard and `AuthService.withRateLimitStore`
-  rethrow it.
+  `API_PORT` and `GATEWAY_PORT` deliberately still use `z.coerce`: they are
+  pre-existing, have their own tests, and were out of this story's scope. That
+  inconsistency is known, not accidental.
 
-- **The Valkey adapter's atomicity is only checked by the Testcontainers pass.**
-  `packages/db/src/valkey/rate-limit-adapter.ts` does `INCR` + `PEXPIRE` inside one
+- **A rate-limit outage logs ONCE, not once per request, and never logs the
+  error's message.** `RateLimitHealth` holds the degraded state that the guard and
+  `AuthService` share; the first failure writes the `error` line with the code
+  path, every failure after it is counted silently, and recovery is announced once
+  after three consecutive successes. The recovery streak is hysteresis: without it
+  an intermittently failing store — the shape a real incident takes — flips the
+  state twice per pair and writes two lines each time.
+
+  The error's **message** is deliberately dropped, and only `error.name` plus the
+  stack frames are logged. `iovalkey` puts the failing command and its arguments in
+  the message, and the argument is the rate-limit key — built from an address or a
+  hashed credential. Story 1.7's whitelist serializer is not here yet to catch it.
+
+  If you add a third place that touches the counter store, report through
+  `RateLimitHealth` rather than a logger.
+
+- **The fail-open branch catches STORE FAULTS only.** It used to be "anything that
+  is not a `RateLimitInputError`", which swallowed every `TypeError` and
+  `RangeError` in `apps/api` as well: a plain bug was reported for ever as "the
+  counter store did not answer", pointed the alert at Valkey, and left the layer
+  off. `isStoreFault` decides positively — a connection, timeout or protocol
+  failure from the client library — and everything else surfaces as the 500 it is.
+
+- **The Valkey client's offline queue is ON, and that is not the obvious choice.**
+  It was `false`, reasoning that a command must reject rather than park. What that
+  produced: `lazyConnect` means the socket is still opening when the first request
+  arrives, so the first login after every start and every reconnect went through
+  UNCOUNTED and wrote the `error` line operators are told to page on — a false
+  alarm, on a healthy Valkey, once per deploy. Adding `void connect()` did not fix
+  it either; the connect is still in flight. The bound is now enforced by
+  `commandTimeout` plus `maxRetriesPerRequest: 0`, and `client.timeout.test.ts`
+  holds it from both sides against a server that completes the handshake and then
+  stalls.
+
+- **The Valkey counter is atomic, and the contract suite now actually checks it.**
+  The Lua in `packages/db/src/valkey/client.ts` does `INCR` + `PEXPIRE` inside one
   `EVAL`, because as two commands a process that dies between them leaves a counter
   with **no expiry** — a key that never resets, so the person it belongs to is
-  locked out permanently and nothing in the product can say why. Splitting the
-  script back into two commands passes every in-memory assertion. Only
-  `rate-limit-contract.valkey.test.ts` can see the difference, which is why gate 3
-  runs both passes and why `STUWITH_SKIP_TESTCONTAINERS` is refused in CI.
+  locked out permanently and nothing in the product can say why.
+
+  For two rounds nothing could see the difference: every example called `hit`
+  sequentially and none looked at the expiry the FIRST hit left behind, so
+  rewriting it as `INCR` then an awaited `PEXPIRE` passed everything. The suite now
+  asserts a live expiry immediately after the first hit, and runs `limit + 5`
+  concurrent hits expecting exactly `limit` allowances. Both scripts also REPAIR a
+  key found alive with no expiry, and the harnesses can plant one — the branch had
+  no coverage on either pass until they could.
 
 - **The brute-force lock runs one dimension per channel: a browser leg by ADDRESS,
   a `fetch` leg by CREDENTIAL.** `bruteForceSubjectFor` in `packages/domain` is the

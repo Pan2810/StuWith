@@ -32,7 +32,12 @@ import {
 import { APP_CONFIG, type AppConfig } from '../config.token';
 import { RateLimitHealth } from '../rate-limit/rate-limit-health';
 import { AUTH_RUNTIME, type AuthRuntime } from './auth.runtime';
-import { recordSignInFailed, recordSignedIn, type SignInFailureReason } from './audit';
+import {
+  INNOCENT_SIGN_IN_FAILURES,
+  recordSignInFailed,
+  recordSignedIn,
+  type SignInFailureReason,
+} from './audit';
 import {
   clearAllAuthCookies,
   clearCookie,
@@ -316,8 +321,7 @@ export class AuthService {
       // throw while minting the client secret, and a provider that returns a blank
       // or oversized subject makes `toProviderIdentity` throw `IdentityInputError`.
       // Both are "this login cannot complete", both used to be a silent 500.
-      const reason =
-        error instanceof IdentityInputError ? 'identity_rejected' : 'provider_exchange_failed';
+      const reason = exchangeFailureReason(error);
       return this.failedSignIn(
         requestId,
         provider,
@@ -767,36 +771,6 @@ export class AuthService {
   }
 
       /**
-   * The failure reasons that are NOT the user's fault, and therefore must not walk
-   * anybody towards a lock.
-   *
-   * A brute-force counter exists to answer "is somebody working through a list".
-   * A provider having a bad afternoon, or a consent screen left open past its
-   * state expiry, answers a different question — and counting those means an
-   * outage at Google locks out every person who tried during it, on top of the
-   * outage they already suffered. `user_cancelled` is here for the reason Story
-   * 1.3 part 1 gave: changing your mind is not a failure, and presenting it as one
-   * is both untrue and mildly accusing.
-   *
-   * What IS counted is the shape of an attack: a `state` that does not match, a
-   * missing or replayed `code`, an identity the store refused, a refresh token
-   * nobody issued.
-   */
-  private static readonly INNOCENT_FAILURES: ReadonlySet<SignInFailureReason> = new Set([
-    'user_cancelled',
-    'provider_start_failed',
-    'provider_authorize_failed',
-    'provider_exchange_failed',
-    'state_expired',
-    // Refresh leg. A tab left open overnight, or a session ended from another
-    // device, is not an attack — and locking somebody out because their own
-    // client retried a stale token would be the product punishing normal use.
-    'refresh_cookie_missing',
-    'refresh_token_expired',
-    'session_revoked',
-  ]);
-
-  /**
    * One consecutive failure, in the ONE dimension this channel both counts and
    * enforces.
    *
@@ -821,7 +795,7 @@ export class AuthService {
     subject: RateLimitSubject,
     reason: SignInFailureReason,
   ): Promise<void> {
-    if (AuthService.INNOCENT_FAILURES.has(reason)) {
+    if (INNOCENT_SIGN_IN_FAILURES.has(reason)) {
       return;
     }
     const target = bruteForceSubjectFor(channel, subject);
@@ -993,6 +967,7 @@ function publicOutcomeFor(reason: SignInFailureReason): SignInOutcome {
     case 'state_expired':
     case 'code_missing':
     case 'provider_exchange_failed':
+    case 'code_rejected':
     case 'identity_rejected':
       return 'that-bai';
 
@@ -1006,6 +981,26 @@ function publicOutcomeFor(reason: SignInFailureReason): SignInOutcome {
     case 'session_reuse_detected':
       return 'that-bai';
   }
+}
+
+/**
+ * Which kind of exchange failure this was, and therefore whether it counts.
+ *
+ * The distinction is the natural `/callback` attack: call `/start` once for a
+ * valid `state` cookie, then submit guessed `code` values. Every one of those is
+ * a token exchange the provider refuses with a 4xx — and while all of them mapped
+ * to `provider_exchange_failed`, which is on the innocent list, the counter never
+ * moved. Every brute-force test used `?code=nope&state=nope` with no cookie, so
+ * only `state_missing` was ever exercised and the gap was invisible.
+ */
+function exchangeFailureReason(error: unknown): SignInFailureReason {
+  if (error instanceof IdentityInputError) {
+    return 'identity_rejected';
+  }
+  if (error instanceof ProviderExchangeError && error.refusedByProvider) {
+    return 'code_rejected';
+  }
+  return 'provider_exchange_failed';
 }
 
 /**

@@ -17,5 +17,19 @@ import type { RateLimitAction } from '@stuwith/domain';
  */
 export const RATE_LIMIT_ACTION_METADATA = 'stuwith:rate-limit-action';
 
-export const RateLimited = (action: RateLimitAction): MethodDecorator & ClassDecorator =>
+/**
+ * `MethodDecorator`, never `ClassDecorator`, and that is the enforcement rather
+ * than a convention.
+ *
+ * It was typed `MethodDecorator & ClassDecorator` while the guard read class
+ * metadata as a fallback, so a single decorator on `AuthController` would have
+ * rate-limited every route in it — `POST /v1/auth/logout` included. That route is
+ * on the spec's Never list and is called out in three docblocks as the one
+ * endpoint that can never be limited, because limiting it keeps somebody inside a
+ * session they are trying to leave.
+ *
+ * Narrowing the type makes writing it on a class a compile error, and the guard
+ * reads only handler metadata, so it cannot arrive by reflection either.
+ */
+export const RateLimited = (action: RateLimitAction): MethodDecorator =>
   SetMetadata(RATE_LIMIT_ACTION_METADATA, action);

@@ -8,7 +8,16 @@ import {
 
 interface Entry {
   count: number;
-  /** Absolute epoch milliseconds at which this key stops existing. */
+  /**
+   * Absolute epoch milliseconds at which this key stops existing, or
+   * `POSITIVE_INFINITY` for a key that is alive with no expiry.
+   *
+   * Nothing this adapter writes produces the second case — every write sets one —
+   * which is exactly why it needed modelling: Valkey's `-1` PTTL is reachable
+   * there (an older build, a manual `SET`), it is a permanent lockout, and both
+   * stores claim to heal it. `plantKeyWithoutExpiry` is how the contract suite
+   * reaches the branch on this side.
+   */
   expiresAtMs: number;
 }
 
@@ -26,6 +35,12 @@ interface Entry {
  * sleeps for fifteen minutes. With `FixedClock` the same assertions are exact and
  * instant, and the Valkey pass then proves the real store agrees.
  */
+/**
+ * The expiry given to a key found alive with none — the same value the Valkey
+ * adapter uses, so both stores heal to the same place.
+ */
+const DEFAULT_REPAIR_SECONDS = 900;
+
 export class InMemoryRateLimitAdapter implements RateLimitPort {
   private readonly entries = new Map<string, Entry>();
 
@@ -56,6 +71,11 @@ export class InMemoryRateLimitAdapter implements RateLimitPort {
     // NOT push it out. A window renewed on every attempt can never run out for
     // somebody who keeps hammering, so the countdown would never reach zero.
     const entry: Entry = existing ?? { count: 0, expiresAtMs: nowMs + windowSeconds * 1_000 };
+    // The same repair the Lua script performs: a key alive with no expiry would
+    // otherwise be counted for ever with nothing to release it.
+    if (!Number.isFinite(entry.expiresAtMs)) {
+      entry.expiresAtMs = nowMs + windowSeconds * 1_000;
+    }
     entry.count += 1;
     this.entries.set(key, entry);
 
@@ -69,12 +89,24 @@ export class InMemoryRateLimitAdapter implements RateLimitPort {
     return { ok: true, count: entry.count, remaining: limit - entry.count };
   }
 
-  async remainingSeconds(key: string): Promise<number | null> {
+  async remainingSeconds(
+    key: string,
+    repairSeconds = DEFAULT_REPAIR_SECONDS,
+  ): Promise<number | null> {
     assertValidRateLimitKey(key);
 
     const nowMs = this.clock.now().getTime();
     const entry = this.live(key, nowMs);
-    return entry === null ? null : retryAfterSecondsFrom(entry.expiresAtMs - nowMs);
+    if (entry === null) {
+      return null;
+    }
+    // Repairs a key alive with no expiry, exactly as the Valkey script does. This
+    // is the path a LOCK is read through, so a key without an expiry here is a
+    // permanent lockout with nothing to release it.
+    if (!Number.isFinite(entry.expiresAtMs)) {
+      entry.expiresAtMs = nowMs + repairSeconds * 1_000;
+    }
+    return retryAfterSecondsFrom(entry.expiresAtMs - nowMs);
   }
 
   async lock(key: string, seconds: number): Promise<number> {
@@ -115,5 +147,13 @@ export class InMemoryRateLimitAdapter implements RateLimitPort {
 
   reset(): void {
     this.entries.clear();
+  }
+
+  /**
+   * TEST ONLY: the state Valkey can reach and this adapter never writes — a live
+   * key with no expiry. See {@link Entry.expiresAtMs}.
+   */
+  plantKeyWithoutExpiry(key: string): void {
+    this.entries.set(key, { count: 1, expiresAtMs: Number.POSITIVE_INFINITY });
   }
 }

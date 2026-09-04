@@ -1,6 +1,11 @@
 import { Controller, Get, Inject, Param, Post, Req, Res } from '@nestjs/common';
-import { REQUEST_ID_HEADER, resolveRequestId } from '@stuwith/config';
-import { requireTrustedProxies, type RateLimitSubject, type TrustedProxy } from '@stuwith/domain';
+import {
+  REQUEST_ID_HEADER,
+  compileTrustedProxies,
+  resolveRequestId,
+  type TrustedProxyTrust,
+} from '@stuwith/config';
+import { UNKNOWN_CLIENT_IP, type RateLimitSubject } from '@stuwith/domain';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import { APP_CONFIG, type AppConfig } from '../config.token';
@@ -18,14 +23,18 @@ import { AuthService, type AuthOutcome } from './auth.service';
  */
 @Controller('v1/auth')
 export class AuthController {
-  /** Parsed once; the environment was already validated before a port was opened. */
-  private readonly trustedProxies: readonly TrustedProxy[];
+  /** Compiled once; the environment was already validated before a port was opened. */
+  private readonly trust: TrustedProxyTrust;
 
   constructor(
     private readonly auth: AuthService,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {
-    this.trustedProxies = requireTrustedProxies(config.TRUSTED_PROXY_ADDRESSES);
+    const compiled = compileTrustedProxies(config.TRUSTED_PROXY_ADDRESSES);
+    if (!compiled.ok) {
+      throw new Error(`TRUSTED_PROXY_ADDRESSES ${compiled.problem}`);
+    }
+    this.trust = compiled.trust;
   }
 
   @RateLimited('auth_start')
@@ -129,12 +138,25 @@ export class AuthController {
    * Computed through the same two functions, deliberately: a failed sign-in has to
    * land on the brute-force keys the guard will later read, and two call sites
    * inferring "who is this" separately is how those two stop being the same keys.
+   *
+   * TOTAL, like the guard's copy. Both functions read attacker-supplied values —
+   * a header and a cookie header — and the guard wraps its pair in a `try` with a
+   * comment saying a throw there would be "a 500 on a layer whose entire posture is
+   * to fail open". This one sat outside any `try` and did exactly that on
+   * `/callback` and `/refresh`: a hostile cookie would have turned a login into a
+   * 500 rather than the 303 Story 1.3 part 1 established. `clientIpOf` and
+   * `userHandleOf` are now total in themselves, and this is the belt to that
+   * braces — the brute-force bookkeeping is never worth failing a request over.
    */
   private subjectOf(request: FastifyRequest): RateLimitSubject {
-    return {
-      clientIp: clientIpOf(request, this.trustedProxies),
-      userHandle: userHandleOf(request, this.config.SESSION_COOKIE_SECRET),
-    };
+    try {
+      return {
+        clientIp: clientIpOf(request, this.trust),
+        userHandle: userHandleOf(request, this.config.SESSION_COOKIE_SECRET),
+      };
+    } catch {
+      return { clientIp: UNKNOWN_CLIENT_IP };
+    }
   }
 }
 

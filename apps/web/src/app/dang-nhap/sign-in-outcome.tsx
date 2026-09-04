@@ -1,13 +1,3 @@
-import {
-  RATE_LIMITED_MESSAGE,
-  SIGN_IN_OUTCOME_QUERY_PARAM,
-  SIGN_IN_RETRY_AFTER_QUERY_PARAM,
-  isSignInOutcome,
-  parseSignInRetryAfterSeconds,
-  type SignInOutcome,
-} from '@stuwith/contracts';
-import { SignInCountdown } from './countdown';
-
 /**
  * How the last sign-in attempt is turned into something a person reads.
  *
@@ -24,6 +14,17 @@ import { SignInCountdown } from './countdown';
  * DOM. `page.tsx` is left holding `setOutcome(...)` and `replaceState(...)` and
  * nothing else. `sign-in-outcome.test.tsx` executes the rest.
  */
+
+import {
+  AUTH_PROVIDERS,
+  RATE_LIMITED_MESSAGE,
+  SIGN_IN_OUTCOME_QUERY_PARAM,
+  SIGN_IN_RETRY_AFTER_QUERY_PARAM,
+  isSignInOutcome,
+  parseSignInRetryAfterSeconds,
+  type SignInOutcome,
+} from '@stuwith/contracts';
+import { SignInCountdown } from './countdown';
 
 /**
  * Everything an outcome shows, in one place per outcome.
@@ -254,6 +255,21 @@ export function nextLocationAfterOutcome(location: PageLocation): OutcomeLocatio
  * with no login buttons under it is an instruction that cannot be followed.
  */
 /**
+ * The longest a notice from the URL may hide the login links.
+ *
+ * The countdown itself may show up to `MAX_SIGN_IN_RETRY_AFTER_SECONDS` (a day),
+ * because the number came from a real `Retry-After` and a long lock is a real
+ * thing. Hiding the only way to sign in is different: `?ket-qua=bi-khoa&giay=86400`
+ * is a link a stranger can send to somebody who is not rate-limited at all, and a
+ * page with no login links for a day is a denial of service delivered by URL.
+ *
+ * Fifteen minutes is the default brute-force lock, so a genuine lock is covered
+ * and anything beyond it falls back to showing the links — the person can try, and
+ * find out from the server whether they are really blocked.
+ */
+export const MAX_OPTIONS_HIDDEN_SECONDS = 900;
+
+/**
  * Whether to offer the four provider links.
  *
  * They used to be shown whenever `/v1/auth/me` answered 401 — which a rate-limited
@@ -261,9 +277,6 @@ export function nextLocationAfterOutcome(location: PageLocation): OutcomeLocatio
  * above four buttons, and each click spent another `auth_start` attempt and
  * bounced them straight back with a longer wait. The notice and the links have to
  * agree about whether signing in is possible right now.
- *
- * A pure function rather than a condition inside the page, because it is a
- * decision and this project cannot execute the page.
  */
 export function signInOptionsVisible(notice: SignInNotice | null, canSignIn: boolean): boolean {
   if (!canSignIn) {
@@ -272,45 +285,132 @@ export function signInOptionsVisible(notice: SignInNotice | null, canSignIn: boo
   if (notice === null) {
     return true;
   }
-  // Only while there is a countdown to wait out. Once it reaches zero the page
-  // clears the notice and the links come back — see `page.tsx`.
-  return !(OUTCOME_NOTICES[notice.outcome].showsCountdown && notice.retryAfterSeconds !== null);
+  if (!OUTCOME_NOTICES[notice.outcome].showsCountdown || notice.retryAfterSeconds === null) {
+    return true;
+  }
+  // Capped, and deliberately not by the same bound as the displayed number: see
+  // MAX_OPTIONS_HIDDEN_SECONDS.
+  return notice.retryAfterSeconds > MAX_OPTIONS_HIDDEN_SECONDS;
 }
 
-export function SignInOutcomeNotice({
+/**
+ * The notice and the login options as ONE component, because they are one
+ * decision.
+ *
+ * They were two: `page.tsx` rendered `<SignInOutcomeNotice>` and then decided
+ * separately whether to render the provider links. Both halves were deletable with
+ * a full green run — nothing renders the page — and deleting either restored the
+ * bug they were added to fix: a "please wait" message above four links that each
+ * spend another attempt. Folded into one component, there is no decision left in
+ * the page to delete, and everything below is rendered by real tests.
+ */
+export function SignInPanel({
   notice,
   canSignIn,
+  loading,
+  apiBaseUrl,
   onCountdownFinished,
 }: {
   /**
-   * ONE prop carrying both halves, and that is the point of its shape.
-   *
-   * The countdown used to be a second, optional prop with a `null` default. So
-   * deleting `retryAfterSeconds={…}` from `page.tsx` typechecked, rendered a lock
-   * message with no clock, and left every test green — because the test built the
-   * props itself and never rendered the page. The acceptance criterion "đếm ngược
-   * thật bằng giây" would have shipped as a sentence with no number. Folded into
-   * one required prop, that edit is a compile error.
+   * ONE prop carrying both halves of the notice, and that is the point of its
+   * shape. The countdown used to be a second, optional prop with a `null` default,
+   * so deleting it typechecked and shipped a lock message with no clock.
    */
   readonly notice: SignInNotice | null;
   readonly canSignIn: boolean;
-  /** Forwarded to the clock, so the page can offer the login links again. */
+  readonly loading: boolean;
+  readonly apiBaseUrl: string;
+  /** Told when the wait ends, so the links come back. */
   readonly onCountdownFinished?: () => void;
 }) {
-  if (notice === null || !canSignIn) {
-    return null;
-  }
-  const presentation = OUTCOME_NOTICES[notice.outcome];
+  const presentation = notice === null ? null : OUTCOME_NOTICES[notice.outcome];
   // Only one outcome has anything to count, and a number that arrived beside any
   // other one is ignored rather than rendered somewhere it makes no sense.
-  const seconds = presentation.showsCountdown ? notice.retryAfterSeconds : null;
+  const seconds =
+    notice !== null && presentation !== null && presentation.showsCountdown
+      ? notice.retryAfterSeconds
+      : null;
 
   return (
     <>
-      <p role={presentation.role}>{presentation.message}</p>
-      {seconds === null ? null : (
-        <SignInCountdown seconds={seconds} onFinished={onCountdownFinished} />
+      {/*
+        `canSignIn` is why this can sit above everything: the notice hides itself
+        for a visitor who is already signed in, rather than telling them to
+        "chọn lại cách đăng nhập bên dưới" over a view with no login buttons in
+        it. While the session check is still in flight the answer is not known
+        yet, so nothing is claimed.
+
+        Known limit, left for 1.6 rather than papered over: the element only
+        EXISTS once the outcome is read, and a live region that appears at the
+        same moment as its content is announced unreliably. It reads correctly
+        in document order, which is the case that matters on a fresh load; the
+        fix is a region that is always mounted, and that belongs with the layout
+        work rather than in a bare skeleton.
+      */}
+      {presentation === null || !canSignIn ? null : (
+        <>
+          <p role={presentation.role}>{presentation.message}</p>
+          {seconds === null ? null : (
+            <SignInCountdown seconds={seconds} onFinished={onCountdownFinished} />
+          )}
+        </>
       )}
+
+      {loading ? <p>Đang kiểm tra phiên…</p> : null}
+
+      {signInOptionsVisible(notice, canSignIn) ? (
+        <nav>
+          <p>Chọn tài khoản mạng xã hội để tiếp tục:</p>
+          <ul>
+            {AUTH_PROVIDERS.map((provider) => (
+              <li key={provider}>
+                {/*
+                  A plain anchor, not a fetch. The OAuth flow is a top-level
+                  browser navigation: it has to leave this origin, come back, and
+                  carry the SameSite=Lax state cookie on the way in. An XHR cannot
+                  do any of that.
+                */}
+                <a href={`${apiBaseUrl}/v1/auth/${provider}/start`}>
+                  Tiếp tục với {PROVIDER_LABELS[provider]}
+                </a>
+              </li>
+            ))}
+          </ul>
+          <p>
+            Provider chưa được bật trên máy chủ này sẽ trả về &ldquo;không tìm
+            thấy&rdquo;.
+          </p>
+        </nav>
+      ) : null}
     </>
   );
+}
+
+/** Vietnamese is the default locale; full i18n arrives with Story 1.6. */
+const PROVIDER_LABELS: Record<(typeof AUTH_PROVIDERS)[number], string> = {
+  google: 'Google',
+  facebook: 'Facebook',
+  apple: 'Apple',
+  microsoft: 'Microsoft',
+};
+
+/**
+ * What `/v1/auth/me` answering told us, including the case the page could not see.
+ *
+ * A rate-limited `/me` answers `429`, and `!response.ok` mapped that to
+ * "signed out" — so a locked-out visitor got an ordinary login page with four
+ * links and no notice, and the first click spent an `auth_start` and bounced them
+ * back. That is exactly the loop the panel above exists to break, arriving through
+ * the one entry point it could not see.
+ */
+export function signInNoticeFromMe(status: number, retryAfterHeader: string | null): SignInNotice | null {
+  if (status !== 429) {
+    return null;
+  }
+  return {
+    outcome: 'bi-khoa',
+    // The same parser the URL parameter goes through, so a header this product did
+    // not write cannot put a nonsense number on the screen either.
+    retryAfterSeconds: parseSignInRetryAfterSeconds(retryAfterHeader),
+  };
 }

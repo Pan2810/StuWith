@@ -1,11 +1,11 @@
 'use client';
 
-import { AUTH_PROVIDERS, type CurrentUser } from '@stuwith/contracts';
+import type { CurrentUser } from '@stuwith/contracts';
 import { useCallback, useEffect, useState } from 'react';
 import {
-  SignInOutcomeNotice,
+  SignInPanel,
   nextLocationAfterOutcome,
-  signInOptionsVisible,
+  signInNoticeFromMe,
   type SignInNotice,
 } from './sign-in-outcome';
 
@@ -19,6 +19,12 @@ import {
  * `apps/web` stays a pure client (AD-13 / the "web is a thin client" constraint):
  * the provider list and the response type both come from `@stuwith/contracts`, and
  * there is no business rule in this file.
+ *
+ * What is left here is only what needs a browser: two `fetch` calls, `setState`,
+ * and `history.replaceState`. Every DECISION — which notice to show, whether the
+ * login links may be offered, what a 429 from `/me` means — is an exported
+ * function or component in `sign-in-outcome.tsx`, because this project has no DOM
+ * environment and a decision left in this file is a decision no test can execute.
  */
 
 /**
@@ -27,14 +33,6 @@ import {
  * it is an origin, not a secret.
  */
 const API_BASE_URL = process.env['NEXT_PUBLIC_API_BASE_URL'] ?? '';
-
-/** Vietnamese is the default locale; full i18n arrives with Story 1.6. */
-const PROVIDER_LABELS: Record<(typeof AUTH_PROVIDERS)[number], string> = {
-  google: 'Google',
-  facebook: 'Facebook',
-  apple: 'Apple',
-  microsoft: 'Microsoft',
-};
 
 type LoadState =
   | { status: 'loading' }
@@ -60,6 +58,18 @@ export default function DangNhapPage() {
         credentials: 'include',
       });
       if (!response.ok) {
+        /**
+         * A 429 here is not "signed out", and treating it as one was the bug.
+         *
+         * `!response.ok` covered both, so a rate-limited visitor got an ordinary
+         * login page with four links and no explanation — and the first click
+         * spent an `auth_start` and bounced them back with a longer wait. The
+         * decision lives in `signInNoticeFromMe` so a test can execute it.
+         */
+        const limited = signInNoticeFromMe(response.status, response.headers.get('retry-after'));
+        if (limited !== null) {
+          setNotice(limited);
+        }
         setState({ status: 'signed-out' });
         return;
       }
@@ -68,7 +78,7 @@ export default function DangNhapPage() {
       // A network failure is not a signed-in state. Telling the person about a
       // session that dropped mid-visit — the dialog, and returning them to where
       // they were — was split out of Story 1.3 and is in `deferred-work.md`; the
-      // outcome banner above is only about the attempt they just made.
+      // outcome banner is only about the attempt they just made.
       setState({ status: 'signed-out' });
     }
   }, []);
@@ -90,8 +100,7 @@ export default function DangNhapPage() {
    *
    * Every decision is in `nextLocationAfterOutcome`, which is a pure function of
    * the location and is tested — including the ordering, since read and rewrite
-   * come back from one call and cannot be swapped here. What is left in this
-   * effect is only the two things that need a browser.
+   * come back from one call and cannot be swapped here.
    */
   useEffect(() => {
     const change = nextLocationAfterOutcome(window.location);
@@ -112,27 +121,20 @@ export default function DangNhapPage() {
       <h1>Đăng nhập</h1>
 
       {/*
-        `canSignIn` is why this can sit above everything: the notice hides itself
-        for a visitor who is already signed in, rather than telling them to
-        "chọn lại cách đăng nhập bên dưới" over a view with no login buttons in
-        it. While the session check is still in flight the answer is not known
-        yet, so nothing is claimed.
-
-        Known limit, left for 1.6 rather than papered over: the element only
-        EXISTS once the outcome is read, and a live region that appears at the
-        same moment as its content is announced unreliably. It reads correctly
-        in document order, which is the case that matters on a fresh load; the
-        fix is a region that is always mounted, and that belongs with the layout
-        work rather than in a bare skeleton.
+        The notice and the login links are ONE component, because they are one
+        decision: a "please wait" message above four buttons that each spend
+        another attempt is the failure both halves exist to prevent, and while
+        they were two props of this page either could be deleted with a full
+        green run.
       */}
-      <SignInOutcomeNotice
+      <SignInPanel
         notice={notice}
         canSignIn={state.status === 'signed-out'}
-        // The wait is over: drop the notice so the provider links come back.
+        loading={state.status === 'loading'}
+        apiBaseUrl={API_BASE_URL}
+        // The wait is over: drop the notice so the links come back.
         onCountdownFinished={() => setNotice(null)}
       />
-
-      {state.status === 'loading' ? <p>Đang kiểm tra phiên…</p> : null}
 
       {state.status === 'signed-in' ? (
         <section>
@@ -144,31 +146,6 @@ export default function DangNhapPage() {
             Đăng xuất
           </button>
         </section>
-      ) : null}
-
-      {signInOptionsVisible(notice, state.status === 'signed-out') ? (
-        <nav>
-          <p>Chọn tài khoản mạng xã hội để tiếp tục:</p>
-          <ul>
-            {AUTH_PROVIDERS.map((provider) => (
-              <li key={provider}>
-                {/*
-                  A plain anchor, not a fetch. The OAuth flow is a top-level
-                  browser navigation: it has to leave this origin, come back, and
-                  carry the SameSite=Lax state cookie on the way in. An XHR cannot
-                  do any of that.
-                */}
-                <a href={`${API_BASE_URL}/v1/auth/${provider}/start`}>
-                  Tiếp tục với {PROVIDER_LABELS[provider]}
-                </a>
-              </li>
-            ))}
-          </ul>
-          <p>
-            Provider chưa được bật trên máy chủ này sẽ trả về &ldquo;không tìm
-            thấy&rdquo;.
-          </p>
-        </nav>
       ) : null}
     </main>
   );

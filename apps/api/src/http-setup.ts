@@ -1,6 +1,6 @@
 import type { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
 import type { ApiEnv } from '@stuwith/config';
-import { requireTrustedProxies } from '@stuwith/domain';
+import { compileTrustedProxies } from '@stuwith/config';
 
 /**
  * The Fastify options `main.ts` and the flow-test harness must BOTH construct the
@@ -36,32 +36,31 @@ import { requireTrustedProxies } from '@stuwith/domain';
  * routine bump of a transitive dependency — silently, with `request.ip` quietly
  * becoming Caddy's address for everybody. The trap is real; the answer is not a
  * predicate but the STRING form, which both versions hand to `proxy-addr.compile`
- * unchanged. That is the same list `resolveClientIp` in `packages/domain` is given,
- * so Fastify's `request.ip` and the rate-limit key agree by construction rather
- * than by coincidence.
+ * unchanged.
+ *
+ * That string comes from `compileTrustedProxies`, the same function the schema
+ * validated with and the same one that hands `clientIpOf` its predicate. One
+ * library at one pinned version decides both, so Fastify's `request.ip` and the
+ * rate-limit key cannot disagree — a property of the wiring rather than of a test
+ * comparing two implementations.
  *
  * `false` when the deployment declared no proxy: with nothing in front, the header
  * is not evidence of anything and must not be read at all.
- *
- * The guard uses the domain function rather than `request.ip` because that one is
- * unit-testable with a hand-written header and no server. This setting is here so
- * that everything ELSE Fastify reports — `request.ip` in a log line above all —
- * says the same thing.
  */
 type FastifyAdapterOptions = NonNullable<ConstructorParameters<typeof FastifyAdapter>[0]>;
 
 export function fastifyAdapterOptions(config: ApiEnv): FastifyAdapterOptions {
-  // Throws rather than continuing with a shortened list: the config layer already
-  // validated this, so anything invalid here is a bug, and a quietly narrowed set
-  // of trusted proxies is the failure nobody would notice.
-  const proxies = requireTrustedProxies(config.TRUSTED_PROXY_ADDRESSES);
-  if (proxies.length === 0) {
-    return { trustProxy: false };
+  // Throws rather than continuing with a value the library refused: the config
+  // layer already validated this, so anything unusable here is a bug, and a
+  // quietly narrowed set of trusted proxies is the failure nobody would notice.
+  const compiled = compileTrustedProxies(config.TRUSTED_PROXY_ADDRESSES);
+  if (!compiled.ok) {
+    throw new Error(
+      `TRUSTED_PROXY_ADDRESSES ${compiled.problem} The environment schema should have ` +
+        'refused to start; this is a bug in packages/config.',
+    );
   }
-  // `source` and not the parsed form: `proxy-addr` wants the text an operator
-  // wrote, and round-tripping through our own formatter would be one more place
-  // for the two views of the list to drift.
-  return { trustProxy: proxies.map((proxy) => proxy.source).join(',') };
+  return { trustProxy: compiled.forFastify };
 }
 
 /**

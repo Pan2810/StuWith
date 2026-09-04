@@ -1017,6 +1017,14 @@ export interface RateLimitPortHarness {
    * that switches the whole blocking layer off while every gate stays green.
    */
   createFaultingPort?(): Promise<RateLimitPort>;
+  /**
+   * Put a live key with NO expiry under this name, however the store spells that.
+   *
+   * Nothing the port does can produce one — both writes set an expiry — so the
+   * repair branch that heals it had no coverage on either pass until the harness
+   * could plant one.
+   */
+  plantKeyWithoutExpiry?(key: string): Promise<void>;
 }
 
 export interface RateLimitPortContractOptions {
@@ -1035,6 +1043,16 @@ export interface RateLimitPortContractOptions {
  */
 export function runRateLimitPortContract(options: RateLimitPortContractOptions): void {
   const suite = options.skip === true ? describe.skip : describe;
+  /**
+   * Applied to the EXAMPLES, not only to the hooks.
+   *
+   * `hookTimeoutMs` reached `beforeEach` and `afterAll` and nothing else, while
+   * several examples below sleep 3.2-3.3 seconds against Vitest's 5-second default
+   * for an `it`. On the Valkey pass that is a real wait on a real clock, so a
+   * loaded CI runner was one slow container start away from a flake that looked
+   * like a product bug.
+   */
+  const exampleTimeoutMs = options.hookTimeoutMs ?? 30_000;
 
   /** Three, not two: a decrease has to be VISIBLE in whole seconds. */
   const WINDOW_SECONDS = 3;
@@ -1081,21 +1099,21 @@ export function runRateLimitPortContract(options: RateLimitPortContractOptions):
           expect(decision.ok && decision.count).toBe(attempt);
           expect(decision.ok && decision.remaining).toBe(LIMIT - attempt);
         }
-      });
+      }, exampleTimeoutMs);
 
       it('REFUSES the attempt after the limit, by returning rather than throwing', async () => {
         const refusal = await exhaust('c:refuse');
 
         expect(refusal.ok).toBe(false);
         expect(refusal.ok === false && refusal.reason).toBe('RateLimited');
-      });
+      }, exampleTimeoutMs);
 
       it('keeps refusing while the window is still open', async () => {
         await exhaust('c:keep');
         const again = await (await port()).hit('c:keep', LIMIT, WINDOW_SECONDS);
 
         expect(again.ok).toBe(false);
-      });
+      }, exampleTimeoutMs);
 
       /**
        * The property the port docblock states as its whole reason for existing —
@@ -1118,7 +1136,7 @@ export function runRateLimitPortContract(options: RateLimitPortContractOptions):
 
         expect(decisions.filter((decision) => decision.ok)).toHaveLength(LIMIT);
         expect(decisions.filter((decision) => !decision.ok)).toHaveLength(attempts - LIMIT);
-      });
+      }, exampleTimeoutMs);
 
       it('gives each concurrent winner a distinct count, so none was lost', async () => {
         const p = await port();
@@ -1133,14 +1151,14 @@ export function runRateLimitPortContract(options: RateLimitPortContractOptions):
         expect([...counts].sort((a, b) => a - b)).toEqual(
           Array.from({ length: LIMIT }, (_unused, index) => index + 1),
         );
-      });
+      }, exampleTimeoutMs);
 
       it('counts each key on its own — one caller does not spend another budget', async () => {
         await exhaust('c:one');
         const other = await (await port()).hit('c:two', LIMIT, WINDOW_SECONDS);
 
         expect(other.ok).toBe(true);
-      });
+      }, exampleTimeoutMs);
     });
 
     describe('Matrix row: the countdown is real', () => {
@@ -1151,7 +1169,7 @@ export function runRateLimitPortContract(options: RateLimitPortContractOptions):
         if (refusal.ok) return;
         expect(refusal.retryAfterSeconds).toBeGreaterThan(0);
         expect(refusal.retryAfterSeconds).toBeLessThanOrEqual(WINDOW_SECONDS);
-      });
+      }, exampleTimeoutMs);
 
       it('DECREASES as time passes, instead of repeating a constant', async () => {
         const first = await exhaust('c:count-down');
@@ -1168,7 +1186,58 @@ export function runRateLimitPortContract(options: RateLimitPortContractOptions):
         // would come back identical, and somebody who waited exactly as long as
         // they were told would be refused again with the same number.
         expect(later.retryAfterSeconds).toBeLessThan(first.retryAfterSeconds);
-      });
+      }, exampleTimeoutMs);
+
+      /**
+       * The property the suite exists for, and which nothing here could see.
+       *
+       * "One atomic EVAL" is claimed by the adapter's docblock, by
+       * `rate-limit-contract.valkey.test.ts` and by AGENTS.md — and rewriting
+       * `hit` as `INCR` followed by an awaited `PEXPIRE` passed every example,
+       * because no example looked at the expiry the FIRST hit left behind. That is
+       * exactly the split that leaves a counter with no TTL when a process dies
+       * between the two commands: a key that never resets, so the person it
+       * belongs to is locked out permanently.
+       */
+      it('leaves an expiry on the key the very first hit created', async () => {
+        const p = await port();
+
+        const first = await p.hit('c:atomic', LIMIT, WINDOW_SECONDS);
+        expect(first.ok).toBe(true);
+
+        const remaining = await p.remainingSeconds('c:atomic');
+        expect(remaining, 'the first hit must set the window, not a later one').not.toBeNull();
+        expect(remaining ?? 0).toBeGreaterThan(0);
+        expect(remaining ?? 0).toBeLessThanOrEqual(WINDOW_SECONDS);
+      }, exampleTimeoutMs);
+
+      /**
+       * The repair branch, which was unreachable from either pass.
+       *
+       * A key alive with no expiry is the permanent-lockout state the atomic script
+       * exists to prevent, and both `hit` and `remainingSeconds` claim to heal it.
+       * The harness plants one directly, because nothing this port does can produce
+       * it — which is why the branch had no coverage at all.
+       */
+      it('repairs a key that is alive with no expiry', async () => {
+        const active = await use();
+        const plant = active.plantKeyWithoutExpiry;
+        if (plant === undefined) {
+          throw new Error(
+            `harness "${options.label}" must provide plantKeyWithoutExpiry(): the repair branch ` +
+              'is the difference between a self-healing counter and a permanent lockout.',
+          );
+        }
+
+        await plant.call(active, 'c:no-expiry');
+        // Reading it heals it: this is the path a LOCK is read through, where a key
+        // with no expiry is a lockout with nothing to release it.
+        expect(await active.port.remainingSeconds('c:no-expiry')).not.toBeNull();
+
+        await plant.call(active, 'c:no-expiry-hit');
+        await active.port.hit('c:no-expiry-hit', LIMIT, WINDOW_SECONDS);
+        expect(await active.port.remainingSeconds('c:no-expiry-hit')).not.toBeNull();
+      }, exampleTimeoutMs);
 
       it('does not push the window out when a refused attempt arrives', async () => {
         // A window renewed on every hit can never expire for somebody who keeps
@@ -1183,7 +1252,7 @@ export function runRateLimitPortContract(options: RateLimitPortContractOptions):
 
         const afterWindow = await (await port()).hit('c:no-extend', LIMIT, WINDOW_SECONDS);
         expect(afterWindow.ok).toBe(true);
-      });
+      }, exampleTimeoutMs);
     });
 
     describe('Matrix row: waiting out the window', () => {
@@ -1194,7 +1263,7 @@ export function runRateLimitPortContract(options: RateLimitPortContractOptions):
         const after = await (await port()).hit('c:expire', LIMIT, WINDOW_SECONDS);
         expect(after.ok).toBe(true);
         expect(after.ok && after.count).toBe(1);
-      });
+      }, exampleTimeoutMs);
     });
 
     describe('Matrix row: a success clears the failure counter', () => {
@@ -1205,17 +1274,17 @@ export function runRateLimitPortContract(options: RateLimitPortContractOptions):
         const after = await (await port()).hit('c:clear', LIMIT, WINDOW_SECONDS);
         expect(after.ok).toBe(true);
         expect(after.ok && after.count).toBe(1);
-      });
+      }, exampleTimeoutMs);
 
       it('clearing a key nobody ever touched is not an error', async () => {
         await expect((await port()).clear('c:never-existed')).resolves.toBeUndefined();
-      });
+      }, exampleTimeoutMs);
     });
 
     describe('Matrix row: the brute-force lock', () => {
       it('reports nothing to wait for before a lock exists', async () => {
         expect(await (await port()).remainingSeconds('c:lock-a')).toBeNull();
-      });
+      }, exampleTimeoutMs);
 
       it('reports a real remaining time once locked, without counting an attempt', async () => {
         const locked = await (await port()).lock('c:lock-b', LOCK_SECONDS);
@@ -1228,14 +1297,14 @@ export function runRateLimitPortContract(options: RateLimitPortContractOptions):
         // Reading the lock must not extend it: a client polling the countdown
         // would otherwise keep itself locked out for ever.
         expect(second ?? 0).toBeLessThanOrEqual(first ?? 0);
-      });
+      }, exampleTimeoutMs);
 
       it('outlives an ordinary window — that is what makes it the LONGER lock', async () => {
         await (await port()).lock('c:lock-long', LOCK_SECONDS);
         await (await use()).advance(WINDOW_SECONDS * 1_000 + 300);
 
         expect(await (await port()).remainingSeconds('c:lock-long')).not.toBeNull();
-      });
+      }, exampleTimeoutMs);
 
       it('does not restart when it is locked again', async () => {
         const first = await (await port()).lock('c:lock-again', LOCK_SECONDS);
@@ -1245,14 +1314,14 @@ export function runRateLimitPortContract(options: RateLimitPortContractOptions):
         // Re-locking on every later failure would make the number the person is
         // watching jump back up, and a lock that cannot run out is a ban.
         expect(second).toBeLessThan(first);
-      });
+      }, exampleTimeoutMs);
 
       it('runs out on its own', async () => {
         await (await port()).lock('c:lock-expire', 2);
         await (await use()).advance(2_300);
 
         expect(await (await port()).remainingSeconds('c:lock-expire')).toBeNull();
-      });
+      }, exampleTimeoutMs);
 
       /**
        * The place the two adapters could most easily disagree, and the reason this
@@ -1285,7 +1354,7 @@ export function runRateLimitPortContract(options: RateLimitPortContractOptions):
         const remaining = await p.remainingSeconds('c:shared');
         expect(remaining).not.toBeNull();
         expect(remaining ?? 0).toBeGreaterThan(WINDOW_SECONDS);
-      });
+      }, exampleTimeoutMs);
 
       it('is NOT released by clearing a counter — the two are different keys', async () => {
         await (await port()).lock('c:lock-keep', LOCK_SECONDS);
@@ -1294,7 +1363,7 @@ export function runRateLimitPortContract(options: RateLimitPortContractOptions):
         // The two matrix rows that look contradictory: a success clears the
         // failure counter, and a lock already earned still runs its course.
         expect(await (await port()).remainingSeconds('c:lock-keep')).not.toBeNull();
-      });
+      }, exampleTimeoutMs);
     });
 
     describe('a caller bug is a throw, not an outcome', () => {
@@ -1309,14 +1378,14 @@ export function runRateLimitPortContract(options: RateLimitPortContractOptions):
         await expect((await port()).hit(key, limit, window)).rejects.toBeInstanceOf(
           RateLimitInputError,
         );
-      });
+      }, exampleTimeoutMs);
 
       it('rejects a bad key on every read path too', async () => {
         const p = await port();
         await expect(p.remainingSeconds('')).rejects.toBeInstanceOf(RateLimitInputError);
         await expect(p.clear('')).rejects.toBeInstanceOf(RateLimitInputError);
         await expect(p.lock('', LOCK_SECONDS)).rejects.toBeInstanceOf(RateLimitInputError);
-      });
+      }, exampleTimeoutMs);
     });
 
     describe('an outage is a fault, and never an allowance', () => {
@@ -1347,7 +1416,7 @@ export function runRateLimitPortContract(options: RateLimitPortContractOptions):
         expect(outcome.kind === 'rejected' && outcome.error).not.toBeInstanceOf(
           RateLimitInputError,
         );
-      });
+      }, exampleTimeoutMs);
 
       it('lets the store error propagate out of the read and write paths', async () => {
         const faulting = await faultingPort();
@@ -1355,7 +1424,7 @@ export function runRateLimitPortContract(options: RateLimitPortContractOptions):
         await expect(faulting.remainingSeconds('c:fault')).rejects.toBeTruthy();
         await expect(faulting.lock('c:fault', LOCK_SECONDS)).rejects.toBeTruthy();
         await expect(faulting.clear('c:fault')).rejects.toBeTruthy();
-      });
+      }, exampleTimeoutMs);
     });
   });
 }

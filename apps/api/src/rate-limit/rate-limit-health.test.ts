@@ -120,17 +120,26 @@ describe('RateLimitHealth', () => {
     expect(String(warnings.mock.calls[1]?.[0])).toContain('4');
   });
 
-  it('never puts an address, a key or a handle in the line', () => {
+  it('never puts an address, a key or a handle in ANY argument it logs', () => {
     // Story 1.7's whitelist serializer has not landed, and a request-shaped
     // identifier in a log file is what this repo has been careful about since 1.2.
-    fail(1);
+    //
+    // EVERY argument, not just the message. pino emits the second one too — it is
+    // the stack — and that is where a leak would actually arrive, since an error
+    // from the client library routinely carries the key it was operating on.
+    health.recordFailure(
+      'the auth_me check',
+      new Error('WRONGTYPE against rl:ip:auth_me:203.0.113.7 for cookie stuwith_refresh=abc'),
+    );
     succeed(3);
 
     const emitted = [...errors.mock.calls, ...warnings.mock.calls]
-      .map((call) => String(call[0]))
+      .flat()
+      .map((argument) => String(argument))
       .join('\n');
+
     for (const leak of ['rl:', '203.0.', 'cookie', 'stuwith_']) {
-      expect(emitted).not.toContain(leak);
+      expect(emitted, `"${leak}" must not reach a log line`).not.toContain(leak);
     }
   });
 });

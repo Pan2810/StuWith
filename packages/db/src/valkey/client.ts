@@ -36,6 +36,7 @@ export const MIN_CONNECT_TIMEOUT_MS = 5_000;
 /** The two scripts, defined once so they travel as `EVALSHA` rather than as source. */
 export const HIT_COMMAND = 'stuwithRateLimitHit';
 export const LOCK_COMMAND = 'stuwithRateLimitLock';
+export const REMAINING_COMMAND = 'stuwithRateLimitRemaining';
 
 /**
  * Count one attempt and report the truth about the window, in ONE atomic step.
@@ -52,12 +53,23 @@ export const LOCK_COMMAND = 'stuwithRateLimitLock';
  * it is told to wait is one second, every second, indefinitely. Re-applying the
  * expiry whenever it is missing makes that state self-healing instead of terminal.
  *
+ * The `pcall` is the second repair. `INCR` raises a Lua error against a key
+ * holding a non-integer string, and a raised Lua error propagates as a store fault
+ * — so that subject would fail open for ever while the alert said "Valkey is
+ * down", when Valkey was fine and one key held the wrong kind of value. Anything
+ * this counter cannot increment is replaced with a fresh counter, which is the
+ * only answer that both counts and recovers.
+ *
  * `PTTL` rather than `TTL`: whole-second resolution rounds a 4.6-second remainder
  * to 4, and somebody who waits exactly the 4 seconds they were told is refused
  * again. Milliseconds come back and `retryAfterSecondsFrom` rounds UP.
  */
 const HIT_SCRIPT = `
-local count = redis.call('INCR', KEYS[1])
+local ok, count = pcall(function() return redis.call('INCR', KEYS[1]) end)
+if not ok then
+  redis.call('SET', KEYS[1], 1, 'PX', ARGV[1])
+  count = 1
+end
 local ttl = redis.call('PTTL', KEYS[1])
 if ttl < 0 then
   redis.call('PEXPIRE', KEYS[1], ARGV[1])
@@ -90,6 +102,24 @@ return ttl
 `;
 
 /**
+ * Read the remaining time, and repair a key that somehow has none.
+ *
+ * `PTTL` alone was the odd one out: `hit` and `lock` both re-applied a missing
+ * expiry, so "the counter is self-healing" was true on two paths and false on the
+ * third — and this is the path a LOCK is read through, where a key with no expiry
+ * is a permanent lockout with nothing to release it. `-2` (no such key) is left
+ * alone; only `-1` (exists, no expiry) is repaired.
+ */
+const REMAINING_SCRIPT = `
+local ttl = redis.call('PTTL', KEYS[1])
+if ttl == -1 then
+  redis.call('PEXPIRE', KEYS[1], ARGV[1])
+  ttl = redis.call('PTTL', KEYS[1])
+end
+return ttl
+`;
+
+/**
  * A client with the two rate-limit scripts attached.
  *
  * `defineCommand` registers them as `EVALSHA` with an automatic `NOSCRIPT`
@@ -100,6 +130,7 @@ return ttl
 export interface ValkeyClient extends Valkey {
   [HIT_COMMAND](key: string, windowMs: string): Promise<unknown>;
   [LOCK_COMMAND](key: string, lockMs: string): Promise<unknown>;
+  [REMAINING_COMMAND](key: string, repairMs: string): Promise<unknown>;
 }
 
 interface CommandDefiner {
@@ -120,17 +151,34 @@ export function createValkeyClient(url: string, options: ValkeyClientOptions): V
      */
     lazyConnect: true,
     /**
-     * Reject immediately instead of parking the command until a connection comes
-     * back. The offline queue is the right default for a cache whose caller can
-     * wait; here the caller is an HTTP request that must not.
+     * ON, and the reason is the first request after every deploy.
+     *
+     * It was `false`, reasoning that a command must reject rather than park. What
+     * that actually produced: `lazyConnect` means the socket is still opening when
+     * the first request arrives, and with no offline queue that command rejects
+     * with "Stream isn't writeable and enableOfflineQueue options is false". So the
+     * first login after every start and every reconnect went through UNCOUNTED and
+     * wrote the `error` line operators are told to page on — a false alarm, on a
+     * healthy Valkey, once per deploy. Adding `void connect()` in the runtime did
+     * not fix it either: the connect is still in flight when the request lands.
+     *
+     * The bound that made `false` seem necessary is now enforced properly by
+     * `commandTimeout` plus `maxRetriesPerRequest: 0`, and
+     * `client.timeout.test.ts` holds that from both sides. A queued command is
+     * either sent as soon as the connection is ready, or dropped with an error
+     * inside the timeout — never parked indefinitely.
      */
-    enableOfflineQueue: false,
+    enableOfflineQueue: true,
     /**
-     * One attempt, then give up. Retrying inside the client multiplies the
-     * timeout: three retries at 250ms each is 750ms added to a login that is
-     * going to be allowed through anyway.
+     * ZERO retries, so the worst case for one command is one `commandTimeout` and
+     * not two.
+     *
+     * The value was `1`, which permits one RETRY — two attempts — while the comment
+     * reasoned as though it were one attempt. On a wedged store that is roughly
+     * double `VALKEY_COMMAND_TIMEOUT_MS` added to a request that is going to be
+     * allowed through anyway, which is the opposite of why the timeout is small.
      */
-    maxRetriesPerRequest: 1,
+    maxRetriesPerRequest: 0,
     /**
      * NOT the command timeout. A handshake to a cold or distant server needs
      * seconds where a command needs milliseconds, and inheriting the command
@@ -162,6 +210,7 @@ export function createValkeyClient(url: string, options: ValkeyClientOptions): V
   const definer = client as unknown as CommandDefiner;
   definer.defineCommand(HIT_COMMAND, { numberOfKeys: 1, lua: HIT_SCRIPT });
   definer.defineCommand(LOCK_COMMAND, { numberOfKeys: 1, lua: LOCK_SCRIPT });
+  definer.defineCommand(REMAINING_COMMAND, { numberOfKeys: 1, lua: REMAINING_SCRIPT });
 
   return client as ValkeyClient;
 }

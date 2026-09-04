@@ -37,6 +37,9 @@ importers:
 
   apps/api:
     dependencies:
+      '@fastify/proxy-addr':
+        specifier: 5.1.0
+        version: 5.1.0
       '@nestjs/common':
         specifier: 11.2.1
         version: 11.2.1(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@8.1.1)
@@ -172,12 +175,12 @@ importers:
 
   packages/config:
     dependencies:
+      '@fastify/proxy-addr':
+        specifier: 5.1.0
+        version: 5.1.0
       '@stuwith/contracts':
         specifier: workspace:*
         version: link:../contracts
-      '@stuwith/domain':
-        specifier: workspace:*
-        version: link:../domain
       zod:
         specifier: 4.4.3
         version: 4.4.3

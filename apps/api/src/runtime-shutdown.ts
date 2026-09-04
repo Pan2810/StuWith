@@ -12,17 +12,13 @@ import type { AuthRuntime } from './auth/auth.runtime';
  * eventually killed instead of shutting down. `main.ts` already calls
  * `enableShutdownHooks()`; this is the hook it was calling for.
  *
- * A failure to close is logged and swallowed. Refusing to shut down because a
- * socket would not close is the one thing a shutdown handler must never do.
- */
-/**
- * How long the close may take before the process stops waiting for it.
- *
- * `pool.end()` waits for in-flight queries, and a query wedged against an
- * unresponsive database never returns — so an unbounded await here reproduces the
- * exact failure this hook was added to fix: SIGTERM arrives, nothing happens, and
- * the supervisor kills the process. Leaking a socket on the way out of a process
- * that is about to exit costs nothing; hanging costs a rolling deploy.
+ * A failure to close is logged and swallowed, and the wait is BOUNDED by
+ * {@link SHUTDOWN_TIMEOUT_MS}. Refusing to shut down because a socket would not
+ * close is the one thing a shutdown handler must never do — and `pool.end()` waits
+ * for in-flight queries, so a query wedged against an unresponsive database would
+ * otherwise reproduce the exact failure this hook was added to fix. Leaking a
+ * socket on the way out of a process that is about to exit costs nothing; hanging
+ * costs a rolling deploy.
  */
 export const SHUTDOWN_TIMEOUT_MS = 5_000;
 

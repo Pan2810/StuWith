@@ -220,7 +220,13 @@ export class OidcProviderAdapter implements ProviderAdapter {
     // The nonce ties this token to the authorization request WE started. Without
     // it, a token minted for another session of the same client is accepted here.
     if (typeof claims['nonce'] !== 'string' || claims['nonce'] !== nonce) {
-      throw new ProviderExchangeError('id_token nonce does not match this login', this.provider);
+      // The provider answered and the answer does not belong to this login. That
+      // is a replay or a forgery, not an outage, so it counts.
+      throw new ProviderExchangeError(
+        'id_token nonce does not match this login',
+        this.provider,
+        true,
+      );
     }
     return claims;
   }

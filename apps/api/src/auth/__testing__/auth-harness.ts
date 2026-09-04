@@ -1,6 +1,6 @@
 import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
-import type { ApiEnv } from '@stuwith/config';
+import { NO_TRUSTED_PROXIES, type ApiEnv } from '@stuwith/config';
 import type { AuthProvider } from '@stuwith/contracts';
 import {
   InMemoryAuditAdapter,
@@ -8,7 +8,7 @@ import {
   InMemoryRateLimitAdapter,
   InMemorySessionAdapter,
 } from '@stuwith/db';
-import { FixedClock, NO_TRUSTED_PROXIES, type RateLimitPort } from '@stuwith/domain';
+import { FixedClock, type RateLimitPort } from '@stuwith/domain';
 import { generateKeyPairSync } from 'node:crypto';
 import { Logger as PinoLogger } from 'nestjs-pino';
 import net from 'node:net';

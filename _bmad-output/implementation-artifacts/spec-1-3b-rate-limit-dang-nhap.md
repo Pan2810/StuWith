@@ -4,7 +4,7 @@ type: 'feature'
 created: '2026-09-04'
 baseline_commit: 'eaceeff266bdb8901e25d86e6bb691671fdb918c'
 status: 'done'
-review_loop_iteration: 2
+review_loop_iteration: 3
 context:
   - '{project-root}/_bmad-output/implementation-artifacts/epic-1-context.md'
   - '{project-root}/AGENTS.md'
@@ -90,7 +90,8 @@ context:
 
 **Execution:**
 - [x] `packages/domain/src/ports/rate-limit-port.ts` -- Port với ba kết cục: cho phép, từ chối kèm **số giây còn lại**, và fault propagate. Không import SDK. -- AD-1; theo khuôn `heartbeat-port.ts`.
-- [x] `packages/domain/src/policies/rate-limit.ts` -- Hàm thuần: dựng khoá theo chiều (IP / user / brute-force), chọn chính sách theo tên hành động, và **suy ra IP tin cậy bằng cách tin theo địa chỉ/CIDR proxy đã khai** — chỉ đọc `X-Forwarded-For` khi peer là proxy đã khai, rồi đi từ phải sang trái tới mục đầu tiên không phải proxy (`packages/domain/src/policies/client-address.ts`). Test không cần mạng. -- Đây là chỗ dễ sai nhất của cả story, nên nó phải kiểm được ở tầng không có hạ tầng.
+- [x] `packages/domain/src/policies/rate-limit.ts` -- Hàm thuần: dựng khoá theo chiều (IP / user / brute-force) và chọn chính sách theo tên hành động. Test không cần mạng. **Việc suy IP tin cậy KHÔNG còn ở đây** — xem mục dưới. -- Chính sách dựng khoá vẫn phải kiểm được ở tầng không có hạ tầng.
+- [x] `apps/api/src/rate-limit/request-identity.ts` -- Suy IP tin cậy bằng `@fastify/proxy-addr@5.1.0`, **chính gói mà Fastify 5 dùng**, nên danh sách proxy không thể được hiểu theo hai cách. Không tự parse IP hay CIDR ở bất kỳ đâu. -- Ba vòng review liên tiếp tìm ra lỗ trong bộ parse tự viết (đếm hop, rồi `/0`, rồi `/1`–`/7` và IPv6 dị dạng); đây là loại code không nên tự viết.
 - [x] `packages/db/src/valkey/client.ts`, `rate-limit-adapter.ts` -- Kết nối `iovalkey@0.4.0` và cài đặt port bằng **một lệnh nguyên tử** tăng-rồi-đặt-TTL, đọc TTL thật để trả số giây. Timeout ngắn; lỗi kết nối **propagate**, không tự nuốt thành "cho phép". -- Quyết định fail-open thuộc về caller ở `apps/api`, không thuộc adapter; adapter nuốt lỗi là adapter nói dối.
 - [x] `packages/db/src/in-memory/rate-limit-adapter.ts` -- Bản in-memory cùng port, có đồng hồ tiêm vào để test tua thời gian. -- TD-5, chạy hai lượt.
 - [x] `packages/db/src/__testing__/valkey.ts` -- Harness Testcontainers cho `valkey/valkey:9.0.4-alpine`, theo đúng khuôn `postgres.ts` gồm cả luật cấm skip trong CI. -- Không có nó thì lượt "Valkey thật" chỉ là lời hứa.
@@ -220,3 +221,30 @@ và không mất bộ test hợp đồng hai lượt vốn đã chạy trên Val
 
 - Đồng hồ nhận `clock` qua prop, nên render được component thật ở hai thời điểm mà không cần DOM.
   [`countdown.tsx:40`](../../apps/web/src/app/dang-nhap/countdown.tsx#L40)
+
+**2026-09-04 — vòng review 3: bỏ bộ parse IP/CIDR tự viết, dùng `@fastify/proxy-addr`.**
+
+**Finding kích hoạt:** `MIN_TRUSTED_PREFIX_BITS = 1` (đặt ở vòng 2) chặn `/0` nhưng để ngỏ `/1`–`/7`.
+Probe trên code đã build: `0.0.0.0/1` với peer `100.64.0.7`, và `128.0.0.0/1` với peer `203.0.113.9`,
+đều cho phép giả mạo `X-Forwarded-For` — hai dải `/1` cộng lại phủ trọn IPv4. Tệ hơn,
+`client-address.test.ts` **ghim lỗ này mở**, khẳng định `10.0.0.0/1` hợp lệ dưới tên
+`'still accepts the narrowest useful ranges'`. Cùng vòng, bộ parse IPv6 tự viết nhận `1.2.3.4::`,
+`1.2.3.4::5` và `2001:db8:1.2.3.4::1` — cả ba đều bị `net.isIP` từ chối — nên cấu hình validate
+thành công trong khi Fastify và ta hiểu danh sách proxy khác nhau.
+
+**Nguyên nhân sâu hơn, và là lý do đổi hướng:** đây là lần thứ ba cùng một lớp lỗi (vòng 1: đếm hop;
+vòng 2: `/0`; vòng 3: `/1`–`/7` và IPv6 dị dạng), và mỗi lần bản vá đóng đúng cái ví dụ được nêu
+chứ không đóng cả lớp. Lời tôi viết ở vòng 2 — "từ chối prefix rộng đến mức tin mọi thứ" — chính là
+lý do vòng 3 còn lỗ: `/1` không tin *mọi thứ*, chỉ tin một nửa.
+
+**Con người quyết (2026-09-04):** thay ~400 dòng parse tự viết bằng `@fastify/proxy-addr@5.1.0` —
+đã có sẵn trong cây phụ thuộc, và là **chính gói Fastify 5 dùng**, nên hai bên không thể hiểu danh
+sách proxy theo hai cách. Việc suy IP chuyển sang `apps/api`, nơi được phép chạm hạ tầng;
+`packages/domain` giữ phần chính sách dựng khoá nên AD-1 vẫn nguyên.
+
+**Trạng thái xấu đã tránh:** không ship một rate limiter mà một dòng cấu hình `/1` vô hiệu hoá, và
+không tiếp tục nuôi một bộ parse địa chỉ tự viết trong đường xác thực.
+
+**KEEP — bổ sung:**
+- **Không tự parse địa chỉ IP hay CIDR ở bất kỳ đâu trong repo này.** Ba vòng review đã chứng minh
+  chi phí. Dùng đúng gói mà Fastify dùng.

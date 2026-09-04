@@ -2,11 +2,33 @@
  * The rate-limit *decision*: which counters a request has to pass, and what the
  * keys are called.
  *
- * Nothing here touches a store, a header object or a framework. Working out WHICH
- * address a request came from is the other half and lives in `client-address.ts`,
- * because it is long enough and dangerous enough to deserve its own file and its
- * own tests.
+ * Nothing here touches a store, a header object or a framework.
+ *
+ * Working out WHICH address a request came from used to live beside this, as a
+ * hand-written IP and CIDR parser. It is gone. Three review rounds found three
+ * different holes in it — hop counting, then `/0`, then `/1` (two `/1` ranges
+ * cover all of IPv4, so a one-bit floor bought one bit) — plus acceptance of
+ * addresses `net.isIP` rejects. Each round patched the named example rather than
+ * the class of bug, which is the pattern that stopped. `apps/api` now asks
+ * `@fastify/proxy-addr` — the same library, at the same pinned version, that
+ * Fastify itself uses — so "Fastify and we cannot disagree" is true by
+ * construction rather than by a test comparing two implementations.
  */
+
+/**
+ * The bucket a request whose origin cannot be worked out falls into.
+ *
+ * One shared bucket over-counts unrelated callers, and that is the deliberate
+ * direction of the error: the alternative — skipping the limit when the address is
+ * unreadable — hands anybody who can produce an unreadable address a way past the
+ * whole feature. It is never LOCKED on, though: see `bruteForceSubjectFor`.
+ *
+ * It starts with `!` so that nothing arriving from outside can equal it. The value
+ * was once the bare word `unknown`, which RFC 7239 explicitly permits as a real
+ * node identifier and which `keySegment('')` also produced — three unrelated
+ * situations sharing one bucket.
+ */
+export const UNKNOWN_CLIENT_IP = '!unresolved';
 
 /**
  * Every place the limit is applied, as a closed set.
@@ -163,6 +185,19 @@ export function bruteForceSubjectFor(
   subject: RateLimitSubject,
 ): BruteForceKeySubject | null {
   if (channel === 'browser') {
+    /**
+     * Never lock on the unresolved bucket.
+     *
+     * `UNKNOWN_CLIENT_IP` is one shared key for every caller whose address could
+     * not be worked out. Over-COUNTING them together is the deliberate trade — the
+     * alternative lets anyone with an unreadable address skip the limit — but
+     * LOCKING on it is different in kind: one such caller would earn a
+     * fifteen-minute lock covering every other unresolvable peer, and none of them
+     * can do anything about it. The per-window counter still applies to them.
+     */
+    if (subject.clientIp === UNKNOWN_CLIENT_IP) {
+      return null;
+    }
     return { dimension: 'ip', value: subject.clientIp };
   }
   if (subject.userHandle === undefined || subject.userHandle.length === 0) {

@@ -43,6 +43,19 @@ export class ProviderExchangeError extends Error {
   constructor(
     message: string,
     readonly provider: AuthProvider,
+    /**
+     * Whether the provider ANSWERED and refused what we sent, as opposed to being
+     * unreachable, slow, or broken.
+     *
+     * The distinction decides whether a failed sign-in walks somebody towards a
+     * brute-force lock. A 4xx on the token exchange is the provider saying "that
+     * `code` is not valid" — which is exactly what an attacker submitting guessed
+     * codes against one stolen `state` cookie produces, and the natural attack on
+     * `/callback`. A timeout, a 5xx or unparseable JSON is the provider having a
+     * bad afternoon, and counting that would lock out every person who tried
+     * during an outage at Google, on top of the outage they already suffered.
+     */
+    readonly refusedByProvider = false,
   ) {
     super(message);
   }
@@ -93,7 +106,13 @@ export async function fetchJson(
     // The body is deliberately NOT read into the error. A provider error body is
     // long, multi-line, and routinely contains the token or the code that was
     // rejected; putting it in an Error is how it reaches a log and then a ticket.
-    throw new ProviderExchangeError(`${what} returned HTTP ${response.status}`, provider);
+    // 4xx is the provider refusing what we sent — a bad `code`, a bad verifier.
+    // 5xx is the provider failing. Only the first is somebody's doing.
+    throw new ProviderExchangeError(
+      `${what} returned HTTP ${response.status}`,
+      provider,
+      response.status >= 400 && response.status < 500,
+    );
   }
   try {
     return (await response.json()) as unknown;

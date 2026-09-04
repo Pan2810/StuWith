@@ -58,6 +58,11 @@ export const SIGN_IN_FAILURE_REASONS = [
   'state_expired',
   'code_missing',
   'provider_exchange_failed',
+  // The provider answered and REFUSED what we sent — a guessed `code`, a replayed
+  // `id_token`. Distinct from `provider_exchange_failed`, which is the provider
+  // being unreachable or broken, because only this one is somebody's doing and
+  // therefore only this one counts towards a brute-force lock.
+  'code_rejected',
   'identity_rejected',
   // Refresh leg.
   'refresh_cookie_missing',
@@ -68,6 +73,48 @@ export const SIGN_IN_FAILURE_REASONS = [
 ] as const;
 
 export type SignInFailureReason = (typeof SIGN_IN_FAILURE_REASONS)[number];
+
+/**
+ * The failure reasons that are NOT the user's fault, and therefore must not walk
+ * anybody towards a lock.
+ *
+ * A brute-force counter exists to answer "is somebody working through a list".
+ * A provider having a bad afternoon, or a consent screen left open past its
+ * state expiry, answers a different question — and counting those means an
+ * outage at Google locks out every person who tried during it, on top of the
+ * outage they already suffered. `user_cancelled` is here for the reason Story
+ * 1.3 part 1 gave: changing your mind is not a failure, and presenting it as one
+ * is both untrue and mildly accusing.
+ *
+ * What IS counted is the shape of an attack, and only that: a `state` that does
+ * not match one we signed, a `code` the provider refused (`code_rejected`), an
+ * identity the store rejected, a reused refresh token, a refresh token nobody
+ * issued.
+ */
+export const INNOCENT_SIGN_IN_FAILURES: ReadonlySet<SignInFailureReason> = new Set([
+  // Sign-in legs: the person changed their mind, or the provider was unwell.
+  'user_cancelled',
+  'provider_start_failed',
+  'provider_authorize_failed',
+  'provider_exchange_failed',
+  'state_expired',
+  /**
+   * `state_missing` means the browser sent no state cookie AT ALL, which is what
+   * a browser that blocks the cookie looks like — ITP, strict privacy settings,
+   * a third-party-cookie policy. Five honest attempts from such a browser used to
+   * earn a fifteen-minute address lock, and the person could do nothing about it
+   * because their browser, not their behaviour, was the cause. An attacker who
+   * HAS a valid state cookie and guesses codes is caught by `code_rejected`
+   * instead, which is the path that actually costs them something.
+   */
+  'state_missing',
+  // Refresh leg. A tab left open overnight, or a session ended from another
+  // device, is not an attack — and locking somebody out because their own
+  // client retried a stale token would be the product punishing normal use.
+  'refresh_cookie_missing',
+  'refresh_token_expired',
+  'session_revoked',
+]);
 
 export interface SignedInInput {
   readonly requestId: string;

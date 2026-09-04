@@ -7,7 +7,8 @@ import {
 } from '@stuwith/contracts';
 import { RateLimitInputError, type RateLimitDecision, type RateLimitPort } from '@stuwith/domain';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createAuthHarness, type AuthHarness } from '../auth/__testing__/auth-harness';
+import { INNOCENT_SIGN_IN_FAILURES, SIGN_IN_FAILURE_REASONS } from '../auth/audit';
+import { CookieJar, createAuthHarness, type AuthHarness } from '../auth/__testing__/auth-harness';
 
 /**
  * Every row of the story's I/O matrix that involves an HTTP request, driven
@@ -212,8 +213,21 @@ describe('Matrix row: waiting out the window', () => {
 
 describe('Matrix row: the brute-force lock', () => {
   /** A callback with no state cookie: a failed sign-in, recorded as one. */
-  const failSignIn = (h: AuthHarness) =>
-    h.request('/v1/auth/google/callback?code=nope&state=nope');
+  /**
+   * A COUNTED failed sign-in: a real `/start` for a state cookie we signed, then a
+   * `code` the provider refuses.
+   *
+   * `?code=nope&state=nope` with no cookie is `state_missing`, which is innocent —
+   * that is what a browser blocking the state cookie looks like. Using it here is
+   * what let this whole suite pass while the attacker's actual path counted
+   * nothing at all.
+   */
+  const failSignIn = async (h: AuthHarness) => {
+    const jar = new CookieJar();
+    const started = await h.request('/v1/auth/google/start', { jar });
+    const state = new URL(started.headers.get('location') ?? '').searchParams.get('state') ?? '';
+    return h.request(`/v1/auth/google/callback?code=wrong&state=${state}`, { jar });
+  };
 
   it('locks for longer than an ordinary window, and the ordinary window expiring does not release it', async () => {
     harness = await createAuthHarness({
@@ -555,8 +569,13 @@ describe('Matrix row: signing out is never blocked', () => {
  * attempt.
  */
 describe('Matrix row: the brute-force lock is per channel, and earn matches enforce', () => {
-  const failSignIn = (h: AuthHarness, headers: Record<string, string> = {}) =>
-    h.request('/v1/auth/google/callback?code=nope&state=nope', { headers });
+  /** A COUNTED failed sign-in — see the note on the other copy of this helper. */
+  const failSignIn = async (h: AuthHarness, headers: Record<string, string> = {}) => {
+    const jar = new CookieJar();
+    const started = await h.request('/v1/auth/google/start', { jar });
+    const state = new URL(started.headers.get('location') ?? '').searchParams.get('state') ?? '';
+    return h.request(`/v1/auth/google/callback?code=wrong&state=${state}`, { jar, headers });
+  };
 
   const failRefresh = (h: AuthHarness, cookie: string) =>
     h.request('/v1/auth/refresh', { method: 'POST', headers: { cookie } });
@@ -782,5 +801,235 @@ describe('the guard leaves everything outside /v1/auth alone', () => {
     // A liveness probe that fails because somebody is hammering the login page is
     // how a rate limit turns into a restart loop.
     expect((await harness.request('/healthz')).status).toBe(200);
+  }, 60_000);
+});
+
+/**
+ * H9: the natural `/callback` attack, which nothing exercised.
+ *
+ * Every brute-force example used `?code=nope&state=nope` with NO cookie, so only
+ * `state_missing` was ever counted. The attacker's actual path is one `/start` for
+ * a valid `state` cookie, then guessed `code` values against it — and every one of
+ * those used to map to `provider_exchange_failed`, which is on the innocent list,
+ * so the counter never moved at all.
+ */
+describe('Matrix row: guessed codes against one valid state cookie', () => {
+  it('counts them, and locks', async () => {
+    harness = await createAuthHarness({
+      enabledProviders: ['google'],
+      ipLimit: 1_000,
+      bruteForceLimit: 2,
+      bruteForceLockSeconds: 600,
+    });
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      // A real `/start`, so the browser is holding a state cookie we signed.
+      const jar = new CookieJar();
+      const started = await harness.request('/v1/auth/google/start', { jar });
+      const authorizeUrl = new URL(started.headers.get('location') ?? '');
+      const state = authorizeUrl.searchParams.get('state') ?? '';
+
+      // ...and a `code` the provider will refuse.
+      const failed = await harness.request(
+        `/v1/auth/google/callback?code=guess-${attempt}&state=${state}`,
+        { jar },
+      );
+      expect(failed.status, 'a refused code is still a redirect, not a 500').toBe(303);
+    }
+
+    const blocked = await harness.request('/v1/auth/google/start');
+    expect(
+      new URL(blocked.headers.get('location') ?? '').searchParams.get(SIGN_IN_OUTCOME_QUERY_PARAM),
+      'guessed codes must walk towards a lock',
+    ).toBe('bi-khoa');
+  }, 60_000);
+
+  /**
+   * H12: the other side of the same decision.
+   *
+   * `state_missing` is what a browser that BLOCKS the state cookie looks like —
+   * ITP, strict privacy settings. Counting it meant five honest attempts from such
+   * a browser earned a fifteen-minute lock the person could do nothing about.
+   */
+  it('does NOT count an attempt whose browser sent no state cookie at all', async () => {
+    harness = await createAuthHarness({
+      enabledProviders: ['google'],
+      ipLimit: 1_000,
+      bruteForceLimit: 1,
+      bruteForceLockSeconds: 600,
+    });
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      await harness.request('/v1/auth/google/callback?code=anything&state=anything');
+    }
+
+    expect((await harness.request('/v1/auth/google/start')).status).toBe(302);
+  }, 60_000);
+});
+
+/**
+ * M27: the innocent list, pinned entry by entry.
+ *
+ * Only `user_cancelled` had an assertion. Removing `refresh_token_expired` or
+ * `session_revoked` passed every test while a tab left open overnight earned a
+ * lock, and removing `provider_exchange_failed` locked out everybody who tried
+ * during an outage at Google.
+ */
+describe('the failures that must never walk anybody towards a lock', () => {
+  it.each([
+    ['user_cancelled', 'the person changed their mind at the consent screen'],
+    ['provider_start_failed', 'the discovery document could not be fetched'],
+    ['provider_authorize_failed', 'the provider refused before we saw a code'],
+    ['provider_exchange_failed', 'the provider was unreachable during the exchange'],
+    ['state_expired', 'the consent screen was left open too long'],
+    ['state_missing', 'the browser blocks the state cookie'],
+    ['refresh_cookie_missing', 'no refresh cookie was presented'],
+    ['refresh_token_expired', 'a tab was left open overnight'],
+    ['session_revoked', 'the session was ended from another device'],
+  ])('%s is innocent — %s', (reason) => {
+    expect(INNOCENT_SIGN_IN_FAILURES.has(reason as never)).toBe(true);
+  });
+
+  it.each(['state_mismatch', 'code_missing', 'code_rejected', 'identity_rejected',
+    'refresh_token_unknown', 'session_reuse_detected'])(
+    '%s IS counted, because it is the shape of an attack',
+    (reason) => {
+      expect(INNOCENT_SIGN_IN_FAILURES.has(reason as never)).toBe(false);
+    },
+  );
+
+  it('classifies every declared reason one way or the other', () => {
+    // Adding a reason and forgetting to decide is how a new failure path silently
+    // starts (or stops) counting.
+    for (const reason of SIGN_IN_FAILURE_REASONS) {
+      expect(typeof INNOCENT_SIGN_IN_FAILURES.has(reason)).toBe('boolean');
+    }
+  });
+});
+
+/**
+ * M33: where the threshold actually is.
+ *
+ * `RATE_LIMIT_BRUTE_FORCE_MAX` is the number of failures ALLOWED — the lock trips
+ * on the one after it, exactly as `RATE_LIMIT_IP_MAX` allows N requests and refuses
+ * the N+1th. Every test did `N + 1` failures, so neither reading was distinguished
+ * and the docs could say either.
+ */
+describe('the brute-force boundary, from both sides', () => {
+  const failWithState = async (h: AuthHarness) => {
+    const jar = new CookieJar();
+    const started = await h.request('/v1/auth/google/start', { jar });
+    const state = new URL(started.headers.get('location') ?? '').searchParams.get('state') ?? '';
+    await h.request(`/v1/auth/google/callback?code=wrong&state=${state}`, { jar });
+  };
+
+  it('allows exactly RATE_LIMIT_BRUTE_FORCE_MAX failures without locking', async () => {
+    harness = await createAuthHarness({
+      enabledProviders: ['google'],
+      ipLimit: 1_000,
+      bruteForceLimit: 3,
+      bruteForceLockSeconds: 600,
+    });
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await failWithState(harness);
+    }
+
+    expect((await harness.request('/v1/auth/google/start')).status).toBe(302);
+  }, 60_000);
+
+  it('locks on the one after it', async () => {
+    harness = await createAuthHarness({
+      enabledProviders: ['google'],
+      ipLimit: 1_000,
+      bruteForceLimit: 3,
+      bruteForceLockSeconds: 600,
+    });
+
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      await failWithState(harness);
+    }
+
+    expect(
+      new URL((await harness.request('/v1/auth/google/start')).headers.get('location') ?? '')
+        .searchParams.get(SIGN_IN_OUTCOME_QUERY_PARAM),
+    ).toBe('bi-khoa');
+  }, 60_000);
+});
+
+/**
+ * H8: the controller's own identity resolution used to sit outside any `try`,
+ * while the guard's identical pair sat inside one with a comment explaining why.
+ */
+describe('a hostile cookie or header never turns a login into a 500', () => {
+  const hostile: Record<string, string> = {
+    cookie: `stuwith_refresh=${'x'.repeat(9_000)}; =broken; ;;; stuwith_session=`,
+    'x-forwarded-for': `${','.repeat(400)} not-an-ip, %%%, ::::::`,
+  };
+
+  it.each([
+    ['the callback leg', '/v1/auth/google/callback?code=a&state=b', 303],
+    ['the me leg', '/v1/auth/me', 401],
+  ])('%s answers normally', async (_label, path, expected) => {
+    harness = await createAuthHarness({
+      enabledProviders: ['google'],
+      trustedProxies: CADDY,
+      ipLimit: 1_000,
+    });
+
+    expect((await harness.request(path, { headers: hostile })).status).toBe(expected);
+  }, 60_000);
+
+  it('the refresh leg answers normally', async () => {
+    harness = await createAuthHarness({
+      enabledProviders: ['google'],
+      trustedProxies: CADDY,
+      ipLimit: 1_000,
+    });
+
+    const response = await harness.request('/v1/auth/refresh', {
+      method: 'POST',
+      headers: hostile,
+    });
+    expect(response.status).toBe(401);
+  }, 60_000);
+});
+
+/**
+ * H10: a plain bug in the guard is not a Valkey outage.
+ *
+ * The fail-open branch used to be "anything that is not a `RateLimitInputError`",
+ * which swallowed every `TypeError` in this file too — reported for ever as "the
+ * counter store did not answer", with the alert pointing at Valkey and the layer
+ * left off.
+ */
+describe('a programming error is not reported as a store outage', () => {
+  class BuggyRateLimitPort implements RateLimitPort {
+    private fail(): never {
+      throw new TypeError("Cannot read properties of undefined (reading 'count')");
+    }
+    hit(): Promise<RateLimitDecision> {
+      return Promise.resolve().then(() => this.fail());
+    }
+    remainingSeconds(): Promise<number | null> {
+      return Promise.resolve().then(() => this.fail());
+    }
+    lock(): Promise<number> {
+      return Promise.resolve().then(() => this.fail());
+    }
+    clear(): Promise<void> {
+      return Promise.resolve().then(() => this.fail());
+    }
+  }
+
+  it('answers 500 and does not claim the blocking layer is down', async () => {
+    harness = await createAuthHarness({
+      enabledProviders: ['google'],
+      captureLogs: true,
+      rateLimitPort: new BuggyRateLimitPort(),
+    });
+
+    expect((await harness.request('/v1/auth/me')).status).toBe(500);
+    expect(harness.logLines.join('\n')).not.toContain('rate limiting is not working');
   }, 60_000);
 });

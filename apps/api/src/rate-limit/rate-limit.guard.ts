@@ -1,19 +1,17 @@
 import { Inject, Injectable, type CanActivate, type ExecutionContext } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
+import { compileTrustedProxies, type TrustedProxyTrust } from '@stuwith/config';
 import type {
   RateLimitAction,
   RateLimitPort,
   RateLimitSettings,
   RateLimitSubject,
-  TrustedProxy,
 } from '@stuwith/domain';
 import {
-  RateLimitInputError,
   bruteForceSubjectFor,
   bruteForceLockKey,
   channelForAction,
   isRateLimitAction,
-  requireTrustedProxies,
   rateLimitRulesFor,
 } from '@stuwith/domain';
 import type { FastifyRequest } from 'fastify';
@@ -23,6 +21,7 @@ import { RATE_LIMIT_ACTION_METADATA } from './rate-limit.decorator';
 import { RATE_LIMIT_PORT } from './rate-limit.tokens';
 import { RateLimitedException } from './rate-limited.exception';
 import { clientIpOf, userHandleOf } from './request-identity';
+import { isStoreFault } from './store-fault';
 
 /**
  * The blocking layer in front of `/v1/auth/*`, and the one place the fail-open
@@ -42,15 +41,17 @@ import { clientIpOf, userHandleOf } from './request-identity';
  *
  * ## What fail-open does NOT cover
  *
- * {@link RateLimitInputError} is a defect in this code: a malformed key, a hashing
- * bug, a limit of zero from a misread config. Swallowing it as "the store is down"
- * would report a permanent bug as a Valkey outage for ever, and the layer would
- * never block anybody again. It is rethrown, so it surfaces as the 500 it is.
+ * A defect in this code — a malformed key, a hashing bug, a `TypeError` — is NOT
+ * a store fault. Swallowing one would report a permanent bug as a Valkey outage
+ * for ever, point the alert at the wrong system, and leave the layer off.
+ * `isStoreFault` decides, positively: only something that looks like a connection,
+ * timeout or protocol failure from the client library earns the fail-open.
+ * Everything else is rethrown and surfaces as the 500 it is.
  */
 @Injectable()
 export class RateLimitGuard implements CanActivate {
   private readonly settings: RateLimitSettings;
-  private readonly trustedProxies: readonly TrustedProxy[];
+  private readonly trust: TrustedProxyTrust;
 
   constructor(
     private readonly reflector: Reflector,
@@ -66,9 +67,15 @@ export class RateLimitGuard implements CanActivate {
       bruteForceLimit: config.RATE_LIMIT_BRUTE_FORCE_MAX,
       bruteForceLockSeconds: config.RATE_LIMIT_BRUTE_FORCE_LOCK_SECONDS,
     };
-    // Parsed once. The environment was already validated at startup, so an
-    // invalid list cannot reach here — the process would not have opened a port.
-    this.trustedProxies = requireTrustedProxies(config.TRUSTED_PROXY_ADDRESSES);
+    // Compiled once, by the same function the schema validated with and
+    // `fastifyAdapterOptions` builds `trustProxy` from. The environment was
+    // already checked at startup, so an unusable list cannot reach here — the
+    // process would not have opened a port.
+    const compiled = compileTrustedProxies(config.TRUSTED_PROXY_ADDRESSES);
+    if (!compiled.ok) {
+      throw new Error(`TRUSTED_PROXY_ADDRESSES ${compiled.problem}`);
+    }
+    this.trust = compiled.trust;
   }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -95,8 +102,18 @@ export class RateLimitGuard implements CanActivate {
         this.health.recordSuccess();
         throw error;
       }
-      if (error instanceof RateLimitInputError) {
-        // Our bug, not an outage. Do not launder it into a fail-open.
+      /**
+       * Fail open for a STORE FAULT, and for nothing else.
+       *
+       * The branch used to be "anything that is not a `RateLimitInputError`",
+       * which swallowed every `TypeError` and `RangeError` in this file too. A
+       * plain bug — a property read on `undefined`, an off-by-one — was then
+       * reported for ever as "the counter store did not answer", pointed the alert
+       * at Valkey, and left the layer permanently off while looking like an
+       * infrastructure incident. A defect in our code must surface as the 500 it
+       * is; only a store that could not answer earns the fail-open.
+       */
+      if (!isStoreFault(error)) {
         throw error;
       }
       this.health.recordFailure(`the ${action} check`, error);
@@ -108,7 +125,7 @@ export class RateLimitGuard implements CanActivate {
 
   private subjectOf(request: FastifyRequest): RateLimitSubject {
     return {
-      clientIp: clientIpOf(request, this.trustedProxies),
+      clientIp: clientIpOf(request, this.trust),
       userHandle: userHandleOf(request, this.config.SESSION_COOKIE_SECRET),
     };
   }
@@ -158,10 +175,16 @@ export class RateLimitGuard implements CanActivate {
    * uses — a limit that exists, counts, and never blocks anything.
    */
   private actionFor(context: ExecutionContext): RateLimitAction | null {
-    const declared = this.reflector.getAllAndOverride<unknown>(RATE_LIMIT_ACTION_METADATA, [
+    // The HANDLER only, never the class. `getAllAndOverride` also reads class
+    // metadata, so ONE class-level decorator would have rate-limited every route
+    // in the controller — `POST /v1/auth/logout` included, the route the spec's
+    // Never list and three docblocks say can never be limited. `@RateLimited` is
+    // typed `MethodDecorator` now, so writing it on a class is a compile error,
+    // and reading only the handler means reflection could not put it there either.
+    const declared: unknown = this.reflector.get(
+      RATE_LIMIT_ACTION_METADATA,
       context.getHandler(),
-      context.getClass(),
-    ]);
+    );
     return isRateLimitAction(declared) ? declared : null;
   }
 }

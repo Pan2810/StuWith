@@ -12,10 +12,12 @@ import {
   type CountdownClock,
 } from './countdown-text';
 import {
+  MAX_OPTIONS_HIDDEN_SECONDS,
   OUTCOME_NOTICES,
-  SignInOutcomeNotice,
+  SignInPanel,
   nextLocationAfterOutcome,
   resolveSignInOutcome,
+  signInNoticeFromMe,
   signInOptionsVisible,
   type SignInNotice,
 } from './sign-in-outcome';
@@ -32,8 +34,23 @@ import {
  * dependency, and needs no DOM environment — so the assertions are about actual
  * output HTML rather than about a value on its way to a renderer.
  */
+function renderPanel(notice: SignInNotice | null, canSignIn = true): string {
+  return renderToStaticMarkup(
+    <SignInPanel notice={notice} canSignIn={canSignIn} loading={false} apiBaseUrl="" />,
+  );
+}
+
+/**
+ * Just the notice half, for the assertions that pin exact markup.
+ *
+ * The panel now renders the login links too — they are one decision and used to be
+ * two deletable ones — so the sentence assertions look at everything before the
+ * `<nav>`.
+ */
 function render(notice: SignInNotice | null, canSignIn = true): string {
-  return renderToStaticMarkup(<SignInOutcomeNotice notice={notice} canSignIn={canSignIn} />);
+  const html = renderPanel(notice, canSignIn);
+  const nav = html.indexOf('<nav>');
+  return nav === -1 ? html : html.slice(0, nav);
 }
 
 function noticeFor(outcome: SignInOutcome, retryAfterSeconds: number | null = null): SignInNotice {
@@ -609,5 +626,132 @@ describe('the login options and the lock notice agree with each other', () => {
     expect(signInOptionsVisible({ outcome: 'that-bai', retryAfterSeconds: null }, false)).toBe(
       false,
     );
+  });
+});
+
+/**
+ * A stranger can put anything in the URL, including a very long wait.
+ *
+ * The countdown may SHOW up to a day, because that number came from a real
+ * `Retry-After` and a long lock is a real thing. Hiding the only way to sign in is
+ * different: `?ket-qua=bi-khoa&giay=86400` sent to somebody who is not
+ * rate-limited at all would leave them with a page that has no login links for a
+ * day. So the two bounds are deliberately not the same one.
+ */
+describe('a made-up countdown cannot hide the login links for long', () => {
+  it('hides them for a wait short enough to be a real lock', () => {
+    expect(signInOptionsVisible({ outcome: 'bi-khoa', retryAfterSeconds: 60 }, true)).toBe(false);
+    expect(
+      signInOptionsVisible(
+        { outcome: 'bi-khoa', retryAfterSeconds: MAX_OPTIONS_HIDDEN_SECONDS },
+        true,
+      ),
+    ).toBe(false);
+  });
+
+  it.each([MAX_OPTIONS_HIDDEN_SECONDS + 1, 3_600, 86_400])(
+    'shows them anyway for a wait of %s seconds',
+    (seconds) => {
+      // The person can try, and find out from the server whether they are really
+      // blocked — which is the only source of truth a URL cannot forge.
+      expect(signInOptionsVisible({ outcome: 'bi-khoa', retryAfterSeconds: seconds }, true)).toBe(
+        true,
+      );
+    },
+  );
+
+  it('still shows the countdown itself for a long wait', () => {
+    // Only the LINKS are capped. A genuine `Retry-After: 3600` should still be
+    // readable, or the person is told to wait with no idea how long.
+    const html = renderPanel({ outcome: 'bi-khoa', retryAfterSeconds: 3_600 }, true);
+
+    expect(html).toContain(countdownLabel(3_600));
+    expect(html).toContain('<nav>');
+  });
+
+  it('covers the default brute-force lock, so a real lock does hide them', () => {
+    // `RATE_LIMIT_BRUTE_FORCE_LOCK_SECONDS` defaults to 900.
+    expect(MAX_OPTIONS_HIDDEN_SECONDS).toBeGreaterThanOrEqual(900);
+  });
+});
+
+/**
+ * A 429 from `/v1/auth/me` used to reach the page as "signed out".
+ *
+ * `!response.ok` covered both, so a rate-limited visitor got an ordinary login page
+ * with four links and no notice — and the first click spent an `auth_start` and
+ * bounced them back with a longer wait. That is the loop the panel exists to break,
+ * arriving through the one entry point it could not see.
+ */
+describe('a rate-limited /v1/auth/me is not "signed out"', () => {
+  it('becomes the locked notice, with the wait the server sent', () => {
+    expect(signInNoticeFromMe(429, '45')).toEqual({
+      outcome: 'bi-khoa',
+      retryAfterSeconds: 45,
+    });
+  });
+
+  it('shows the message with no clock when the header is missing or nonsense', () => {
+    // The same parser the URL parameter goes through, so a header this product did
+    // not write cannot put a nonsense number on the screen either.
+    for (const header of [null, '', 'soon', '-5', '99999999', '0', 'Wed, 21 Oct 2015 07:28:00 GMT']) {
+      expect(signInNoticeFromMe(429, header)).toEqual({
+        outcome: 'bi-khoa',
+        retryAfterSeconds: null,
+      });
+    }
+  });
+
+  it.each([200, 204, 401, 403, 500, 502])('is nothing for status %s', (status) => {
+    // Only 429. A 401 is an ordinary signed-out visitor and must still be offered
+    // the login links.
+    expect(signInNoticeFromMe(status, '45')).toBeNull();
+  });
+
+  it('hides the login links once that notice is showing', () => {
+    const notice = signInNoticeFromMe(429, '45');
+
+    expect(notice).not.toBeNull();
+    expect(renderPanel(notice, true)).not.toContain('<nav>');
+  });
+});
+
+describe('the panel is one decision, not two', () => {
+  it('offers the login links on an ordinary signed-out visit', () => {
+    const html = renderPanel(null, true);
+
+    expect(html).toContain('<nav>');
+    expect(html).toContain('/v1/auth/google/start');
+  });
+
+  it('offers none of them to a visitor who is already signed in', () => {
+    expect(renderPanel(null, false)).not.toContain('<nav>');
+  });
+
+  it('never shows a wait message above links that would spend another attempt', () => {
+    // The failure both halves exist to prevent, asserted on ONE render because
+    // they are now one component: while they were two props of the page, either
+    // could be deleted with a full green run.
+    const html = renderPanel({ outcome: 'bi-khoa', retryAfterSeconds: 30 }, true);
+
+    expect(html).toContain(RATE_LIMITED_MESSAGE);
+    expect(html).not.toContain('<nav>');
+    expect(html).not.toContain('/v1/auth/google/start');
+  });
+
+  it('builds the provider links from the configured API origin', () => {
+    const html = renderToStaticMarkup(
+      <SignInPanel notice={null} canSignIn loading={false} apiBaseUrl="https://api.example" />,
+    );
+
+    expect(html).toContain('https://api.example/v1/auth/google/start');
+  });
+
+  it('says the session is being checked while the answer is not known', () => {
+    const html = renderToStaticMarkup(
+      <SignInPanel notice={null} canSignIn={false} loading apiBaseUrl="" />,
+    );
+
+    expect(html).toContain('Đang kiểm tra phiên');
   });
 });

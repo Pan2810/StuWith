@@ -1,7 +1,7 @@
 import { AUTH_PROVIDERS, isAuthProvider, type AuthProvider } from '@stuwith/contracts';
-// The proxy list is parsed by the domain, not re-parsed here. A second parser is a
-// second opinion about who is trusted, and the two would eventually differ.
-import { NO_TRUSTED_PROXIES, parseTrustedProxies } from '@stuwith/domain';
+// One implementation of "who is trusted", shared with Fastify. See
+// `trusted-proxies.ts` for why there is no parser of our own any more.
+import { NO_TRUSTED_PROXIES, compileTrustedProxies } from './trusted-proxies';
 import { z } from 'zod';
 
 /**
@@ -119,14 +119,9 @@ const trustedProxyAddresses = z
   .trim()
   .min(1, 'must not be empty — write "none" if no proxy sits in front of this process')
   .superRefine((raw, ctx) => {
-    const { invalid } = parseTrustedProxies(raw);
-    if (invalid.length > 0) {
-      ctx.addIssue({
-        code: 'custom',
-        message:
-          `is not a list of addresses: ${invalid.join(', ')}. ` +
-          `Use IPs and CIDRs separated by commas, or the single word "${NO_TRUSTED_PROXIES}".`,
-      });
+    const compiled = compileTrustedProxies(raw);
+    if (!compiled.ok) {
+      ctx.addIssue({ code: 'custom', message: compiled.problem });
     }
   });
 
@@ -251,7 +246,10 @@ const apiEnvShape = sharedEnvSchema.extend({
    */
   TRUSTED_PROXY_ADDRESSES: trustedProxyAddresses,
 
-  /** Per address. Generous: a shared office NAT is one address for everybody in it. */
+  /**
+   * Per address, and the number ALLOWED — the request after it is the one refused.
+   * Generous: a shared office NAT is one address for everybody in it.
+   */
   RATE_LIMIT_IP_MAX: count(1, 10_000, 30),
   RATE_LIMIT_IP_WINDOW_SECONDS: seconds(1, 3_600, 60),
 
@@ -264,8 +262,8 @@ const apiEnvShape = sharedEnvSchema.extend({
   RATE_LIMIT_USER_WINDOW_SECONDS: seconds(1, 3_600, 60),
 
   /**
-   * Consecutive sign-in FAILURES before the longer lock starts, and how long that
-   * lock lasts. Deliberately separate from the two budgets above: an ordinary
+   * Consecutive sign-in failures ALLOWED before the longer lock starts — the one
+   * after this number is the one that locks — and how long that lock lasts. Deliberately separate from the two budgets above: an ordinary
    * window forgives a burst of noise in a minute, while repeated failure is the
    * shape of somebody working through a list and should cost a great deal more.
    */

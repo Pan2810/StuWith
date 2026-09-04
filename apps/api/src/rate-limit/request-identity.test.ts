@@ -1,4 +1,9 @@
-import { MAX_RATE_LIMIT_KEY_LENGTH, bruteForceCounterKey, rateLimitKey } from '@stuwith/domain';
+import {
+  MAX_RATE_LIMIT_KEY_LENGTH,
+  UNKNOWN_CLIENT_IP,
+  bruteForceCounterKey,
+  rateLimitKey,
+} from '@stuwith/domain';
 import type { FastifyRequest } from 'fastify';
 import { describe, expect, it } from 'vitest';
 import { clientIpOf, userHandleOf } from './request-identity';
@@ -14,13 +19,21 @@ import { clientIpOf, userHandleOf } from './request-identity';
 
 const SECRET = 'unit-test-secret-'.padEnd(48, 'x');
 
-/** Only the two fields these functions read. */
+/**
+ * Only what these functions read. `raw` is there because `@fastify/proxy-addr`
+ * takes the Node request, which is what Fastify hands it too.
+ */
 function requestWith(headers: Record<string, string | string[]>): FastifyRequest {
+  const socket = { remoteAddress: '203.0.113.7' };
   return {
     headers,
-    socket: { remoteAddress: '203.0.113.7' },
+    socket,
+    raw: { headers, socket, connection: socket },
   } as unknown as FastifyRequest;
 }
+
+/** Stands in for "the peer is a declared proxy", without naming an address. */
+const TRUST_ALL = (): boolean => true;
 
 describe('userHandleOf', () => {
   it('is undefined when the request carries no credential at all', () => {
@@ -99,16 +112,25 @@ describe('clientIpOf', () => {
     // git treat the whole file as binary and hides it from grep. Same value.
     const inputs = ['', '   ', ',,,', 'not-an-ip', '\u0000', 'x'.repeat(5_000)];
     for (const forwardedFor of inputs) {
-      expect(() => clientIpOf(requestWith({ 'x-forwarded-for': forwardedFor }), [])).not.toThrow();
+      expect(() =>
+        clientIpOf(requestWith({ 'x-forwarded-for': forwardedFor }), TRUST_ALL),
+      ).not.toThrow();
     }
   });
 
   it('ignores the header when nothing is declared as a proxy', () => {
-    expect(clientIpOf(requestWith({ 'x-forwarded-for': '1.2.3.4' }), [])).toBe('203.0.113.7');
+    // `false` is what `compileTrustedProxies('none')` produces: the header is not
+    // evidence of anything and must not be read at all.
+    expect(clientIpOf(requestWith({ 'x-forwarded-for': '1.2.3.4' }), false)).toBe('203.0.113.7');
+  });
+
+  it('reads the header when the peer IS a declared proxy', () => {
+    expect(clientIpOf(requestWith({ 'x-forwarded-for': '1.2.3.4' }), TRUST_ALL)).toBe('1.2.3.4');
   });
 
   it('survives a request with no socket at all', () => {
-    const headless = { headers: {} } as unknown as FastifyRequest;
-    expect(() => clientIpOf(headless, [])).not.toThrow();
+    const headless = { headers: {}, raw: { headers: {}, socket: {} } } as unknown as FastifyRequest;
+    expect(clientIpOf(headless, false)).toBe(UNKNOWN_CLIENT_IP);
+    expect(clientIpOf(headless, TRUST_ALL)).toBe(UNKNOWN_CLIENT_IP);
   });
 });

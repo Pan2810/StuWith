@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   countdownDeadline,
   countdownViewAt,
@@ -50,6 +50,17 @@ export function SignInCountdown({
   const [now, setNow] = useState(() => clock.now());
 
   /**
+   * The callback is held in a ref, and is NOT a dependency of the tick effect.
+   *
+   * `page.tsx` passes a fresh inline closure on every render, so listing it would
+   * re-run the effect — clearing and re-arming the timeout — every time the parent
+   * re-rendered. A parent that re-renders faster than the tick delay then stalls
+   * the clock completely: the timeout is cancelled before it can ever fire.
+   */
+  const finished = useRef(onFinished);
+  finished.current = onFinished;
+
+  /**
    * A second lock, with a different countdown, has to restart the clock.
    *
    * Without this the deadline is fixed at mount and a new `seconds` never reaches
@@ -69,7 +80,7 @@ export function SignInCountdown({
       // tab up for ever on a page somebody walked away from. The page is told, so
       // the four provider links — hidden while the wait ran, or they would spend
       // another attempt each — come back.
-      onFinished?.();
+      finished.current?.();
       return undefined;
     }
     // `nextCountdownInstant` is what guarantees progress: if the timer fires when
@@ -77,7 +88,7 @@ export function SignInCountdown({
     // out of the update, the effect never re-runs, and the clock freezes.
     const timer = setTimeout(() => setNow((current) => nextCountdownInstant(current, clock)), delay);
     return () => clearTimeout(timer);
-  }, [deadline, now, clock, onFinished]);
+  }, [deadline, now, clock]);
 
   const view = countdownViewAt(deadline, now);
 

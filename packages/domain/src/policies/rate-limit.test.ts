@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { UNKNOWN_CLIENT_IP } from './client-address';
 import {
   BRUTE_FORCE_DIMENSIONS,
   RATE_LIMIT_ACTIONS,
+  UNKNOWN_CLIENT_IP,
   bruteForceCounterKey,
   bruteForceSubjectFor,
   bruteForceLockKey,
@@ -16,8 +16,13 @@ import {
 } from './rate-limit';
 
 /**
- * The keys and the policy. Working out WHICH address a request came from is the
- * other half of this story and lives in `client-address.test.ts`.
+ * The keys and the policy.
+ *
+ * Working out WHICH address a request came from is no longer here at all. It was a
+ * hand-written IP and CIDR parser; three review rounds found three different holes
+ * in it — hop counting, `/0`, then `/1` — and `apps/api` now asks
+ * `@fastify/proxy-addr`, the library Fastify itself uses, so the two cannot
+ * disagree.
  */
 
 const CLIENT = '203.0.113.7';
@@ -228,5 +233,38 @@ describe('retryAfterSecondsFrom', () => {
 
   it('passes a whole number through unchanged', () => {
     expect(retryAfterSecondsFrom(30_000)).toBe(30);
+  });
+});
+
+/**
+ * L11: the unresolved bucket is ONE key shared by every caller whose address could
+ * not be worked out, and that sharing is deliberate rather than an oversight.
+ *
+ * The alternative — skipping the limit when the address is unreadable — hands
+ * anybody who can produce an unreadable address a way past the whole feature. So
+ * they are counted together, and the bound on the harm is that they are never
+ * LOCKED together.
+ */
+describe('the unresolved bucket', () => {
+  it('counts every unresolvable caller on one key, on purpose', () => {
+    const rules = rateLimitRulesFor('auth_start', { clientIp: UNKNOWN_CLIENT_IP }, SETTINGS);
+
+    expect(rules).toHaveLength(1);
+    expect(rules[0]?.key).toBe(rateLimitKey('ip', 'auth_start', UNKNOWN_CLIENT_IP));
+  });
+
+  it('never LOCKS on it, so one such caller cannot lock out the rest', () => {
+    // A fifteen-minute lock covering every unresolvable peer is a different order
+    // of harm from a shared per-minute window, and none of them could do anything
+    // about it.
+    expect(bruteForceSubjectFor('browser', { clientIp: UNKNOWN_CLIENT_IP })).toBeNull();
+  });
+
+  it('still locks a credential that happens to arrive unresolvable', () => {
+    // The credential dimension is unaffected: it identifies one account holder
+    // however unreadable their address is.
+    expect(
+      bruteForceSubjectFor('json', { clientIp: UNKNOWN_CLIENT_IP, userHandle: 'abc' }),
+    ).toEqual({ dimension: 'user', value: 'abc' });
   });
 });

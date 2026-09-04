@@ -10,7 +10,14 @@ import { RateLimitedFilter } from './rate-limited.filter';
 
 /**
  * Registers the guard and the filter GLOBALLY, which is what makes the decorator
- * the whole interface.
+ * the whole interface — and is `@Global()` for exactly one export,
+ * {@link RateLimitHealth}.
+ *
+ * The guard and `AuthService` both talk to the counter store on the same request,
+ * and both have to fail open when it does not answer. If each kept its own idea of
+ * "are we degraded", one outage would produce two independent log storms and two
+ * disagreeing recovery lines. One shared instance means one line in, one line out,
+ * and one honest count of how many checks were skipped.
  *
  * A guard applied route by route is one more thing to remember on a new endpoint,
  * and the epic context is explicit that the age gate — the same shape — has to be
@@ -22,15 +29,6 @@ import { RateLimitedFilter } from './rate-limited.filter';
  * shares one Valkey connection with `AuthService`, which needs the same store to
  * record failures and to clear them after a success. Two clients would be two
  * connection pools and, worse, two places for a test to replace only one of them.
- */
-/**
- * `@Global()` for exactly one export: {@link RateLimitHealth}.
- *
- * The guard and `AuthService` both talk to the counter store on the same request,
- * and both have to fail open when it does not answer. If each kept its own idea of
- * "are we degraded", one outage would produce two independent log storms and two
- * disagreeing recovery lines. One shared instance means one line in, one line out,
- * and one honest count of how many requests went through unchecked.
  */
 @Global()
 @Module({})

@@ -17,8 +17,8 @@
     "clean": "tsc -b --clean"
   },
   "dependencies": {
+    "@fastify/proxy-addr": "5.1.0",
     "@stuwith/contracts": "workspace:*",
-    "@stuwith/domain": "workspace:*",
     "zod": "4.4.3"
   }
 }

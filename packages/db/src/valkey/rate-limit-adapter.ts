@@ -5,7 +5,7 @@ import {
   assertValidWindowSeconds,
   retryAfterSecondsFrom,
 } from '@stuwith/domain';
-import { HIT_COMMAND, LOCK_COMMAND, type ValkeyClient } from './client';
+import { HIT_COMMAND, LOCK_COMMAND, REMAINING_COMMAND, type ValkeyClient } from './client';
 
 /**
  * The Valkey implementation of `RateLimitPort`.
@@ -27,6 +27,12 @@ import { HIT_COMMAND, LOCK_COMMAND, type ValkeyClient } from './client';
  * in `apps/api/src/rate-limit/rate-limit.guard.ts`, where there is enough context
  * to write the `error` line that says the layer is not working.
  */
+/**
+ * The expiry given to a key found alive with none. Long enough that a repaired
+ * lock is still a lock, short enough that a mistake ages out within the hour.
+ */
+const DEFAULT_REPAIR_SECONDS = 900;
+
 export class ValkeyRateLimitAdapter implements RateLimitPort {
   constructor(private readonly client: ValkeyClient) {}
 
@@ -44,10 +50,15 @@ export class ValkeyRateLimitAdapter implements RateLimitPort {
     return { ok: true, count, remaining: limit - count };
   }
 
-  async remainingSeconds(key: string): Promise<number | null> {
+  async remainingSeconds(key: string, repairSeconds = DEFAULT_REPAIR_SECONDS): Promise<number | null> {
     assertValidRateLimitKey(key);
 
-    const ttlMs = readNumber(await this.client.pttl(key));
+    // Repairs a key that exists with no expiry, exactly as `hit` and `lock` do.
+    // This is the path a LOCK is read through, so a key without an expiry here is
+    // a permanent lockout with nothing to release it.
+    const ttlMs = readNumber(
+      await this.client[REMAINING_COMMAND](key, String(repairSeconds * 1_000)),
+    );
     // -2 is "no such key" and -1 is "no expiry". Both mean there is nothing to
     // wait for here: every key this adapter writes is written WITH an expiry, and
     // both scripts repair one that is somehow missing, so -1 can only be somebody
@@ -86,11 +97,12 @@ function readNumber(value: unknown): number {
   if (typeof value === 'number' && Number.isFinite(value)) {
     return value;
   }
-  if (typeof value === 'string') {
-    const parsed = Number(value);
-    if (Number.isFinite(parsed)) {
-      return parsed;
-    }
+  // Digits, not `Number()`. `Number('')` is `0`, which is the exact failure this
+  // function's docblock says it prevents: an empty reply would have been read as
+  // "count = 0" and switched the limit off for that key without a single failing
+  // test. `Number(' ')` and `Number('0x10')` are the same class of accident.
+  if (typeof value === 'string' && /^-?[0-9]+$/.test(value)) {
+    return Number(value);
   }
   throw new Error('valkey: expected an integer reply');
 }
