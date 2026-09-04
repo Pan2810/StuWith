@@ -1,8 +1,12 @@
 import {
+  RATE_LIMITED_MESSAGE,
   SIGN_IN_OUTCOME_QUERY_PARAM,
+  SIGN_IN_RETRY_AFTER_QUERY_PARAM,
   isSignInOutcome,
+  parseSignInRetryAfterSeconds,
   type SignInOutcome,
 } from '@stuwith/contracts';
+import { SignInCountdown } from './countdown';
 
 /**
  * How the last sign-in attempt is turned into something a person reads.
@@ -44,15 +48,36 @@ import {
  */
 export const OUTCOME_NOTICES: Record<
   SignInOutcome,
-  { readonly message: string; readonly role: 'status' | 'alert' }
+  {
+    readonly message: string;
+    readonly role: 'status' | 'alert';
+    /** Whether a `?giay=` value means anything for this outcome. Only one does. */
+    readonly showsCountdown: boolean;
+  }
 > = {
   'that-bai': {
     message: 'Không đăng nhập được. Thử lại hoặc chọn cách khác.',
     role: 'alert',
+    showsCountdown: false,
   },
   'da-huy': {
     message: 'Bạn đã huỷ ở bước cấp quyền. Chọn lại cách đăng nhập bên dưới.',
     role: 'status',
+    showsCountdown: false,
+  },
+  /**
+   * Story 1.3 part 2. The sentence says what happened and what to do, and nothing
+   * a person probing the login could calibrate against: not whether the lock is by
+   * address or by account, not the threshold, not how many attempts were left.
+   *
+   * `status` rather than `alert`. Being asked to wait is not an error the person
+   * made, and `alert` interrupts whatever a screen reader was saying to announce
+   * it. The countdown beside it carries the only number in the story.
+   */
+  'bi-khoa': {
+    message: RATE_LIMITED_MESSAGE,
+    role: 'status',
+    showsCountdown: true,
   },
 };
 
@@ -60,12 +85,23 @@ export interface ResolvedSignInOutcome {
   /** `null` for both "no parameter" and "a parameter we do not recognise". */
   readonly outcome: SignInOutcome | null;
   /**
-   * Whether the parameter was there at all — the signal to rewrite the address
+   * The countdown, or `null` when there is no usable one.
+   *
+   * `null` means "show the lock message with no clock", never "show something
+   * plausible". This value arrives in a URL a stranger can write and send, so
+   * `?giay=abc`, `?giay=-5` and `?giay=99999999` all land here, and the last one
+   * would otherwise put "thử lại sau 1157 ngày" in front of somebody who is not
+   * locked out of anything.
+   */
+  readonly retryAfterSeconds: number | null;
+  /**
+   * Whether EITHER parameter was there at all — the signal to rewrite the address
    * bar. It is deliberately independent of `outcome`: an unrecognised value must
-   * be stripped too, or it survives a refresh for no reason.
+   * be stripped too, or it survives a refresh for no reason. A stray `?giay=` with
+   * no outcome beside it is stripped for the same reason.
    */
   readonly present: boolean;
-  /** What the query string should be once the parameter is gone, without `?`. */
+  /** What the query string should be once both parameters are gone, without `?`. */
   readonly remainingSearch: string;
 }
 
@@ -123,13 +159,29 @@ export function resolveSignInOutcome(search: string): ResolvedSignInOutcome {
   // Reading through `URLSearchParams` and rewriting through `stripQueryParam` is
   // deliberate: decoding a value is exactly what the former is for, and rewriting
   // a string you do not own is exactly what it is bad at.
-  const raw = new URLSearchParams(search).get(SIGN_IN_OUTCOME_QUERY_PARAM);
-  const stripped = stripQueryParam(search, SIGN_IN_OUTCOME_QUERY_PARAM);
+  const params = new URLSearchParams(search);
+  const raw = params.get(SIGN_IN_OUTCOME_QUERY_PARAM);
+  const outcome = raw !== null && isSignInOutcome(raw) ? raw : null;
+
+  // Both parameters come off, in one pass each, and BOTH count as "present".
+  // Leaving `giay` behind because the outcome beside it was junk would put a
+  // number back on the screen the moment anything re-read the URL.
+  const withoutOutcome = stripQueryParam(search, SIGN_IN_OUTCOME_QUERY_PARAM);
+  const withoutSeconds = stripQueryParam(
+    withoutOutcome.remaining,
+    SIGN_IN_RETRY_AFTER_QUERY_PARAM,
+  );
 
   return {
-    outcome: raw !== null && isSignInOutcome(raw) ? raw : null,
-    present: stripped.present,
-    remainingSearch: stripped.remaining,
+    outcome,
+    // The seconds mean nothing without an outcome that uses them. Reading them
+    // anyway would let `?giay=30` alone put a countdown on an ordinary visit.
+    retryAfterSeconds:
+      outcome !== null && OUTCOME_NOTICES[outcome].showsCountdown
+        ? parseSignInRetryAfterSeconds(params.get(SIGN_IN_RETRY_AFTER_QUERY_PARAM))
+        : null,
+    present: withoutOutcome.present || withoutSeconds.present,
+    remainingSearch: withoutSeconds.remaining,
   };
 }
 
@@ -140,8 +192,21 @@ export interface PageLocation {
   readonly hash: string;
 }
 
+/**
+ * Everything the notice needs, as one value.
+ *
+ * The outcome and its countdown travel together from the URL to the screen, so
+ * they are one object rather than two parallel pieces of state that a careless
+ * edit can separate. `null` retryAfterSeconds means "no clock", never "zero".
+ */
+export interface SignInNotice {
+  readonly outcome: SignInOutcome;
+  readonly retryAfterSeconds: number | null;
+}
+
 export interface OutcomeLocationChange {
-  readonly outcome: SignInOutcome | null;
+  /** `null` for "nothing to show", which covers an unrecognised code too. */
+  readonly notice: SignInNotice | null;
   /**
    * The URL the address bar should carry from now on, or `null` when there was no
    * outcome parameter and therefore nothing to rewrite.
@@ -166,12 +231,15 @@ export interface OutcomeLocationChange {
 export function nextLocationAfterOutcome(location: PageLocation): OutcomeLocationChange {
   const resolved = resolveSignInOutcome(location.search);
   if (!resolved.present) {
-    return { outcome: null, nextUrl: null };
+    return { notice: null, nextUrl: null };
   }
 
   const query = resolved.remainingSearch;
   return {
-    outcome: resolved.outcome,
+    notice:
+      resolved.outcome === null
+        ? null
+        : { outcome: resolved.outcome, retryAfterSeconds: resolved.retryAfterSeconds },
     nextUrl: `${location.pathname}${query.length > 0 ? `?${query}` : ''}${location.hash}`,
   };
 }
@@ -185,16 +253,64 @@ export function nextLocationAfterOutcome(location: PageLocation): OutcomeLocatio
  * a back button, and "Chọn lại cách đăng nhập bên dưới" above a signed-in view
  * with no login buttons under it is an instruction that cannot be followed.
  */
+/**
+ * Whether to offer the four provider links.
+ *
+ * They used to be shown whenever `/v1/auth/me` answered 401 — which a rate-limited
+ * `429` also produces. So a locked-out visitor read "hãy chờ một lát" directly
+ * above four buttons, and each click spent another `auth_start` attempt and
+ * bounced them straight back with a longer wait. The notice and the links have to
+ * agree about whether signing in is possible right now.
+ *
+ * A pure function rather than a condition inside the page, because it is a
+ * decision and this project cannot execute the page.
+ */
+export function signInOptionsVisible(notice: SignInNotice | null, canSignIn: boolean): boolean {
+  if (!canSignIn) {
+    return false;
+  }
+  if (notice === null) {
+    return true;
+  }
+  // Only while there is a countdown to wait out. Once it reaches zero the page
+  // clears the notice and the links come back — see `page.tsx`.
+  return !(OUTCOME_NOTICES[notice.outcome].showsCountdown && notice.retryAfterSeconds !== null);
+}
+
 export function SignInOutcomeNotice({
-  outcome,
+  notice,
   canSignIn,
+  onCountdownFinished,
 }: {
-  readonly outcome: SignInOutcome | null;
+  /**
+   * ONE prop carrying both halves, and that is the point of its shape.
+   *
+   * The countdown used to be a second, optional prop with a `null` default. So
+   * deleting `retryAfterSeconds={…}` from `page.tsx` typechecked, rendered a lock
+   * message with no clock, and left every test green — because the test built the
+   * props itself and never rendered the page. The acceptance criterion "đếm ngược
+   * thật bằng giây" would have shipped as a sentence with no number. Folded into
+   * one required prop, that edit is a compile error.
+   */
+  readonly notice: SignInNotice | null;
   readonly canSignIn: boolean;
+  /** Forwarded to the clock, so the page can offer the login links again. */
+  readonly onCountdownFinished?: () => void;
 }) {
-  if (outcome === null || !canSignIn) {
+  if (notice === null || !canSignIn) {
     return null;
   }
-  const notice = OUTCOME_NOTICES[outcome];
-  return <p role={notice.role}>{notice.message}</p>;
+  const presentation = OUTCOME_NOTICES[notice.outcome];
+  // Only one outcome has anything to count, and a number that arrived beside any
+  // other one is ignored rather than rendered somewhere it makes no sense.
+  const seconds = presentation.showsCountdown ? notice.retryAfterSeconds : null;
+
+  return (
+    <>
+      <p role={presentation.role}>{presentation.message}</p>
+      {seconds === null ? null : (
+        <SignInCountdown seconds={seconds} onFinished={onCountdownFinished} />
+      )}
+    </>
+  );
 }

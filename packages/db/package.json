@@ -28,6 +28,7 @@
   "dependencies": {
     "@stuwith/contracts": "workspace:*",
     "@stuwith/domain": "workspace:*",
+    "iovalkey": "0.4.0",
     "pg": "8.23.0"
   },
   "devDependencies": {

@@ -1,5 +1,68 @@
-import type { NestFastifyApplication } from '@nestjs/platform-fastify';
+import type { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
 import type { ApiEnv } from '@stuwith/config';
+import { requireTrustedProxies } from '@stuwith/domain';
+
+/**
+ * The Fastify options `main.ts` and the flow-test harness must BOTH construct the
+ * adapter with.
+ *
+ * `trustProxy` is the whole content of this function and it is the most dangerous
+ * setting in the story, because it is wrong silently in two opposite directions:
+ *
+ * - left at its default `false` behind Caddy, `request.ip` is Caddy's address, so
+ *   every visitor is squashed into one bucket and the first person to trip the
+ *   limit locks out the entire product;
+ * - set to a bare `true`, `X-Forwarded-For` is whatever the client typed, and
+ *   anybody picks their own rate-limit key — a blocking layer that exists and
+ *   blocks nothing.
+ *
+ * Neither shows up in CI. The value therefore comes from a REQUIRED environment
+ * variable with no default (`TRUSTED_PROXY_ADDRESSES`): the operator has to name
+ * the proxies, and the word `none` is a legitimate answer that has to be written
+ * down rather than inferred from absence.
+ *
+ * ## The value is an address list, and a NUMBER must never be used here
+ *
+ * Two copies of Fastify are installed and they disagree about what a number means:
+ *
+ * - `fastify@5.11.3`, the copy `@nestjs/platform-fastify` resolves and therefore
+ *   the one that actually runs, honours it as "trust this many hops";
+ * - `fastify@5.12.1`, the copy `apps/api` declares, **removed** that meaning as a
+ *   security fix. Its `getTrustProxyFn` returns `() => false` for a number
+ *   ("hop-count-only trust cannot validate the immediate peer"), and its type no
+ *   longer accepts one.
+ *
+ * So a numeric literal would mean "trust N hops" today and "trust nothing" after a
+ * routine bump of a transitive dependency — silently, with `request.ip` quietly
+ * becoming Caddy's address for everybody. The trap is real; the answer is not a
+ * predicate but the STRING form, which both versions hand to `proxy-addr.compile`
+ * unchanged. That is the same list `resolveClientIp` in `packages/domain` is given,
+ * so Fastify's `request.ip` and the rate-limit key agree by construction rather
+ * than by coincidence.
+ *
+ * `false` when the deployment declared no proxy: with nothing in front, the header
+ * is not evidence of anything and must not be read at all.
+ *
+ * The guard uses the domain function rather than `request.ip` because that one is
+ * unit-testable with a hand-written header and no server. This setting is here so
+ * that everything ELSE Fastify reports — `request.ip` in a log line above all —
+ * says the same thing.
+ */
+type FastifyAdapterOptions = NonNullable<ConstructorParameters<typeof FastifyAdapter>[0]>;
+
+export function fastifyAdapterOptions(config: ApiEnv): FastifyAdapterOptions {
+  // Throws rather than continuing with a shortened list: the config layer already
+  // validated this, so anything invalid here is a bug, and a quietly narrowed set
+  // of trusted proxies is the failure nobody would notice.
+  const proxies = requireTrustedProxies(config.TRUSTED_PROXY_ADDRESSES);
+  if (proxies.length === 0) {
+    return { trustProxy: false };
+  }
+  // `source` and not the parsed form: `proxy-addr` wants the text an operator
+  // wrote, and round-tripping through our own formatter would be one more place
+  // for the two views of the list to drift.
+  return { trustProxy: proxies.map((proxy) => proxy.source).join(',') };
+}
 
 /**
  * The two pieces of Fastify wiring the login flow cannot work without.

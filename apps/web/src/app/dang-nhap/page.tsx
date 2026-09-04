@@ -1,8 +1,13 @@
 'use client';
 
-import { AUTH_PROVIDERS, type CurrentUser, type SignInOutcome } from '@stuwith/contracts';
+import { AUTH_PROVIDERS, type CurrentUser } from '@stuwith/contracts';
 import { useCallback, useEffect, useState } from 'react';
-import { SignInOutcomeNotice, nextLocationAfterOutcome } from './sign-in-outcome';
+import {
+  SignInOutcomeNotice,
+  nextLocationAfterOutcome,
+  signInOptionsVisible,
+  type SignInNotice,
+} from './sign-in-outcome';
 
 /**
  * Deliberately unstyled. The design system — tokens, light/dark, the "Cắm trại"
@@ -38,7 +43,14 @@ type LoadState =
 
 export default function DangNhapPage() {
   const [state, setState] = useState<LoadState>({ status: 'loading' });
-  const [outcome, setOutcome] = useState<SignInOutcome | null>(null);
+  /**
+   * The outcome AND its countdown, as ONE value.
+   *
+   * Two pieces of state was the bug: the countdown was a separate optional prop,
+   * so deleting it from the JSX below typechecked and shipped a lock message with
+   * no number in it. `SignInNotice` makes that a compile error.
+   */
+  const [notice, setNotice] = useState<SignInNotice | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -82,12 +94,12 @@ export default function DangNhapPage() {
    * effect is only the two things that need a browser.
    */
   useEffect(() => {
-    const { outcome: resolved, nextUrl } = nextLocationAfterOutcome(window.location);
-    if (nextUrl === null) {
+    const change = nextLocationAfterOutcome(window.location);
+    if (change.nextUrl === null) {
       return;
     }
-    setOutcome(resolved);
-    window.history.replaceState(null, '', nextUrl);
+    setNotice(change.notice);
+    window.history.replaceState(null, '', change.nextUrl);
   }, []);
 
   const logout = useCallback(async () => {
@@ -113,7 +125,12 @@ export default function DangNhapPage() {
         fix is a region that is always mounted, and that belongs with the layout
         work rather than in a bare skeleton.
       */}
-      <SignInOutcomeNotice outcome={outcome} canSignIn={state.status === 'signed-out'} />
+      <SignInOutcomeNotice
+        notice={notice}
+        canSignIn={state.status === 'signed-out'}
+        // The wait is over: drop the notice so the provider links come back.
+        onCountdownFinished={() => setNotice(null)}
+      />
 
       {state.status === 'loading' ? <p>Đang kiểm tra phiên…</p> : null}
 
@@ -129,7 +146,7 @@ export default function DangNhapPage() {
         </section>
       ) : null}
 
-      {state.status === 'signed-out' ? (
+      {signInOptionsVisible(notice, state.status === 'signed-out') ? (
         <nav>
           <p>Chọn tài khoản mạng xã hội để tiếp tục:</p>
           <ul>

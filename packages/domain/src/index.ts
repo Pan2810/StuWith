@@ -3,5 +3,8 @@ export * from './ports/heartbeat-port';
 export * from './ports/identity-port';
 export * from './ports/session-port';
 export * from './ports/audit-port';
+export * from './ports/rate-limit-port';
+export * from './policies/client-address';
 export * from './policies/liveness';
 export * from './policies/identity';
+export * from './policies/rate-limit';

@@ -3,12 +3,15 @@ import {
   AuditInputError,
   HeartbeatInputError,
   IdentityInputError,
+  RateLimitInputError,
   SessionInputError,
   type AuditEventInput,
   type AuditPort,
   type HeartbeatPort,
   type IdentityPort,
   type ProviderIdentity,
+  type RateLimitDecision,
+  type RateLimitPort,
   type SessionGeneration,
   type SessionPort,
 } from '@stuwith/domain';
@@ -985,6 +988,373 @@ export function runAuditPortContract(options: AuditPortContractOptions): void {
 
         expect(outcome.kind).toBe('rejected');
         expect(outcome.kind === 'rejected' && outcome.error).not.toBeInstanceOf(AuditInputError);
+      });
+    });
+  });
+}
+
+/* ------------------------------------------------------------------------- *
+ * RateLimitPort — Story 1.3 part 2
+ * ------------------------------------------------------------------------- */
+
+export interface RateLimitPortHarness {
+  readonly port: RateLimitPort;
+  /** Return the adapter to an empty state between examples. */
+  reset(): Promise<void>;
+  /**
+   * Move time forward.
+   *
+   * A fake clock jumps; a real Valkey has to actually wait. Half of this port's
+   * behaviour is about time — a countdown that really decreases, a window that
+   * really expires, a lock that outlives an ordinary one — and none of it can be
+   * asserted without saying "later" in a way both stores understand.
+   */
+  advance(milliseconds: number): Promise<void>;
+  teardown?(): Promise<void>;
+  /**
+   * An INDEPENDENT port whose store is unreachable. Used to prove a fault
+   * propagates rather than being laundered into an allowance — the failure mode
+   * that switches the whole blocking layer off while every gate stays green.
+   */
+  createFaultingPort?(): Promise<RateLimitPort>;
+}
+
+export interface RateLimitPortContractOptions {
+  readonly label: string;
+  readonly createHarness: () => Promise<RateLimitPortHarness>;
+  readonly skip?: boolean;
+  readonly hookTimeoutMs?: number;
+}
+
+/**
+ * The suite both rate-limit adapters have to satisfy.
+ *
+ * Windows here are seconds rather than minutes because the Valkey pass pays for
+ * every one of them in real elapsed time. They are still long enough for the
+ * assertions to be about behaviour rather than about timer resolution.
+ */
+export function runRateLimitPortContract(options: RateLimitPortContractOptions): void {
+  const suite = options.skip === true ? describe.skip : describe;
+
+  /** Three, not two: a decrease has to be VISIBLE in whole seconds. */
+  const WINDOW_SECONDS = 3;
+  const LIMIT = 3;
+  /** Strictly longer than the window — that difference is a matrix row. */
+  const LOCK_SECONDS = 6;
+
+  suite(`RateLimitPort contract — ${options.label}`, () => {
+    let harness: RateLimitPortHarness | undefined;
+
+    const use = async (): Promise<RateLimitPortHarness> => {
+      harness ??= await options.createHarness();
+      return harness;
+    };
+
+    const port = async (): Promise<RateLimitPort> => (await use()).port;
+
+    beforeEach(async () => {
+      const active = await use();
+      await active.reset();
+    }, options.hookTimeoutMs ?? 120_000);
+
+    afterAll(async () => {
+      await harness?.teardown?.();
+      harness = undefined;
+    }, options.hookTimeoutMs ?? 120_000);
+
+    /** Hit `key` until it is refused, and return that refusal. */
+    const exhaust = async (key: string): Promise<RateLimitDecision> => {
+      const p = await port();
+      let last: RateLimitDecision = await p.hit(key, LIMIT, WINDOW_SECONDS);
+      for (let attempt = 0; attempt < LIMIT + 2 && last.ok; attempt += 1) {
+        last = await p.hit(key, LIMIT, WINDOW_SECONDS);
+      }
+      return last;
+    };
+
+    describe('counting inside one window', () => {
+      it('allows exactly the configured number of attempts', async () => {
+        const p = await port();
+        for (let attempt = 1; attempt <= LIMIT; attempt += 1) {
+          const decision = await p.hit('c:allow', LIMIT, WINDOW_SECONDS);
+          expect(decision.ok, `attempt ${attempt} of ${LIMIT} must be allowed`).toBe(true);
+          expect(decision.ok && decision.count).toBe(attempt);
+          expect(decision.ok && decision.remaining).toBe(LIMIT - attempt);
+        }
+      });
+
+      it('REFUSES the attempt after the limit, by returning rather than throwing', async () => {
+        const refusal = await exhaust('c:refuse');
+
+        expect(refusal.ok).toBe(false);
+        expect(refusal.ok === false && refusal.reason).toBe('RateLimited');
+      });
+
+      it('keeps refusing while the window is still open', async () => {
+        await exhaust('c:keep');
+        const again = await (await port()).hit('c:keep', LIMIT, WINDOW_SECONDS);
+
+        expect(again.ok).toBe(false);
+      });
+
+      /**
+       * The property the port docblock states as its whole reason for existing —
+       * "two workers that both read 9 and both write 10 let twice the limit
+       * through" — and which every example above missed, because they all call
+       * `hit` one after another. A read-then-write adapter passes sequential
+       * calls perfectly.
+       *
+       * `Promise.all` is not a thread, but it is enough: an implementation that
+       * awaited a read before writing would interleave here and over-allow. On the
+       * Valkey pass it is genuinely concurrent on the wire.
+       */
+      it('allows exactly the limit when the attempts arrive AT ONCE', async () => {
+        const p = await port();
+        const attempts = LIMIT + 5;
+
+        const decisions = await Promise.all(
+          Array.from({ length: attempts }, () => p.hit('c:race', LIMIT, WINDOW_SECONDS)),
+        );
+
+        expect(decisions.filter((decision) => decision.ok)).toHaveLength(LIMIT);
+        expect(decisions.filter((decision) => !decision.ok)).toHaveLength(attempts - LIMIT);
+      });
+
+      it('gives each concurrent winner a distinct count, so none was lost', async () => {
+        const p = await port();
+
+        const decisions = await Promise.all(
+          Array.from({ length: LIMIT }, () => p.hit('c:race-counts', LIMIT, WINDOW_SECONDS)),
+        );
+
+        // 1..LIMIT exactly once each. Two workers reading the same value would
+        // produce a duplicate here even when the totals happened to add up.
+        const counts = decisions.flatMap((decision) => (decision.ok ? [decision.count] : []));
+        expect([...counts].sort((a, b) => a - b)).toEqual(
+          Array.from({ length: LIMIT }, (_unused, index) => index + 1),
+        );
+      });
+
+      it('counts each key on its own — one caller does not spend another budget', async () => {
+        await exhaust('c:one');
+        const other = await (await port()).hit('c:two', LIMIT, WINDOW_SECONDS);
+
+        expect(other.ok).toBe(true);
+      });
+    });
+
+    describe('Matrix row: the countdown is real', () => {
+      it('answers with seconds that fit inside the window', async () => {
+        const refusal = await exhaust('c:ttl');
+
+        expect(refusal.ok).toBe(false);
+        if (refusal.ok) return;
+        expect(refusal.retryAfterSeconds).toBeGreaterThan(0);
+        expect(refusal.retryAfterSeconds).toBeLessThanOrEqual(WINDOW_SECONDS);
+      });
+
+      it('DECREASES as time passes, instead of repeating a constant', async () => {
+        const first = await exhaust('c:count-down');
+        expect(first.ok).toBe(false);
+        if (first.ok) return;
+
+        await (await use()).advance(1_100);
+
+        const later = await (await port()).hit('c:count-down', LIMIT, WINDOW_SECONDS);
+        expect(later.ok).toBe(false);
+        if (later.ok) return;
+
+        // The whole acceptance criterion in one assertion: a configured constant
+        // would come back identical, and somebody who waited exactly as long as
+        // they were told would be refused again with the same number.
+        expect(later.retryAfterSeconds).toBeLessThan(first.retryAfterSeconds);
+      });
+
+      it('does not push the window out when a refused attempt arrives', async () => {
+        // A window renewed on every hit can never expire for somebody who keeps
+        // hammering, and the countdown then never reaches zero.
+        const first = await exhaust('c:no-extend');
+        expect(first.ok).toBe(false);
+        if (first.ok) return;
+
+        await (await use()).advance(1_100);
+        await (await port()).hit('c:no-extend', LIMIT, WINDOW_SECONDS);
+        await (await use()).advance(2_100);
+
+        const afterWindow = await (await port()).hit('c:no-extend', LIMIT, WINDOW_SECONDS);
+        expect(afterWindow.ok).toBe(true);
+      });
+    });
+
+    describe('Matrix row: waiting out the window', () => {
+      it('allows again once the window has passed, counting from one', async () => {
+        await exhaust('c:expire');
+        await (await use()).advance(WINDOW_SECONDS * 1_000 + 300);
+
+        const after = await (await port()).hit('c:expire', LIMIT, WINDOW_SECONDS);
+        expect(after.ok).toBe(true);
+        expect(after.ok && after.count).toBe(1);
+      });
+    });
+
+    describe('Matrix row: a success clears the failure counter', () => {
+      it('forgets a key entirely, so the next attempt starts from one', async () => {
+        await exhaust('c:clear');
+        await (await port()).clear('c:clear');
+
+        const after = await (await port()).hit('c:clear', LIMIT, WINDOW_SECONDS);
+        expect(after.ok).toBe(true);
+        expect(after.ok && after.count).toBe(1);
+      });
+
+      it('clearing a key nobody ever touched is not an error', async () => {
+        await expect((await port()).clear('c:never-existed')).resolves.toBeUndefined();
+      });
+    });
+
+    describe('Matrix row: the brute-force lock', () => {
+      it('reports nothing to wait for before a lock exists', async () => {
+        expect(await (await port()).remainingSeconds('c:lock-a')).toBeNull();
+      });
+
+      it('reports a real remaining time once locked, without counting an attempt', async () => {
+        const locked = await (await port()).lock('c:lock-b', LOCK_SECONDS);
+        expect(locked).toBeGreaterThan(0);
+        expect(locked).toBeLessThanOrEqual(LOCK_SECONDS);
+
+        const first = await (await port()).remainingSeconds('c:lock-b');
+        const second = await (await port()).remainingSeconds('c:lock-b');
+        expect(first).not.toBeNull();
+        // Reading the lock must not extend it: a client polling the countdown
+        // would otherwise keep itself locked out for ever.
+        expect(second ?? 0).toBeLessThanOrEqual(first ?? 0);
+      });
+
+      it('outlives an ordinary window — that is what makes it the LONGER lock', async () => {
+        await (await port()).lock('c:lock-long', LOCK_SECONDS);
+        await (await use()).advance(WINDOW_SECONDS * 1_000 + 300);
+
+        expect(await (await port()).remainingSeconds('c:lock-long')).not.toBeNull();
+      });
+
+      it('does not restart when it is locked again', async () => {
+        const first = await (await port()).lock('c:lock-again', LOCK_SECONDS);
+        await (await use()).advance(1_100);
+        const second = await (await port()).lock('c:lock-again', LOCK_SECONDS);
+
+        // Re-locking on every later failure would make the number the person is
+        // watching jump back up, and a lock that cannot run out is a ban.
+        expect(second).toBeLessThan(first);
+      });
+
+      it('runs out on its own', async () => {
+        await (await port()).lock('c:lock-expire', 2);
+        await (await use()).advance(2_300);
+
+        expect(await (await port()).remainingSeconds('c:lock-expire')).toBeNull();
+      });
+
+      /**
+       * The place the two adapters could most easily disagree, and the reason this
+       * example exists at all.
+       *
+       * Production never puts a counter and a lock on the same key — that is what
+       * `bruteForceCounterKey` and `bruteForceLockKey` are for — so a divergence
+       * here would be invisible until some later feature reused a key. Valkey has
+       * ONE keyspace: a lock is a string with an expiry, `INCR` against it returns
+       * 2, and `SET … NX` against a counter is a no-op that leaves the counter's
+       * TTL alone. An in-memory adapter that modelled the two as separate stores
+       * would pass every other example here and be wrong about both calls.
+       */
+      it('agrees with the real store when a counter and a lock share one key', async () => {
+        const p = await port();
+
+        const first = await p.lock('c:shared', LOCK_SECONDS);
+        expect(first).toBeGreaterThan(0);
+
+        // `SET NX` against an existing key does nothing but report its TTL.
+        const relocked = await p.lock('c:shared', LOCK_SECONDS * 10);
+        expect(relocked).toBeLessThanOrEqual(LOCK_SECONDS);
+
+        // `INCR` against a lock value counts from the value that is there.
+        const counted = await p.hit('c:shared', LIMIT, WINDOW_SECONDS);
+        expect(counted.ok && counted.count).toBe(2);
+
+        // And the lock's own, longer expiry survives the increment rather than
+        // being replaced by the counter's window.
+        const remaining = await p.remainingSeconds('c:shared');
+        expect(remaining).not.toBeNull();
+        expect(remaining ?? 0).toBeGreaterThan(WINDOW_SECONDS);
+      });
+
+      it('is NOT released by clearing a counter — the two are different keys', async () => {
+        await (await port()).lock('c:lock-keep', LOCK_SECONDS);
+        await (await port()).clear('c:counter-keep');
+
+        // The two matrix rows that look contradictory: a success clears the
+        // failure counter, and a lock already earned still runs its course.
+        expect(await (await port()).remainingSeconds('c:lock-keep')).not.toBeNull();
+      });
+    });
+
+    describe('a caller bug is a throw, not an outcome', () => {
+      it.each([
+        ['an empty key', '', LIMIT, WINDOW_SECONDS],
+        ['a key with whitespace', 'has space', LIMIT, WINDOW_SECONDS],
+        ['a key that is far too long', 'k'.repeat(300), LIMIT, WINDOW_SECONDS],
+        ['a limit of zero', 'c:bad', 0, WINDOW_SECONDS],
+        ['a fractional limit', 'c:bad', 1.5, WINDOW_SECONDS],
+        ['a window of zero', 'c:bad', LIMIT, 0],
+      ] as const)('rejects %s with RateLimitInputError', async (_label, key, limit, window) => {
+        await expect((await port()).hit(key, limit, window)).rejects.toBeInstanceOf(
+          RateLimitInputError,
+        );
+      });
+
+      it('rejects a bad key on every read path too', async () => {
+        const p = await port();
+        await expect(p.remainingSeconds('')).rejects.toBeInstanceOf(RateLimitInputError);
+        await expect(p.clear('')).rejects.toBeInstanceOf(RateLimitInputError);
+        await expect(p.lock('', LOCK_SECONDS)).rejects.toBeInstanceOf(RateLimitInputError);
+      });
+    });
+
+    describe('an outage is a fault, and never an allowance', () => {
+      const faultingPort = async (): Promise<RateLimitPort> => {
+        const active = await use();
+        const create = active.createFaultingPort;
+        if (create === undefined) {
+          throw new Error(
+            `harness "${options.label}" must provide createFaultingPort(): an adapter that ` +
+              'answers "allowed" when its store is down has switched the blocking layer off ' +
+              'silently, and no test anywhere would notice.',
+          );
+        }
+        return create.call(active);
+      };
+
+      it('lets the store error propagate out of hit()', async () => {
+        const faulting = await faultingPort();
+        const outcome = await faulting.hit('c:fault', LIMIT, WINDOW_SECONDS).then(
+          (decision) => ({ kind: 'resolved' as const, decision }),
+          (error: unknown) => ({ kind: 'rejected' as const, error }),
+        );
+
+        // Neither `{ ok: true }` (the layer is off and nobody knows) nor
+        // `{ ok: false }` (an outage presented to a user as their own fault).
+        // The decision about what to do belongs to apps/api, which can log it.
+        expect(outcome.kind).toBe('rejected');
+        expect(outcome.kind === 'rejected' && outcome.error).not.toBeInstanceOf(
+          RateLimitInputError,
+        );
+      });
+
+      it('lets the store error propagate out of the read and write paths', async () => {
+        const faulting = await faultingPort();
+
+        await expect(faulting.remainingSeconds('c:fault')).rejects.toBeTruthy();
+        await expect(faulting.lock('c:fault', LOCK_SECONDS)).rejects.toBeTruthy();
+        await expect(faulting.clear('c:fault')).rejects.toBeTruthy();
       });
     });
   });

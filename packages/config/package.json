@@ -18,6 +18,7 @@
   },
   "dependencies": {
     "@stuwith/contracts": "workspace:*",
+    "@stuwith/domain": "workspace:*",
     "zod": "4.4.3"
   }
 }

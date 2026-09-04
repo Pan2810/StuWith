@@ -15,12 +15,22 @@ import type {
   AuditPort,
   ClockPort,
   IdentityPort,
+  RateLimitPort,
+  RateLimitChannel,
+  RateLimitSubject,
   SessionPort,
   SessionRefusalReason,
   User,
 } from '@stuwith/domain';
-import { IdentityInputError } from '@stuwith/domain';
+import {
+  IdentityInputError,
+  RateLimitInputError,
+  bruteForceCounterKey,
+  bruteForceSubjectFor,
+  bruteForceLockKey,
+} from '@stuwith/domain';
 import { APP_CONFIG, type AppConfig } from '../config.token';
+import { RateLimitHealth } from '../rate-limit/rate-limit-health';
 import { AUTH_RUNTIME, type AuthRuntime } from './auth.runtime';
 import { recordSignInFailed, recordSignedIn, type SignInFailureReason } from './audit';
 import {
@@ -130,16 +140,21 @@ export class AuthService {
   private readonly audit: AuditPort;
   private readonly clock: ClockPort;
   private readonly registry: ProviderRegistry;
+  private readonly rateLimit: RateLimitPort;
 
   constructor(
     @Inject(APP_CONFIG) private readonly config: AppConfig,
     @Inject(AUTH_RUNTIME) runtime: AuthRuntime,
+    // Shared with the guard, deliberately: one outage must produce one log line,
+    // not one per request from each of the two places that touch the store.
+    private readonly health: RateLimitHealth,
   ) {
     this.identity = runtime.identity;
     this.sessions = runtime.sessions;
     this.audit = runtime.audit;
     this.clock = runtime.clock;
     this.registry = runtime.registry;
+    this.rateLimit = runtime.rateLimit;
   }
 
   /** `GET /v1/auth/:provider/start` */
@@ -204,12 +219,20 @@ export class AuthService {
     };
   }
 
-  /** `GET /v1/auth/:provider/callback` */
+  /**
+   * `GET /v1/auth/:provider/callback`
+   *
+   * `subject` is passed in rather than inferred here: it is the same address and
+   * rate-limit guard already counted this request against, computed by the same
+   * function, so a failure recorded below lands on the key the guard will read on
+   * the next attempt.
+   */
   async callback(
     providerName: string,
     query: Readonly<Record<string, unknown>>,
     cookieHeader: unknown,
     requestId: string,
+    subject: RateLimitSubject,
   ): Promise<AuthOutcome> {
     const adapter = this.adapterFor(providerName);
     if (adapter === null) {
@@ -246,6 +269,7 @@ export class AuthService {
         now,
         jar,
         this.attemptCookieFor(provider, query, jar),
+        subject,
       );
     }
 
@@ -258,6 +282,7 @@ export class AuthService {
         now,
         jar,
         stateCheck.cookieName,
+        subject,
       );
     }
 
@@ -270,6 +295,7 @@ export class AuthService {
         now,
         jar,
         stateCheck.cookieName,
+        subject,
       );
     }
 
@@ -292,7 +318,15 @@ export class AuthService {
       // Both are "this login cannot complete", both used to be a silent 500.
       const reason =
         error instanceof IdentityInputError ? 'identity_rejected' : 'provider_exchange_failed';
-      return this.failedSignIn(requestId, provider, reason, now, jar, stateCheck.cookieName);
+      return this.failedSignIn(
+        requestId,
+        provider,
+        reason,
+        now,
+        jar,
+        stateCheck.cookieName,
+        subject,
+      );
     }
 
     let resolved;
@@ -307,6 +341,7 @@ export class AuthService {
           now,
           jar,
           stateCheck.cookieName,
+          subject,
         );
       }
       // A store FAULT is not a refusal. A database outage must not read to the
@@ -326,6 +361,20 @@ export class AuthService {
       occurredAt: now,
     });
 
+    /**
+     * A real success proves the failures before it were noise — a mistyped
+     * account, a consent screen dismissed by accident, a provider having a bad
+     * minute. Carrying that count forward would punish somebody who has just
+     * demonstrated they are exactly who they said, and the next honest slip would
+     * trip a lock they half-earned yesterday.
+     *
+     * The COUNTER only. A lock that has already been earned is not released here:
+     * it is a different key, and it runs its own course (`bruteForceLockKey`).
+     * That is what makes "success clears the failure counter" and "a successful
+     * attempt does not open a lock early" both true at once.
+     */
+    await this.forgetFailures('browser', subject);
+
     return {
       kind: 'redirect',
       location: `${this.config.WEB_BASE_URL}/dang-nhap`,
@@ -340,7 +389,11 @@ export class AuthService {
   }
 
   /** `POST /v1/auth/refresh` */
-  async refresh(cookieHeader: unknown, requestId: string): Promise<AuthOutcome> {
+  async refresh(
+    cookieHeader: unknown,
+    requestId: string,
+    subject: RateLimitSubject,
+  ): Promise<AuthOutcome> {
     const jar = parseCookies(cookieHeader);
     const presented = jar[REFRESH_COOKIE_NAME];
     const nowIfMissing = this.clock.now();
@@ -377,12 +430,25 @@ export class AuthService {
       // we do not know why" is then unanswerable — the reused-token case would be
       // the only one visible, which is exactly the case you would rather not have
       // to distinguish from noise.
+      const reason = refreshFailureReason(rotated.reason);
       await recordSignInFailed(this.audit, {
         requestId,
-        reason: refreshFailureReason(rotated.reason),
+        reason,
         occurredAt: now,
         sessionId: rotated.revokedSessionId ?? null,
       });
+      /**
+       * The refresh leg is where the CREDENTIAL dimension of the brute-force lock
+       * earns its keep, and the only leg where it can.
+       *
+       * Every request here carries a refresh token, so `subject.userHandle` is
+       * present — and it does not change when the caller's address does. A stolen
+       * token replayed from fifty machines is fifty addresses and one handle, so
+       * the address counter never notices while the credential counter locks it.
+       * That is the "distributed attack on one account" case the IP dimension
+       * cannot see.
+       */
+      await this.countFailure('json', subject, reason);
       return {
         kind: 'json',
         status: 401,
@@ -390,6 +456,21 @@ export class AuthService {
         cookies: clearAllAuthCookies(jar),
       };
     }
+
+    /**
+     * A rotation that succeeded proves the credential is real, so its failure
+     * counter goes.
+     *
+     * Only the callback leg used to do this, which meant refresh failures
+     * accumulated for ever against a credential that had since proven itself: a
+     * client that failed four times across a network wobble stayed one failure
+     * from a fifteen-minute lock long after it was working again.
+     *
+     * The key is the OLD credential's — the one the counter was ticked against.
+     * The subject was built from the presented cookie before rotation, and the new
+     * token has no history to clear.
+     */
+    await this.forgetFailures('json', subject);
 
     return {
       kind: 'empty',
@@ -656,10 +737,16 @@ export class AuthService {
     now: Date,
     jar: Record<string, string>,
     stateCookieName: string | undefined,
+    subject: RateLimitSubject,
   ): Promise<AuthOutcome> {
     // One row per attempt, cancellations included. "Not an error" is a statement
     // about the interface, not about traceability.
     await recordSignInFailed(this.audit, { requestId, provider, reason, occurredAt: now });
+
+    // And one tick on the brute-force counter, which is a different question from
+    // the per-window budget the guard already spent: that one asks "how much
+    // traffic", this one asks "how much of it failed".
+    await this.countFailure('browser', subject, reason);
 
     const location = new URL(`${this.config.WEB_BASE_URL}/dang-nhap`);
     location.searchParams.set(SIGN_IN_OUTCOME_QUERY_PARAM, publicOutcomeFor(reason));
@@ -677,6 +764,154 @@ export class AuthService {
       location: location.toString(),
       cookies: [...doomed].map((name) => clearCookie(name, AUTH_COOKIE_PATH)),
     };
+  }
+
+      /**
+   * The failure reasons that are NOT the user's fault, and therefore must not walk
+   * anybody towards a lock.
+   *
+   * A brute-force counter exists to answer "is somebody working through a list".
+   * A provider having a bad afternoon, or a consent screen left open past its
+   * state expiry, answers a different question — and counting those means an
+   * outage at Google locks out every person who tried during it, on top of the
+   * outage they already suffered. `user_cancelled` is here for the reason Story
+   * 1.3 part 1 gave: changing your mind is not a failure, and presenting it as one
+   * is both untrue and mildly accusing.
+   *
+   * What IS counted is the shape of an attack: a `state` that does not match, a
+   * missing or replayed `code`, an identity the store refused, a refresh token
+   * nobody issued.
+   */
+  private static readonly INNOCENT_FAILURES: ReadonlySet<SignInFailureReason> = new Set([
+    'user_cancelled',
+    'provider_start_failed',
+    'provider_authorize_failed',
+    'provider_exchange_failed',
+    'state_expired',
+    // Refresh leg. A tab left open overnight, or a session ended from another
+    // device, is not an attack — and locking somebody out because their own
+    // client retried a stale token would be the product punishing normal use.
+    'refresh_cookie_missing',
+    'refresh_token_expired',
+    'session_revoked',
+  ]);
+
+  /**
+   * One consecutive failure, in the ONE dimension this channel both counts and
+   * enforces.
+   *
+   * `bruteForceSubjectFor` picks it — address for the browser legs, credential for
+   * the `fetch` legs — and the guard reads the lock through the same function. See
+   * its docblock for why every other arrangement was a defect; the short version is
+   * that a leg which can EARN a lock it cannot ENFORCE punishes bystanders, and a
+   * leg which counts a credential that was not part of the attempt punishes the
+   * wrong person entirely.
+   *
+   * The lock is set THROUGH the counter's own refusal rather than by comparing
+   * counts here: the store's atomic increment is the only thing that knows the
+   * real total when several attempts land at once.
+   *
+   * The counter's window is the lock duration, which is why there is no separate
+   * variable for it: "five failures inside the period a lock would last" is the
+   * question being asked, and a window shorter than the lock would let somebody
+   * trickle attempts just under the rate for ever.
+   */
+  private async countFailure(
+    channel: RateLimitChannel,
+    subject: RateLimitSubject,
+    reason: SignInFailureReason,
+  ): Promise<void> {
+    if (AuthService.INNOCENT_FAILURES.has(reason)) {
+      return;
+    }
+    const target = bruteForceSubjectFor(channel, subject);
+    if (target === null) {
+      return;
+    }
+
+    await this.withRateLimitStore('recording a failed sign-in', async () => {
+      const counted = await this.rateLimit.hit(
+        bruteForceCounterKey(target.dimension, target.value),
+        this.config.RATE_LIMIT_BRUTE_FORCE_MAX,
+        this.config.RATE_LIMIT_BRUTE_FORCE_LOCK_SECONDS,
+      );
+      if (!counted.ok) {
+        await this.rateLimit.lock(
+          bruteForceLockKey(target.dimension, target.value),
+          this.config.RATE_LIMIT_BRUTE_FORCE_LOCK_SECONDS,
+        );
+      }
+    });
+  }
+
+  /**
+   * Clear the counter this request would have ticked — the same key, chosen the
+   * same way.
+   *
+   * ## The trade this makes, stated plainly
+   *
+   * On the browser legs that key is the ADDRESS, and an address on a campus NAT is
+   * shared. So one successful login there does clear the failure counter for
+   * everybody on that address, and somebody with a valid account can use that to
+   * keep an address counter from ever reaching the threshold. That is a real
+   * weakness and it was chosen with eyes open, because the alternatives are worse:
+   *
+   * - clearing nothing leaves an honest person who finally got in one slip away
+   *   from a fifteen-minute lock they already worked through;
+   * - clearing only a credential dimension does nothing at all here, because a
+   *   sign-in attempt carries no credential of its own — the clear would be a
+   *   no-op and the matrix row "thành công dọn bộ đếm thất bại" would be a
+   *   comment rather than a behaviour.
+   *
+   * What limits the damage is that the address counter is a fifteen-minute window
+   * and the credential dimension — which no bystander can reset — is what catches
+   * an attack on a specific account. `AGENTS.md` records the same trade.
+   *
+   * The COUNTER only. A lock already earned is a different key and runs its own
+   * course, which is what makes "success clears the failure counter" and "a
+   * successful attempt does not open a lock early" both true at once.
+   */
+  private async forgetFailures(
+    channel: RateLimitChannel,
+    subject: RateLimitSubject,
+  ): Promise<void> {
+    const target = bruteForceSubjectFor(channel, subject);
+    if (target === null) {
+      return;
+    }
+    await this.withRateLimitStore(
+      'clearing the failure counter after a successful sign-in',
+      () => this.rateLimit.clear(bruteForceCounterKey(target.dimension, target.value)),
+    );
+  }
+
+  /**
+   * Fail open here too, for the same reason and with the same obligation.
+   *
+   * Bookkeeping that cannot reach Valkey must never turn a completed login into a
+   * 500, nor a properly failed one into anything other than the 303 Story 1.3
+   * part 1 established — the person did everything right, or wrong, and the store
+   * they have never heard of is the thing that is unwell.
+   *
+   * `RateLimitInputError` is deliberately NOT swallowed. That is a defect in this
+   * code — a malformed key, a hashing bug — and reporting it for ever as a Valkey
+   * outage would leave the brute-force counter permanently off with an alarm
+   * pointing at the wrong system.
+   *
+   * The reporting goes through the shared {@link RateLimitHealth} rather than
+   * straight to a logger, so an outage produces one line and one recovery line
+   * instead of one stack trace per request from two call sites.
+   */
+  private async withRateLimitStore(what: string, work: () => Promise<void>): Promise<void> {
+    try {
+      await work();
+      this.health.recordSuccess();
+    } catch (error) {
+      if (error instanceof RateLimitInputError) {
+        throw error;
+      }
+      this.health.recordFailure(what, error);
+    }
   }
 }
 

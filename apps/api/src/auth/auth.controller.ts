@@ -1,7 +1,11 @@
-import { Controller, Get, Param, Post, Req, Res } from '@nestjs/common';
+import { Controller, Get, Inject, Param, Post, Req, Res } from '@nestjs/common';
 import { REQUEST_ID_HEADER, resolveRequestId } from '@stuwith/config';
+import { requireTrustedProxies, type RateLimitSubject, type TrustedProxy } from '@stuwith/domain';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { randomUUID } from 'node:crypto';
+import { APP_CONFIG, type AppConfig } from '../config.token';
+import { RateLimited } from '../rate-limit/rate-limit.decorator';
+import { clientIpOf, userHandleOf } from '../rate-limit/request-identity';
 import { AuthService, type AuthOutcome } from './auth.service';
 
 /**
@@ -14,8 +18,17 @@ import { AuthService, type AuthOutcome } from './auth.service';
  */
 @Controller('v1/auth')
 export class AuthController {
-  constructor(private readonly auth: AuthService) {}
+  /** Parsed once; the environment was already validated before a port was opened. */
+  private readonly trustedProxies: readonly TrustedProxy[];
 
+  constructor(
+    private readonly auth: AuthService,
+    @Inject(APP_CONFIG) private readonly config: AppConfig,
+  ) {
+    this.trustedProxies = requireTrustedProxies(config.TRUSTED_PROXY_ADDRESSES);
+  }
+
+  @RateLimited('auth_start')
   @Get(':provider/start')
   async start(
     @Param('provider') provider: string,
@@ -25,6 +38,7 @@ export class AuthController {
     send(reply, await this.auth.start(provider, requestIdOf(request, reply)));
   }
 
+  @RateLimited('auth_callback')
   @Get(':provider/callback')
   async callback(
     @Param('provider') provider: string,
@@ -36,6 +50,7 @@ export class AuthController {
       (request.query ?? {}) as Record<string, unknown>,
       request.headers.cookie,
       requestIdOf(request, reply),
+      this.subjectOf(request),
     );
     send(reply, outcome);
   }
@@ -52,6 +67,7 @@ export class AuthController {
    * is a top-level form submission — the case `Lax` explicitly allows and `Strict`
    * would not.
    */
+  @RateLimited('auth_callback')
   @Post(':provider/callback')
   async callbackFormPost(
     @Param('provider') provider: string,
@@ -64,23 +80,61 @@ export class AuthController {
       body,
       request.headers.cookie,
       requestIdOf(request, reply),
+      this.subjectOf(request),
     );
     send(reply, outcome);
   }
 
+  @RateLimited('auth_refresh')
   @Post('refresh')
   async refresh(@Req() request: FastifyRequest, @Res() reply: FastifyReply): Promise<void> {
-    send(reply, await this.auth.refresh(request.headers.cookie, requestIdOf(request, reply)));
+    send(
+      reply,
+      await this.auth.refresh(
+        request.headers.cookie,
+        requestIdOf(request, reply),
+        this.subjectOf(request),
+      ),
+    );
   }
 
+  /**
+   * The ONE route in this controller with no `@RateLimited(...)`, and the omission
+   * is the feature.
+   *
+   * Every other endpoint being limited is an inconvenience. Logging out being
+   * limited keeps somebody inside a session they are actively trying to leave —
+   * on a shared machine that is a security failure, not a nuisance. There is also
+   * nothing to gain from hammering it: it revokes a chain the caller already
+   * holds.
+   *
+   * This is not an exemption somebody could delete and get a limit back:
+   * `RateLimitAction` in `packages/domain` has no name for logging out, so there
+   * is nothing that could be written in the parentheses.
+   */
   @Post('logout')
   async logout(@Req() request: FastifyRequest, @Res() reply: FastifyReply): Promise<void> {
     send(reply, await this.auth.logout(request.headers.cookie));
   }
 
+  @RateLimited('auth_me')
   @Get('me')
   async me(@Req() request: FastifyRequest, @Res() reply: FastifyReply): Promise<void> {
     send(reply, await this.auth.me(request.headers.cookie));
+  }
+
+  /**
+   * The same address and credential the guard counted this request against.
+   *
+   * Computed through the same two functions, deliberately: a failed sign-in has to
+   * land on the brute-force keys the guard will later read, and two call sites
+   * inferring "who is this" separately is how those two stop being the same keys.
+   */
+  private subjectOf(request: FastifyRequest): RateLimitSubject {
+    return {
+      clientIp: clientIpOf(request, this.trustedProxies),
+      userHandle: userHandleOf(request, this.config.SESSION_COOKIE_SECRET),
+    };
   }
 }
 

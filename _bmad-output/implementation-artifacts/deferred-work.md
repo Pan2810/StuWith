@@ -102,3 +102,15 @@ Việc đã được xác nhận là thật nhưng cố ý hoãn. Mỗi mục gh
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-3-trang-thai-loi-dang-nhap.md`
   summary: Người lạ không cần xác thực vẫn ghi được dòng auth.sign_in_failed vào audit_events, mà không role nào có DELETE để dọn.
   evidence: Có từ Story 1.2 (state_missing đã như vậy), Story 1.3 thêm một đường nữa qua ?error=. audit_events append-only theo AD-12 nên bảng chỉ lớn lên, không co lại. Đây chính là lý do mục AC3 (rate limit) ở trên không nên trôi lâu — hai việc này phải đọc cùng nhau: rate limit là thứ duy nhất chặn một vòng lặp curl bơm phình bảng audit. Khi làm AC3, nhớ phủ luôn cả hai chặng callback chứ không chỉ đường đăng nhập thành công.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-3b-rate-limit-dang-nhap.md`
+  summary: Ngưỡng mặc định RATE_LIMIT_IP_MAX=30 trong 60 giây có thể quá chặt với NAT của trường đại học, nơi hàng trăm người chia nhau một địa chỉ.
+  evidence: Comment trong schema gọi 30 là "generous" nhưng không nêu cơ sở nào cho con số. Trang đăng nhập gọi /v1/auth/me mỗi lần tải, nên lưu lượng hợp lệ cũng tiêu ngân sách. Đây là quyết định tinh chỉnh của con người chứ không phải lỗi, và biến đã là env nên đổi được lúc vận hành — nhưng cần một con số có cơ sở trước khi mở cho người dùng thật, và cần cân nhắc miễn trừ hoặc khoá riêng cho /v1/auth/me.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-3b-rate-limit-dang-nhap.md`
+  summary: Trạng thái "lớp chặn rate limit đang hỏng" chỉ tồn tại dưới dạng một dòng log tự do, không có tín hiệu máy đọc được.
+  evidence: Quyết định fail-open (con người chốt 2026-09-04) nghĩa là trong lúc Valkey sập thì không có giới hạn nào cả, và biện pháp bù duy nhất là dòng log "rate limiting is not working". AGENTS.md đang bảo người vận hành đặt cảnh báo bằng cách grep văn bản tự do — một chuỗi đổi chữ là cảnh báo im lặng chết. Cần một cờ boolean trong /healthz hoặc một metric để trạng thái đã chấp nhận này quan sát được thay vì phải đi tìm. Nằm ngoài phạm vi spec 1.3b vì nó thêm một bề mặt mới cho health-check, vốn tới nay cố ý chỉ là liveness.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-3b-rate-limit-dang-nhap.md`
+  summary: Ba dòng cuối của đồng hồ đếm ngược — việc React thực sự gọi callback trong setTimeout — chưa có test, vì project `web` cố ý không có môi trường DOM.
+  evidence: Đã thu hẹp qua ba vòng: vòng 1 chỉ grep source tìm chữ setTimeout; vòng 2 test hàm thuần nextTickDelayMs; vòng 3 tiêm `clock` thành prop nên renderToStaticMarkup render được component thật ở hai thời điểm và so số. Phần dư còn lại là hợp đồng của chính React chứ không phải logic của ta — làm rỗng callback trong setTimeout thì test vẫn xanh. Con người chọn chấp nhận ngày 2026-09-04 thay vì thêm jsdom. Story 1.6 dựng lại trọn trang này; nếu 1.6 cần DOM cho việc khác thì gánh luôn chỗ này.

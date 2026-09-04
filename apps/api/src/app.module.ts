@@ -4,9 +4,11 @@ import { LoggerModule } from 'nestjs-pino';
 import type { DestinationStream } from 'pino';
 import { APP_CONFIG } from './config.token';
 import { AuthModule } from './auth/auth.module';
-import type { AuthRuntime } from './auth/auth.runtime';
+import { createProductionRuntime, type AuthRuntime } from './auth/auth.runtime';
 import { buildLoggerParams } from './logging';
 import { HealthController } from './health/health.controller';
+import { RateLimitModule } from './rate-limit/rate-limit.module';
+import { RuntimeShutdown } from './runtime-shutdown';
 
 /**
  * Two seams, both test-only, both following the precedent `loadApiConfig` set in
@@ -35,14 +37,32 @@ export class AppModule {
    * reach module wiring (AD-14).
    */
   static forConfig(config: ApiEnv, options: AppModuleOptions = {}): DynamicModule {
+    /**
+     * Built ONCE, here, and handed to both modules.
+     *
+     * It used to be constructed inside `AuthModule.forConfig`, which was fine
+     * while auth was the only consumer. The rate-limit guard needs the same
+     * Valkey client `AuthService` records failures through, and a second call to
+     * `createProductionRuntime` would give it a second connection — and, in a
+     * test, a second store that the assertions are not looking at.
+     */
+    const runtime = options.authRuntime ?? createProductionRuntime(config);
+
     return {
       module: AppModule,
       imports: [
         LoggerModule.forRoot(buildLoggerParams(config, options.logDestination)),
-        AuthModule.forConfig(config, options.authRuntime),
+        RateLimitModule.forRuntime(config, runtime.rateLimit),
+        AuthModule.forConfig(config, runtime),
       ],
       controllers: [HealthController],
-      providers: [{ provide: APP_CONFIG, useValue: config }],
+      providers: [
+        { provide: APP_CONFIG, useValue: config },
+        // `main.ts` calls `enableShutdownHooks()`; this is what it was calling for.
+        // A Valkey client with a reconnect strategy keeps the event loop alive, so
+        // without this the process looks like it is ignoring SIGTERM.
+        { provide: RuntimeShutdown, useValue: new RuntimeShutdown(runtime) },
+      ],
     };
   }
 }

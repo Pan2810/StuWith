@@ -128,8 +128,16 @@ export const SESSION_COOKIE_PATH = '/';
  * The closed enum is also the injection defence: this value arrives from a URL the
  * visitor controls, so the login page matches it against this list and renders a
  * string of its own. Nothing from the URL is ever echoed to the screen.
+ *
+ * `bi-khoa` is Story 1.3 part 2's addition and is the reason the set is still
+ * this small. It says "too many attempts, wait" and NOTHING else: not whether the
+ * lock is by address or by account, not what the threshold was, not how many
+ * attempts were left. Each of those would tell somebody probing the login exactly
+ * how to stay under it, and none of them helps the person who is simply locked
+ * out. The only number that travels with it is how long to wait, in
+ * {@link SIGN_IN_RETRY_AFTER_QUERY_PARAM}.
  */
-export const SIGN_IN_OUTCOMES = ['that-bai', 'da-huy'] as const;
+export const SIGN_IN_OUTCOMES = ['that-bai', 'da-huy', 'bi-khoa'] as const;
 
 export const signInOutcomeSchema = z.enum(SIGN_IN_OUTCOMES);
 export type SignInOutcome = z.infer<typeof signInOutcomeSchema>;
@@ -146,3 +154,79 @@ export function isSignInOutcome(value: unknown): value is SignInOutcome {
  * `/dang-nhap` reads as somebody else's plumbing showing through.
  */
 export const SIGN_IN_OUTCOME_QUERY_PARAM = 'ket-qua';
+
+/**
+ * How many seconds the visitor should wait, riding back beside `bi-khoa`.
+ *
+ * Vietnamese for the same reason `ket-qua` is, and a SEPARATE parameter rather
+ * than a suffix on the outcome (`bi-khoa-30`) because the two are read by
+ * different rules: the outcome is matched against a closed enum, the number is
+ * range-checked. Fusing them would mean the enum could no longer be closed.
+ */
+export const SIGN_IN_RETRY_AFTER_QUERY_PARAM = 'giay';
+
+/**
+ * The sentence a rate-limited person reads, declared ONCE.
+ *
+ * `apps/api` puts it in the `rate_limited` envelope and `apps/web` renders it
+ * beside the countdown, so it crosses the process boundary exactly as
+ * {@link SIGN_IN_OUTCOMES} does — and it lived in both packages, each pinned by
+ * its own literal assertion, until one of them was going to be edited alone.
+ *
+ * It says what happened and what to do next, and deliberately nothing else: not
+ * whether the lock is by address or by account, not the threshold, not how many
+ * attempts are left. Each of those is free calibration for somebody probing the
+ * login, and none of them helps the person who is simply locked out. The only
+ * number that travels is how long to wait, and it is not in this sentence.
+ *
+ * Vietnamese is the default locale; full i18n is Story 1.6.
+ */
+export const RATE_LIMITED_MESSAGE = 'Bạn đã thử quá nhiều lần. Hãy chờ một lát rồi thử lại.';
+
+/**
+ * The band a retry countdown has to fall in to be shown at all.
+ *
+ * This value arrives in a URL that anybody can write, so `?giay=99999999` is not a
+ * hypothetical — it is a link a stranger can send, and rendering it would put "thử
+ * lại sau 1157 ngày" on the screen of somebody who is not locked out of anything.
+ * Below the floor is just as wrong: `0` renders a countdown that has already
+ * finished and invites an immediate retry.
+ *
+ * The ceiling is a day, comfortably above any lock this product configures
+ * (`RATE_LIMIT_BRUTE_FORCE_LOCK_SECONDS` tops out there too) and far below a
+ * number that reads as nonsense.
+ */
+export const MIN_SIGN_IN_RETRY_AFTER_SECONDS = 1;
+export const MAX_SIGN_IN_RETRY_AFTER_SECONDS = 86_400;
+
+export const signInRetryAfterSecondsSchema = z
+  .number()
+  .int()
+  .min(MIN_SIGN_IN_RETRY_AFTER_SECONDS)
+  .max(MAX_SIGN_IN_RETRY_AFTER_SECONDS);
+
+/**
+ * The one place a countdown from the outside world is turned into a number, used
+ * by BOTH processes (AD-13) — `apps/api` to decide the value is worth putting in a
+ * redirect, `apps/web` to decide it is worth rendering.
+ *
+ * Everything that is not an integer in the band is `null`, and `null` means "show
+ * the lock message with no clock" rather than "show something plausible". The
+ * checks are deliberately stricter than `Number()`: that accepts `'  12  '`,
+ * `'0x10'`, `'1e3'` and `'12.0'`, all of which are somebody probing rather than a
+ * countdown this product wrote.
+ */
+export function parseSignInRetryAfterSeconds(raw: unknown): number | null {
+  if (typeof raw === 'number') {
+    return signInRetryAfterSecondsSchema.safeParse(raw).success ? raw : null;
+  }
+  // No leading zero: the floor is 1, so a value starting with `0` is either out of
+  // range or padded, and neither is something this product wrote. A parser
+  // described as stricter than `Number()` while quietly accepting `030` is worse
+  // than a lenient one, because the description is what the next reader trusts.
+  if (typeof raw !== 'string' || !/^[1-9][0-9]{0,6}$/.test(raw)) {
+    return null;
+  }
+  const parsed = Number(raw);
+  return signInRetryAfterSecondsSchema.safeParse(parsed).success ? parsed : null;
+}
