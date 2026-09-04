@@ -3,8 +3,8 @@ title: 'Story 1.3 (phần 3) — Phiên hết hạn giữa chừng và quay về
 type: 'feature'
 created: '2026-09-04'
 baseline_commit: '60887562c08558cee2e4f4dc762bb7e3f1a332e4'
-status: 'in-progress'
-review_loop_iteration: 0
+status: 'done'
+review_loop_iteration: 1
 context:
   - '{project-root}/_bmad-output/implementation-artifacts/epic-1-context.md'
   - '{project-root}/AGENTS.md'
@@ -16,7 +16,7 @@ context:
 
 **Problem:** Phiên hết hạn giữa chừng thì người dùng bị đá về trạng thái đăng xuất trần và mất chỗ đang đứng. `page.tsx:73` gộp 401 chung với mọi lỗi khác; `apps/web` không có lớp gọi API dùng chung (chỉ hai `fetch` tự viết) và `layout.tsx` không có provider nào, nên hiện **không tồn tại chỗ nào** để một màn hình bất kỳ biết phiên vừa chết.
 
-**Approach:** Một seam duy nhất "lời gọi có xác thực vừa nhận 401" ở `apps/web`, dựng dialog **không chặn thao tác**. Đường dẫn quay về do client **đề nghị** ở chặng `/start`; server kiểm same-origin đúng **một lần** ở đó rồi **ký vào OAuth state**; callback thành công đọc đường dẫn từ state đã ký. Cơ chế tổng quát để màn phòng live của Epic 2 cắm vào, không dựng riêng cho phòng học.
+**Approach:** Một seam duy nhất "lời gọi có xác thực vừa nhận 401" ở `apps/web`. Seam **thử gia hạn phiên trước**; chỉ khi gia hạn không được mới dựng dialog **không chặn thao tác**. Đường dẫn quay về do client **đề nghị** ở chặng `/start`; server kiểm same-origin đúng **một lần** ở đó rồi **ký vào OAuth state**; callback thành công đọc đường dẫn từ state đã ký. Cơ chế tổng quát để màn phòng live của Epic 2 cắm vào, không dựng riêng cho phòng học.
 
 ## Boundaries & Constraints
 
@@ -25,6 +25,9 @@ context:
 - **Đường dẫn nội bộ, kiểm bằng một hàm dùng chung khai ở `packages/contracts`** (AD-13, cả hai process cùng đọc): phải bắt đầu bằng đúng một `/`, không `//`, không `/\`, không scheme, không host, không `..`. Mọi thứ không hợp lệ bị **bỏ im lặng** về mặc định, không phải lỗi.
 - **Origin của mọi redirect vẫn là `WEB_BASE_URL`**, không bao giờ `OAUTH_REDIRECT_BASE_URL`. Bất biến này đã được `auth.flow.test.ts:67-69` khoá và phải sống sót.
 - **Redirect thất bại vẫn mang đúng MỘT query param `ket-qua`.** Đường dẫn quay về bị bỏ ở nhánh thất bại — người ta đang đứng ở trang đăng nhập rồi.
+- **401 phải thử `/v1/auth/refresh` trước khi làm phiền người dùng** (con người chốt 2026-09-04). `SESSION_TTL_SECONDS` là 1 giờ còn refresh token sống 30 ngày, nên hỏi lại ngay khi gặp 401 là bắt người đang dùng bình thường đăng nhập lại mỗi giờ. Gia hạn được thì **phát lại đúng lời gọi cũ một lần** và người dùng không thấy gì.
+- **Gia hạn tối đa một lần, không bao giờ đệ quy.** Nhiều lời gọi 401 cùng lúc dùng chung **một** lượt refresh đang bay. Chính `/v1/auth/refresh` trả 401 hay 429 thì đi thẳng tới dialog — nó bị rate limit, và thử lại là cách biến một phiên chết thành một trận bão request. Lời gọi phát lại mà vẫn 401 thì cũng đi thẳng tới dialog, không refresh lần hai.
+- **Không thử gia hạn khi đang ở trang đăng nhập.** `/v1/auth/me` ở đó trả 401 cho **mọi** khách chưa đăng nhập, nên refresh ở đó là đốt một suất rate limit cho mỗi lượt ghé thăm vô danh.
 - **Đóng dialog không làm phiên sống lại.** Seam vẫn nằm đó; lời gọi 401 kế tiếp mở lại dialog. Đóng một lần rồi im mãi là đúng cái bẫy tính năng này sinh ra để tránh.
 - Thông báo trên dialog **không nêu lý do kỹ thuật**: không mã lỗi, không tên provider, không nói token hay cookie.
 - Quyết định nằm ở **hàm thuần**; `useEffect`/`window` chỉ ở component mỏng — repo không có DOM để test (`vitest.config.mts:119`).
@@ -46,7 +49,9 @@ context:
 
 | Scenario | Input / State | Expected Output / Behavior | Error Handling |
 |---|---|---|---|
-| Phiên chết giữa chừng | Lời gọi có xác thực trả `401` | Dialog hiện, **màn hình phía sau giữ nguyên và vẫn cuộn được** | Không nêu lý do kỹ thuật |
+| Gia hạn được | Lời gọi có xác thực trả `401`, `/v1/auth/refresh` thành công | Lời gọi cũ được phát lại; **không** dialog nào hiện | Người dùng không thấy gì |
+| Phiên chết thật | `401`, rồi `/v1/auth/refresh` cũng hỏng (`401` hoặc `429`) | Dialog hiện, **màn hình phía sau giữ nguyên và vẫn cuộn được** | Không nêu lý do kỹ thuật |
+| Nhiều 401 cùng lúc | Hai lời gọi có xác thực cùng trả `401` | Đúng **một** lượt `/v1/auth/refresh` được phát | Không bão request |
 | Quay về đúng chỗ | `/start` kèm đường dẫn nội bộ hợp lệ, đăng nhập thành công | Redirect tới `WEB_BASE_URL` + đúng đường dẫn đó | N/A |
 | URL tuyệt đối | Đề nghị `https://evil.com/x` | Bị bỏ; về `/dang-nhap` như hôm nay | Không phải lỗi, chỉ bỏ |
 | Dạng lách same-origin | `//evil.com`, `/\evil.com`, `/../x`, dạng đã encode | Bị bỏ; về `/dang-nhap` | Như trên |
@@ -105,6 +110,24 @@ context:
 
 ## Spec Change Log
 
+### Vòng 1 — 2026-09-04
+
+**Finding kích hoạt:** `apps/web` chưa bao giờ gọi `/v1/auth/refresh`. `SESSION_TTL_SECONDS` mặc định 3600 còn `SESSION_REFRESH_TTL_SECONDS` mặc định 2.592.000, nên mọi người dùng đang hoạt động sẽ bị hỏi đăng nhập lại mỗi giờ dù hoàn toàn gia hạn được. Trước story này họ bị âm thầm đá về signed-out; story này biến nó thành một dialog ai cũng thấy.
+
+**Đã sửa gì trong spec:** khối `<frozen-after-approval>` được **con người đàm phán lại** ngày 2026-09-04 — Approach thêm bước thử gia hạn, Boundaries thêm ba luật (một lượt refresh duy nhất dùng chung, không đệ quy, không refresh ở trang đăng nhập), Matrix thêm ba hàng. Đây là gốc rễ nằm trong khối đóng băng nên đúng ra là `intent_gap` và phải revert rồi re-derive; con người đã hai lần chốt "vá tới, không revert" trên dự án này, và refresh là phần thêm chứ không phải sửa cái sai, nên giữ nguyên code đã có.
+
+**Trạng thái xấu đã tránh:** một tính năng chống phiền lại trở thành nguồn phiền — dialog mỗi giờ cho người dùng hoàn toàn hợp lệ.
+
+**KEEP — phải sống sót qua mọi lần re-derive:**
+- `parseInternalReturnPath` là allow-list ký tự, không có bước decode nào của ta, khai ở `packages/contracts`, cả hai process dùng chung.
+- Test validator chia theo **lớp** (origin, encoded, normalisation, byte không phải path, không phải chuỗi), không theo danh sách ví dụ.
+- Đích redirect chỉ lấy từ state đã ký; callback không đọc đường dẫn từ query/cookie/header.
+- Nhánh thất bại chỉ mang đúng một query param.
+- Không tồn tại cờ `dismissed` nào để tra — đó là thứ khiến "đóng rồi vẫn mở lại" đúng theo cấu trúc.
+
+**Một quyết định vượt ba luật, ghi lại để không bị coi là trôi:** khi chính `/v1/auth/refresh` trả `401` hoặc `429`, seam **chốt** lại và không thử gia hạn nữa cho tới khi trang được tải lại. Ba luật chỉ nói "đi thẳng tới dialog", không nói lần 401 kế tiếp thì sao; không chốt thì mỗi lời gọi sau đó lại phát một lượt refresh vào một endpoint đang rate-limit — đúng trận bão request mà luật thứ hai tồn tại để chặn. Lỗi mạng **không** chốt, vì không có câu trả lời thì không học được gì.
+
+
 ## Design Notes
 
 **Vì sao kiểm một lần ở `/start` rồi ký, chứ không kiểm lúc callback:** hai chỗ kiểm là hai chỗ có thể lệch nhau, và đúng kiểu lệch đó vừa tốn của story rate-limit bốn vòng review. Ký ở `/start` biến "đích redirect có an toàn không" thành câu hỏi đã được trả lời một lần, ở một nơi, trên dữ liệu chưa tin được — sau đó chữ ký làm phần còn lại. Kẻ tấn công muốn đổi đích phải ký được payload, tức phải có `SESSION_COOKIE_SECRET`.
@@ -120,3 +143,5 @@ context:
 - `pnpm run dep-check` -- expected: no dependency violations
 - `pnpm test` -- expected: mọi test xanh, 0 skip; các hàng Matrix đều có test **đã chạy và pass**
 - `pnpm exec vitest run --project web` -- expected: test mới chạy trong `environment: node`, không cần DOM
+- `pnpm run build` -- expected: exit 0. Đây là cổng **duy nhất** bắt được lỗi ranh giới server/client của `layout.tsx`, và là chỗ thấy được mọi route còn prerender tĩnh hay không
+- `pnpm run test:e2e` -- expected: 3 passed

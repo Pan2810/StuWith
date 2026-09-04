@@ -223,18 +223,42 @@ export interface AuthHarness {
   /**
    * Drives start -> consent -> callback and returns the resulting cookie jar.
    *
-   * `returnPath` is the RAW value of the `quay-ve` parameter on the `/start` leg,
-   * so a hostile spelling can travel the whole road — real HTTP, a real signed
-   * state cookie, a real callback — rather than being checked against the
-   * validator in isolation. Omit it for the shape every pre-existing call has.
+   * See {@link LoginOptions} for what the third argument carries. It is an object
+   * rather than two more positional parameters because `login(p, profile,
+   * undefined, path)` — a call site padding past a jar it does not care about — is
+   * a shape that gets one `undefined` wrong exactly once and then passes a cookie
+   * jar as a return path.
    */
   login(
     provider: AuthProvider,
     profile: FakeProfile,
-    jar?: CookieJar,
-    returnPath?: string,
+    options?: LoginOptions,
   ): Promise<{ jar: CookieJar; callback: Response }>;
   close(): Promise<void>;
+}
+
+/**
+ * Everything optional about one scripted login.
+ *
+ * The docblock lives HERE and nowhere else. It used to be duplicated almost word
+ * for word on the interface member and on the implementation, which is two places
+ * to update and therefore one place that goes stale.
+ */
+export interface LoginOptions {
+  /** Reuse a jar to sign in as a second person in the same browser. */
+  readonly jar?: CookieJar;
+  /**
+   * The RAW value of the `quay-ve` parameter on the `/start` leg — not a
+   * validated one.
+   *
+   * The point of driving it from here is that a hostile spelling (`//evil.com`,
+   * an absolute URL, an encoded slash) travels the same road a real proposal
+   * does: real HTTP, Fastify's own query decoding, a real signed state cookie and
+   * a real callback. Asserting against the validator in isolation misses every
+   * difference the transport introduces. Omitted means the parameter is absent
+   * altogether, which is the shape every call site written before Story 1.3c has.
+   */
+  readonly returnPath?: string;
 }
 
 const WEB_BASE_URL = 'http://127.0.0.1:39999';
@@ -396,24 +420,14 @@ export async function createAuthHarness(options: HarnessOptions = {}): Promise<A
     return response;
   };
 
-  /**
-   * A whole login, `/start` through `/callback`.
-   *
-   * `returnPath` is the RAW string to put in the `quay-ve` parameter, not a
-   * validated one — the point of driving it from here is that the hostile
-   * spellings (`//evil.com`, an absolute URL, an encoded slash) travel the same
-   * road a real proposal does, through real HTTP and a real signed state cookie,
-   * rather than being asserted against the validator in isolation. `undefined`
-   * means the parameter is absent altogether, which is the shape every call site
-   * written before this story still has.
-   */
+  /** A whole login, `/start` through `/callback`. See {@link LoginOptions}. */
   const login = async (
     provider: AuthProvider,
     profile: FakeProfile,
-    existing?: CookieJar,
-    returnPath?: string,
+    options: LoginOptions = {},
   ): Promise<{ jar: CookieJar; callback: Response }> => {
-    const jar = existing ?? new CookieJar();
+    const { returnPath } = options;
+    const jar = options.jar ?? new CookieJar();
     const startPath =
       returnPath === undefined
         ? `/v1/auth/${provider}/start`

@@ -107,6 +107,28 @@ export const AUTH_COOKIE_PATH = '/v1/auth';
 export const SESSION_COOKIE_PATH = '/';
 
 /**
+ * The route the login page lives at, in `apps/web`.
+ *
+ * AD-13 puts it here because both processes now read it and the docblock at the
+ * top of this file says nothing here may be redeclared in `apps/*`: `apps/api`
+ * uses it as the default redirect target for a completed and for a refused login,
+ * and `apps/web` uses it to answer "is the person already looking at the sign-in
+ * page". Two literals is how one of them gets renamed and the other does not, and
+ * the failure that produces — a dialog stacked on top of the login page, or a
+ * redirect to a route that no longer exists — is silent on both sides.
+ */
+export const SIGN_IN_PATHNAME = '/dang-nhap';
+
+/**
+ * `POST /v1/auth/refresh`, spelled once.
+ *
+ * `apps/web` calls it from the session seam before it disturbs anybody, so the
+ * path is a thing the browser and the server have to agree about — the same kind
+ * of agreement as a cookie name, and breaking in the same silent way.
+ */
+export const AUTH_REFRESH_PATH = '/v1/auth/refresh';
+
+/**
  * How the last sign-in attempt ended, in the vocabulary the login page is allowed
  * to read.
  *
@@ -270,12 +292,23 @@ export const MAX_SIGN_IN_RETURN_PATH_LENGTH = 512;
  * Four exclusions are load-bearing, and each closes a family rather than an
  * example:
  *
- * - **`%`** — no percent-encoding at all, so there is no decode step and
- *   therefore no way for two readings of the same string to disagree. `%2F%2F`,
- *   `%5C`, `%00` and `%0A` are all gone by one rule instead of four. The cost is
- *   real and deliberate: a path carrying an escaped character cannot be proposed
- *   and the person lands on the default instead. Losing a convenience is the
- *   right side of that trade.
+ * - **`%`** — THIS function never decodes, so there is no decode step of ours
+ *   and therefore no way for two readings of the same string to disagree inside
+ *   it. `%2F%2F`, `%5C`, `%00` and `%0A` are all gone by one rule instead of
+ *   four. The cost is real and deliberate: a path carrying an escaped character
+ *   cannot be proposed and the person lands on the default instead. Losing a
+ *   convenience is the right side of that trade.
+ *
+ *   What this rule does NOT mean, and what the docblock used to imply: that a
+ *   hostile spelling arriving at `/v1/auth/:provider/start` is refused BY it.
+ *   Fastify percent-decodes the query string before any handler runs, so a
+ *   request carrying `?quay-ve=%2F%2Fevil.com` reaches this function as
+ *   `//evil.com` and dies on the protocol-relative rule instead. What the `%`
+ *   rule catches is everything left after that one decode — a double-encoded
+ *   `%252F`, and any caller that hands this function a raw string with no
+ *   transport in between, which is exactly what `apps/web` does when it judges
+ *   the path it is standing on. `auth.flow.test.ts` sends both spellings over
+ *   real HTTP so the two roads are covered separately rather than assumed equal.
  * - **`\`** — browsers fold a backslash onto `/` inside a path, so `/\evil.com`
  *   is `//evil.com` written in a spelling a naive `startsWith('//')` misses.
  * - **`:` and `@`** — the two characters that turn a string into an authority.

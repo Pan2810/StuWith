@@ -69,6 +69,8 @@ describe('Matrix: no technical reason reaches the screen', () => {
     .toLowerCase();
 
   it.each([
+    // English, because that is what a leak out of the API or a library would be
+    // written in.
     '401',
     'token',
     'cookie',
@@ -77,6 +79,21 @@ describe('Matrix: no technical reason reaches the screen', () => {
     'expired',
     'error',
     'v1/auth',
+    /**
+     * Vietnamese, because that is what a leak written by US would be in.
+     *
+     * The English list alone was a hole with the shape of the product: the whole
+     * interface is Vietnamese, the default locale is Vietnamese, and every
+     * sentence a person on this screen reads was written here — so a technical
+     * reason reaching the screen would arrive as `mã lỗi 401` or `máy chủ không
+     * phản hồi`, and sailed through a list that only knew the English words.
+     */
+    'mã lỗi',
+    'máy chủ',
+    'xác thực',
+    'chứng thực',
+    'hết hạn',
+    'lỗi',
   ])('never says %s in the words a person actually reads', (forbidden) => {
     // The hrefs legitimately contain `/v1/auth` and a provider name; the
     // SENTENCES are what this checks, so the markup is stripped of tags first.
@@ -85,6 +102,13 @@ describe('Matrix: no technical reason reaches the screen', () => {
     // is that a failing provider must not be named — offering somebody four ways
     // back in is the opposite of that, and a button reading "Tiếp tục với" and
     // nothing else would be unusable.
+    //
+    // "Phiên" is not on it either, and that is a judgement rather than an
+    // oversight. It is the ordinary Vietnamese word for the thing that ended, and
+    // it is the SUBJECT of the title — "Phiên đăng nhập đã kết thúc". Banning it
+    // would not remove a technical detail, it would remove the sentence's ability
+    // to say what happened, which is the one thing this dialog owes the person.
+    // What the rule forbids is a REASON: a code, a component, a mechanism.
     expect(words).not.toContain(forbidden);
   });
 

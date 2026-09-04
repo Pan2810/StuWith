@@ -322,6 +322,61 @@ describe('the redirect origins', () => {
     }
   });
 
+  /**
+   * Story 1.3c, round 1. A sub-path was accepted while nothing could honour it
+   * consistently: `AuthService` builds its redirects with `new URL(path, base)`,
+   * which DISCARDS a base path, and `rate-limited.filter.ts` built the same page
+   * by concatenation, which keeps it. `WEB_BASE_URL=https://x.vn/app` therefore
+   * produced two different URLs for one page in one deployment, and every fixture
+   * in this repo was a bare origin so nothing could see it.
+   *
+   * Refusing the input makes the two builders agree by arithmetic instead of by
+   * discipline. It is a BREAKING change for an existing `.env` — see `AGENTS.md`.
+   */
+  it.each([
+    ['a sub-path', 'https://stuwith.vn/app'],
+    ['a root path that is not just the slash', 'https://stuwith.vn/app/'],
+    ['a query string', 'https://stuwith.vn?x=1'],
+    ['a fragment', 'https://stuwith.vn#x'],
+    ['embedded credentials', 'https://user:pass@stuwith.vn'],
+    ['an uppercase scheme a URL parser would silently rewrite', 'HTTPS://Stuwith.vn'],
+    ['an explicit default port a URL parser would silently drop', 'https://stuwith.vn:443'],
+  ])('rejects %s in WEB_BASE_URL', (_label, value) => {
+    const result = parseApiEnv({ ...completeApiEnv, WEB_BASE_URL: value });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.problems).toContainEqual(
+        expect.objectContaining({ kind: 'invalid', variable: 'WEB_BASE_URL' }),
+      );
+    }
+  });
+
+  it.each([
+    ['a bare https origin', 'https://stuwith.vn'],
+    ['a bare http origin', 'http://localhost:3000'],
+    ['a non-default port', 'https://stuwith.vn:8443'],
+  ])('still accepts %s', (_label, value) => {
+    expect(parseApiEnv({ ...completeApiEnv, WEB_BASE_URL: value }).ok).toBe(true);
+  });
+
+  it('applies the same rule to OAUTH_REDIRECT_BASE_URL', () => {
+    // It is the value that has to match what is registered with each provider
+    // byte for byte, so a spelling a URL parser rewrites is exactly the one that
+    // produces a `redirect_uri` mismatch nobody can see in the config file.
+    const result = parseApiEnv({
+      ...completeApiEnv,
+      OAUTH_REDIRECT_BASE_URL: 'https://api.stuwith.vn/v1',
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.problems).toContainEqual(
+        expect.objectContaining({ kind: 'invalid', variable: 'OAUTH_REDIRECT_BASE_URL' }),
+      );
+    }
+  });
+
   it('rejects a value with no scheme, which no browser will follow', () => {
     const result = parseApiEnv({ ...completeApiEnv, WEB_BASE_URL: 'stuwith.vn' });
     expect(result.ok).toBe(false);

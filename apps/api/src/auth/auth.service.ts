@@ -4,6 +4,7 @@ import {
   REFRESH_COOKIE_NAME,
   SESSION_COOKIE_NAME,
   SIGN_IN_OUTCOME_QUERY_PARAM,
+  SIGN_IN_PATHNAME,
   currentUserSchema,
   isAuthProvider,
   makeError,
@@ -126,8 +127,14 @@ interface OAuthStatePayload {
  * The login page itself, which is also where every FAILED attempt lands — see
  * `failedSignIn`, which deliberately drops the return path: the person is looking
  * at the login page, so "put them back where they were" has nothing to mean yet.
+ *
+ * The literal lives in `packages/contracts` (AD-13) because `apps/web` needs the
+ * same string to answer "is this person already on the sign-in page", and the
+ * docblock at the top of `contracts/src/auth.ts` says nothing there may be
+ * redeclared in `apps/*`. Two copies is how one of them gets renamed alone, and
+ * both failures that produces are silent.
  */
-const DEFAULT_RETURN_PATH = '/dang-nhap';
+const DEFAULT_RETURN_PATH = SIGN_IN_PATHNAME;
 
 /**
  * The strings the JSON endpoints (`/me`, `/refresh`) answer with. They say
@@ -624,6 +631,15 @@ export class AuthService {
    *    path made it possible to break for the first time. `//evil.com` is the
    *    exact spelling that makes `new URL(path, base)` adopt a new origin, so the
    *    check is placed where it catches that even if rule 1 were ever weakened.
+   *
+   *    It is UNREACHABLE by design, and that is worth writing down rather than
+   *    leaving as a branch somebody later deletes for having no coverage. No input
+   *    exists today that satisfies rule 1 and fails rule 2: `//` and `\` and every
+   *    encoded spelling of them die inside `parseInternalReturnPath`, so reaching
+   *    this comparison would mean faking the shared validator. It is the second
+   *    half of a belt-and-braces pair, kept for the day rule 1 is relaxed by
+   *    somebody who does not read this file — which is exactly when a redirect
+   *    onto another origin stops being impossible.
    *
    * Anything that fails either one lands on the default. Silence, again: there is
    * nothing here a person did wrong and nothing an operator can act on.

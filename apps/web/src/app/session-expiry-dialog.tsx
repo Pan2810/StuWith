@@ -1,6 +1,5 @@
-import { AUTH_PROVIDERS } from '@stuwith/contracts';
-import { PROVIDER_LABELS } from './dang-nhap/sign-in-outcome';
-import { signInStartHref, type SessionExpiryPrompt } from './session-expiry';
+import { SignInProviderLinks } from './sign-in-links';
+import type { SessionExpiryPrompt } from './session-expiry';
 
 /**
  * What somebody sees when their session ends in the middle of what they were
@@ -73,21 +72,16 @@ export function SessionExpiryDialog({
     >
       <h2 id={TITLE_ID}>{SESSION_EXPIRY_TITLE}</h2>
       <p id={MESSAGE_ID}>{SESSION_EXPIRY_MESSAGE}</p>
-      <ul>
-        {AUTH_PROVIDERS.map((provider) => (
-          <li key={provider}>
-            {/*
-              The return path rides on the href, which is the only leg allowed to
-              carry it: `apps/api` judges the proposal once at `/start` and signs
-              the verdict into the OAuth state. Nothing on the way back reads a
-              path from a URL.
-            */}
-            <a href={signInStartHref(apiBaseUrl, provider, prompt.returnPath)}>
-              Tiếp tục với {PROVIDER_LABELS[provider]}
-            </a>
-          </li>
-        ))}
-      </ul>
+      {/*
+        The same list the login page offers, from `sign-in-links.tsx`.
+
+        Shared for two reasons. One: two copies of a login link is how one of them
+        keeps a parameter the other drops. Two: this dialog is mounted in
+        `layout.tsx`, so whatever it imports is in the client tree of EVERY route —
+        it used to reach into `dang-nhap/sign-in-outcome`, which pulls in the
+        countdown timer and the whole sign-in panel, to render four anchors.
+      */}
+      <SignInProviderLinks apiBaseUrl={apiBaseUrl} returnPath={prompt.returnPath} />
       <button type="button" onClick={onDismiss}>
         {SESSION_EXPIRY_DISMISS_LABEL}
       </button>

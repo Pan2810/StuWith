@@ -472,6 +472,28 @@ required check is a silent pass, so both the workflow and
   pre-existing, have their own tests, and were out of this story's scope. That
   inconsistency is known, not accidental.
 
+- **`WEB_BASE_URL` and `OAUTH_REDIRECT_BASE_URL` must be BARE ORIGINS, and that is
+  the second breaking change to an existing `.env`.** A sub-path was accepted while
+  nothing in the codebase could honour it consistently: `AuthService` builds its
+  redirects with `new URL(path, base)`, which DISCARDS a base path, while
+  `rate-limited.filter.ts` built the same page by string concatenation, which keeps
+  it. With `WEB_BASE_URL=https://x.vn/app` the two produced `https://x.vn/dang-nhap`
+  and `https://x.vn/app/dang-nhap` — one page, one deployment, two URLs. Every
+  fixture in the repo was a bare origin, so nothing could see it.
+
+  Making the builders agree is possible; making it STAY true is a rule nobody can
+  see. Refusing the input makes them identical by arithmetic instead. The schema
+  now requires `new URL(value).origin === value`, which also refuses the spellings
+  a URL parser silently rewrites — `HTTPS://Host`, `https://host:443`, embedded
+  credentials, a query or a fragment. That half matters most for
+  `OAUTH_REDIRECT_BASE_URL`, which has to match what is registered with each
+  provider byte for byte.
+
+  Concretely: a deployment whose `.env` says `WEB_BASE_URL=https://x.vn/app` or
+  `https://x.vn:443` started yesterday and exits non-zero today, naming the
+  variable. Serving the web client from a sub-path is not supported and needs a
+  decision about which builder wins; it has no owner today.
+
 - **A rate-limit outage logs ONCE, not once per request, and never logs the
   error's message.** `RateLimitHealth` holds the degraded state that the guard and
   `AuthService` share; the first failure writes the `error` line with the code

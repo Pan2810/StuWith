@@ -17,9 +17,12 @@ export const viewport: Viewport = {
  * configured rather than assumed. `NEXT_PUBLIC_` because it is read in the
  * browser; it is an origin, not a secret.
  *
- * Read here and passed DOWN as a prop. `process.env` is inlined at build time, so
- * either place works, but reading it once at the root means one answer for the
- * whole app rather than one per component that happens to need it.
+ * This is the ONE read of it in the app, and the claim is now true rather than
+ * aspirational: it used to say so while `dang-nhap/page.tsx` read the variable
+ * again for itself. `process.env` is inlined at build time so either place
+ * "works", but two reads is two answers the moment one of them gains a fallback,
+ * a trim or a normalisation the other does not. It goes down as a prop, and
+ * `useApiBaseUrl()` is how a screen below asks for it.
  */
 const API_BASE_URL = process.env['NEXT_PUBLIC_API_BASE_URL'] ?? '';
 

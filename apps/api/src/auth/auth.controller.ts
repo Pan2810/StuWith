@@ -48,9 +48,17 @@ export class AuthController {
    * are two places that can drift apart. This file contains no decisions; that is
    * the arrangement, and this parameter does not get to be the exception.
    *
-   * A provider that is not enabled still answers `404` before any of this is
-   * looked at: the shape of the reply must not depend on what was asked for, or
+   * A provider that is not enabled still answers `404`, and the ORDER is worth
+   * stating accurately because an earlier version of this comment got it wrong.
+   * The query is read here first, unconditionally; the 404 decision is made
+   * further in, by `adapterFor` inside `AuthService.start`. What matters is not
+   * that the reply is decided first but that it is decided the SAME WAY whatever
+   * the query said — reading a parameter has no side effect, nothing about it is
+   * logged, and the body a disabled provider returns is byte-identical to the one
+   * an unknown provider returns whether or not `quay-ve` was present. Otherwise
    * the endpoint starts enumerating the deployment's configuration.
+   * `auth.flow.test.ts` sends `/start?quay-ve=` at a disabled provider to hold
+   * that.
    */
   @RateLimited('auth_start')
   @Get(':provider/start')

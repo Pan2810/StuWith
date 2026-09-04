@@ -16,7 +16,6 @@
  */
 
 import {
-  AUTH_PROVIDERS,
   MAX_SIGN_IN_RETRY_AFTER_SECONDS,
   RATE_LIMITED_MESSAGE,
   SIGN_IN_OUTCOME_QUERY_PARAM,
@@ -25,7 +24,7 @@ import {
   parseSignInRetryAfterSeconds,
   type SignInOutcome,
 } from '@stuwith/contracts';
-import { signInStartHref } from '../session-expiry';
+import { SignInProviderLinks } from '../sign-in-links';
 import { SignInCountdown } from './countdown';
 
 /**
@@ -377,30 +376,16 @@ export function SignInPanel({
       {signInOptionsVisible(notice, canSignIn) ? (
         <nav>
           <p>Chọn tài khoản mạng xã hội để tiếp tục:</p>
-          <ul>
-            {AUTH_PROVIDERS.map((provider) => (
-              <li key={provider}>
-                {/*
-                  A plain anchor, not a fetch. The OAuth flow is a top-level
-                  browser navigation: it has to leave this origin, come back, and
-                  carry the SameSite=Lax state cookie on the way in. An XHR cannot
-                  do any of that.
-                */}
-                {/*
-                  Built through `signInStartHref`, which is also what the session
-                  expiry dialog uses. There is one place a `/start` URL is
-                  assembled, so there is one place a return path can be attached
-                  to it — and here there is nothing to attach: somebody signing in
-                  FROM the login page is already where a login lands by default,
-                  and a `?quay-ve=/dang-nhap` would be a parameter that changes
-                  nothing while looking like it changes something.
-                */}
-                <a href={signInStartHref(apiBaseUrl, provider, null)}>
-                  Tiếp tục với {PROVIDER_LABELS[provider]}
-                </a>
-              </li>
-            ))}
-          </ul>
+          {/*
+            The same list the session-expiry dialog offers — one module, so the two
+            screens cannot come to say different things about the same provider.
+
+            `returnPath` is `null` here and that is the decision, not an omission:
+            somebody signing in FROM the login page is already where a login lands
+            by default, so a `?quay-ve=/dang-nhap` would be a parameter that
+            changes nothing while looking like it changes something.
+          */}
+          <SignInProviderLinks apiBaseUrl={apiBaseUrl} returnPath={null} />
           <p>
             Provider chưa được bật trên máy chủ này sẽ trả về &ldquo;không tìm
             thấy&rdquo;.
@@ -410,20 +395,6 @@ export function SignInPanel({
     </>
   );
 }
-
-/**
- * Vietnamese is the default locale; full i18n arrives with Story 1.6.
- *
- * Exported because the session-expiry dialog offers the same four choices, and
- * two tables of the same four labels is how one of them ends up saying something
- * the other does not.
- */
-export const PROVIDER_LABELS: Record<(typeof AUTH_PROVIDERS)[number], string> = {
-  google: 'Google',
-  facebook: 'Facebook',
-  apple: 'Apple',
-  microsoft: 'Microsoft',
-};
 
 /**
  * What `/v1/auth/me` answering told us, including the case the page could not see.
