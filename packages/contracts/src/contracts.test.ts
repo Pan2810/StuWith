@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { auditEventSchema, toAuditWireTimestamp } from './audit';
 import {
+  AUTH_DATE_OF_BIRTH_PATH,
+  AUTH_ME_PATH,
+  AUTH_REFRESH_PATH,
+  DATE_OF_BIRTH_FIELD,
+  DATE_OF_BIRTH_PATHNAME,
   MAX_SIGN_IN_RETRY_AFTER_SECONDS,
   MAX_SIGN_IN_RETURN_PATH_LENGTH,
   RATE_LIMITED_MESSAGE,
@@ -212,6 +217,158 @@ describe('OpenAPI emission (AD-13)', () => {
       );
 
       expect(named).not.toContain(SIGN_IN_RETURN_PATH_QUERY_PARAM);
+    });
+  });
+
+  /**
+   * The Story 1.4 endpoint, read out of the document that is emitted.
+   *
+   * Nothing looked at `doc.paths[AUTH_DATE_OF_BIRTH_PATH]` at all, so deleting the
+   * registration line, or documenting a `422` the service never answers, left
+   * every gate green. That failure has happened here once already — the comment
+   * above the return-path block records it about `/start`'s `parameters` — which
+   * is why the same shape is applied rather than a note about being careful.
+   */
+  describe('the date-of-birth endpoint as published', () => {
+    const operation = () =>
+      (doc.paths[AUTH_DATE_OF_BIRTH_PATH] as Record<string, unknown>).post as {
+        responses: Record<string, unknown>;
+        requestBody?: { required?: boolean; content: Record<string, { schema: unknown }> };
+        description?: string;
+      };
+
+    it('is registered, and only as a POST', () => {
+      // There is deliberately no PATCH or PUT: the value is written once and
+      // changing it goes through support, so a route that could update one must
+      // not exist for an integrator to find — or to build a settings screen on.
+      expect(Object.keys(doc.paths[AUTH_DATE_OF_BIRTH_PATH] as object)).toEqual(['post']);
+    });
+
+    it('documents exactly the statuses the service answers with', () => {
+      // Not a superset and not a subset: an undocumented `429` leaves a client with
+      // no reason to read `Retry-After`, and a documented `422` sends one looking
+      // for a branch that does not exist.
+      expect(Object.keys(operation().responses).sort()).toEqual([
+        '200',
+        '400',
+        '401',
+        '409',
+        '429',
+      ]);
+    });
+
+    it('requires a body carrying the contract field name and its format', () => {
+      const schema = operation().requestBody?.content['application/json']?.schema as {
+        required: string[];
+        properties: Record<string, { pattern?: string }>;
+      };
+
+      expect(operation().requestBody?.required).toBe(true);
+      expect(schema.required).toEqual([DATE_OF_BIRTH_FIELD]);
+      expect(schema.properties[DATE_OF_BIRTH_FIELD]?.pattern).toBe('^\\d{4}-\\d{2}-\\d{2}$');
+    });
+
+    it('publishes the web route behind this endpoint, as its docblock promises', () => {
+      // `DATE_OF_BIRTH_PATHNAME`'s docblock says `apps/api` "publishes it in the
+      // OpenAPI description of the endpoint behind it". That was a description of
+      // behaviour that did not exist: nothing in `openapi.ts` referred to the
+      // constant. This is the assertion that keeps the sentence true.
+      expect(operation().description).toContain(DATE_OF_BIRTH_PATHNAME);
+    });
+  });
+
+  /**
+   * `429` was absent from the WHOLE document while every route but `logout`
+   * carried `@RateLimited(...)`.
+   *
+   * A client reading a document with no `429` in it has no reason to look at
+   * `Retry-After` and every reason to retry at once — which is the loop the limit
+   * exists to break. The browser legs are the deliberate exception: their refusal
+   * is a `303` back to the login page, so a `429` there would describe an answer
+   * they never give.
+   */
+  describe('a rate-limited answer is documented wherever it can happen', () => {
+    // The CONSTANTS, not copies of their values. Two of these were still written
+    // out here while `AUTH_REFRESH_PATH` already existed and `AUTH_ME_PATH` was the
+    // last `/v1/auth` route with no constant at all — so a rename would have left
+    // this suite asserting the documentation of a path the document no longer has,
+    // which is a green `it.each` over nothing rather than a failure.
+    it.each([[AUTH_REFRESH_PATH], [AUTH_ME_PATH], [AUTH_DATE_OF_BIRTH_PATH]])(
+      '%s documents 429',
+      (path) => {
+        const operations = doc.paths[path] as Record<string, { responses: Record<string, unknown> }>;
+        // A path that is not in the document at all would make the loop below run
+        // zero times and pass. This is what says the route is documented before the
+        // assertion about HOW it is documented.
+        expect(Object.keys(operations ?? {}).length).toBeGreaterThan(0);
+        for (const operation of Object.values(operations)) {
+          expect(Object.keys(operation.responses)).toContain('429');
+        }
+      },
+    );
+
+    /**
+     * A prose sentence is for a person; a `headers` block is for a code generator.
+     *
+     * The description said `Retry-After` exists and nothing machine-readable did, so
+     * a generated client saw a `429` with no header on it — which leaves it in
+     * exactly the position the whole 429 documentation exists to fix.
+     */
+    it.each([[AUTH_REFRESH_PATH], [AUTH_ME_PATH], [AUTH_DATE_OF_BIRTH_PATH]])(
+      '%s declares Retry-After as a header, not only in prose',
+      (path) => {
+        const operations = doc.paths[path] as Record<
+          string,
+          { responses: Record<string, { headers?: Record<string, unknown> }> }
+        >;
+        for (const operation of Object.values(operations)) {
+          const headers = operation.responses['429']?.headers;
+          expect(Object.keys(headers ?? {})).toContain('Retry-After');
+        }
+      },
+    );
+
+    it('documents the browser legs redirecting instead, never answering 429', () => {
+      const start = (doc.paths['/v1/auth/{provider}/start'] as Record<string, {
+        responses: Record<string, unknown>;
+      }>).get;
+
+      expect(Object.keys(start.responses)).toContain('303');
+      expect(Object.keys(start.responses)).not.toContain('429');
+    });
+
+    /**
+     * BOTH callback legs, which the previous version of this suite never read.
+     *
+     * `/callback` carries `@RateLimited('auth_callback')` on the same browser channel
+     * as `/start`, so its refusal is the same `303` — and the document said nothing
+     * about that on either the `get` or the `post`. An integrator reading only the
+     * callback had no way to learn the limit applies there at all, and the gap was
+     * invisible because the only assertion in this block read `/start`.
+     */
+    it.each([['get'], ['post']])(
+      'documents the callback %s as redirecting when it is refused, on both methods',
+      (method) => {
+        const leg = (doc.paths['/v1/auth/{provider}/callback'] as Record<string, {
+          responses: Record<string, { description?: string }>;
+        }>)[method];
+
+        expect(Object.keys(leg.responses)).toContain('303');
+        expect(Object.keys(leg.responses)).not.toContain('429');
+        // And the 303 says the rate limit is one of the ways it happens, or the
+        // status alone reads as "the login failed" and nothing more.
+        expect(leg.responses['303']?.description?.toLowerCase()).toContain('rate-limited');
+      },
+    );
+
+    it('leaves logout alone, because logout is not limited', () => {
+      // Limiting sign-out keeps somebody inside a session they are trying to leave.
+      // There is no `RateLimitAction` for it, so there is nothing to document.
+      const logout = (doc.paths['/v1/auth/logout'] as Record<string, {
+        responses: Record<string, unknown>;
+      }>).post;
+
+      expect(Object.keys(logout.responses)).toEqual(['204']);
     });
   });
 

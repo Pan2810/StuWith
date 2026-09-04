@@ -27,6 +27,10 @@ describe('LOG_REDACT_PATHS (AD-15)', () => {
     'res.headers["set-cookie"]',
     '*.email',
     '*.date_of_birth',
+    // The camelCase half of the same field. `packages/domain`'s `User` carries
+    // `dateOfBirth`, so the snake_case path alone covered the request body and
+    // missed the object anything in `apps/api` would actually log.
+    '*.dateOfBirth',
     '*.access_token',
     '*.refresh_token',
     '*.provider_id',
@@ -34,6 +38,87 @@ describe('LOG_REDACT_PATHS (AD-15)', () => {
 
   it.each(required)('redacts %s', (path) => {
     expect(LOG_REDACT_PATHS).toContain(path);
+  });
+
+  /**
+   * The pairing, as a rule over the SET rather than over a list of examples.
+   *
+   * The previous version of this test iterated a hand-written array of four field
+   * names. That is a list of examples, and it was green while `*.oauth_state`,
+   * `*.authorization_code`, `req.body.access_token`, `req.body.id_token`,
+   * `req.body.provider_id`, `req.body.code_verifier` and `req.body.refresh_token`
+   * all had no camelCase half — the exact class of hole the array was written to
+   * close. The comment in `logging.ts` claimed the stronger property; only now is
+   * that claim true.
+   *
+   * The rule walks `LOG_REDACT_PATHS` itself, so a field added later in ONE
+   * spelling fails here without anybody remembering to extend a list.
+   */
+  describe('every path is declared in both spellings of its last segment', () => {
+    /** `req.headers["set-cookie"]` and friends: a quoted segment is not a field name. */
+    const fieldPaths = LOG_REDACT_PATHS.filter((path) => !path.includes('['));
+
+    /**
+     * A path split into "everything before the last dot" and "the field name".
+     *
+     * The `cut === -1` guard is not decoration. Every one of the fifty paths in the
+     * list happens to contain a dot today, so a top-level path — `email`, say, added
+     * by somebody redacting a root field — is currently unreachable. It would not
+     * stay unreachable, and the unguarded version answers `{prefix: 'emai', field:
+     * 'l'}` for it: `slice(0, -1)` drops the last character and `slice(0)` returns
+     * the whole string. That is a FALSE RED — a sibling assertion about a field
+     * called `l` — which is the worst kind, because the failure names nothing that
+     * is actually wrong.
+     */
+    const split = (path: string): { prefix: string; field: string } => {
+      const cut = path.lastIndexOf('.');
+      return cut === -1
+        ? { prefix: '', field: path }
+        : { prefix: path.slice(0, cut), field: path.slice(cut + 1) };
+    };
+    /** `a.b` for a nested path, and a bare `b` for a top-level one. */
+    const rejoin = (prefix: string, field: string): string =>
+      prefix.length === 0 ? field : `${prefix}.${field}`;
+    const toCamel = (snake: string): string =>
+      snake.replace(/_([a-z0-9])/g, (_match, next: string) => next.toUpperCase());
+    const toSnake = (camel: string): string =>
+      camel.replace(/[A-Z]/g, (upper) => `_${upper.toLowerCase()}`);
+
+    it('finds paths to check at all, so an empty sweep cannot pass', () => {
+      // Same guard as `dep-check`'s module count: a filter that matched nothing
+      // would make every assertion below vacuous.
+      expect(fieldPaths.length).toBeGreaterThanOrEqual(20);
+      // And the sweep must actually reach both vocabularies it is about.
+      expect(fieldPaths.some((path) => split(path).field.includes('_'))).toBe(true);
+      expect(fieldPaths.some((path) => /[a-z][A-Z]/.test(split(path).field))).toBe(true);
+    });
+
+    it('splits a path with no dot in it without inventing a field name', () => {
+      // The trap this guard removes, exercised directly because no path in the list
+      // reaches it yet. Unguarded, `split('email')` answers `{prefix: 'emai', field:
+      // 'l'}` and the sibling rule below then demands a path called `emai.l` — a red
+      // that names nothing real, on the day somebody adds a top-level redaction.
+      expect(split('email')).toEqual({ prefix: '', field: 'email' });
+      expect(rejoin('', 'email')).toBe('email');
+      expect(split('req.body.email')).toEqual({ prefix: 'req.body', field: 'email' });
+      expect(rejoin('req.body', 'email')).toBe('req.body.email');
+    });
+
+    it.each(fieldPaths.filter((path) => split(path).field.includes('_')))(
+      '%s has a camelCase sibling',
+      (path) => {
+        const { prefix, field } = split(path);
+        expect(LOG_REDACT_PATHS).toContain(rejoin(prefix, toCamel(field)));
+      },
+    );
+
+    it.each(fieldPaths.filter((path) => /[a-z][A-Z]/.test(split(path).field)))(
+      '%s has a snake_case sibling',
+      (path) => {
+        const { prefix, field } = split(path);
+        expect(LOG_REDACT_PATHS).toContain(rejoin(prefix, toSnake(field)));
+      },
+    );
   });
 
   it('covers every field the spine names as never-loggable', () => {

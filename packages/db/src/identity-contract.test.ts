@@ -1,5 +1,16 @@
-import type { IdentityPort, ProviderIdentity, ResolvedIdentity, User } from '@stuwith/domain';
-import { assertValidIdentity } from './pg/identity-adapter';
+import type {
+  IdentityPort,
+  ProviderIdentity,
+  RecordDateOfBirthResult,
+  ResolvedIdentity,
+  User,
+} from '@stuwith/domain';
+import {
+  assertValidDateOfBirth,
+  assertValidIdentity,
+  assertValidNow,
+  assertValidUserId,
+} from './pg/identity-adapter';
 import { InMemoryIdentityAdapter } from './in-memory/identity-adapter';
 import { runIdentityPortContract } from './test-kit';
 
@@ -16,6 +27,20 @@ class UnreachableIdentityAdapter implements IdentityPort {
   }
 
   async findUserById(): Promise<User | null> {
+    throw new Error('simulated store outage');
+  }
+
+  async recordDateOfBirth(
+    userId: string,
+    dateOfBirth: string,
+    now: Date,
+  ): Promise<RecordDateOfBirthResult> {
+    // Same reason as above: validating first is what makes "the rejection was NOT
+    // an IdentityInputError" a statement about the outage path rather than an
+    // accident of which check happened to run.
+    assertValidUserId(userId);
+    assertValidDateOfBirth(dateOfBirth);
+    assertValidNow(now);
     throw new Error('simulated store outage');
   }
 }

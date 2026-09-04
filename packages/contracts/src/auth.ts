@@ -61,15 +61,83 @@ export type GlobalUserRole = z.infer<typeof globalUserRoleSchema>;
  * needs either, and every field a response carries is a field that ends up in a
  * browser cache, a screenshot and eventually a support ticket. Story 1.4 adds an
  * over-18 flag; it does NOT add the date of birth.
+ *
+ * ## The two Story 1.4 flags, and why they are two
+ *
+ * `profile_completed` and `is_over_18` are different facts and neither implies
+ * the other in the direction a client needs. "Not completed" has to send somebody
+ * to the declaration screen; "completed but under 18" must not, and would be
+ * indistinguishable from it if the only field were the age flag. A profile with
+ * no date of birth answers `false` to BOTH — an unknown age fails closed, which
+ * is the only safe direction for a control that protects minors.
+ *
+ * Both are OPTIONAL, which is what makes adding them compatible rather than
+ * breaking (AD-13). `apps/api` always sends them; a client written against the
+ * Story 1.2 shape keeps typechecking, and a client written against this one has
+ * to decide what an absent flag means — for which the answer is the same as
+ * `false`, because that is the fail-closed reading.
+ *
+ * The date of birth itself is deliberately absent and must stay absent. It is
+ * PII, the product needs only the two booleans below, and a field that is never
+ * sent is a field that cannot leak.
  */
 export const currentUserSchema = z.object({
   id: z.uuid(),
   display_name: z.string().min(1).max(120),
   avatar_url: z.url().nullable(),
   role: globalUserRoleSchema,
+  /** Whether the first-login declaration is done. `NULL` date of birth is "not yet". */
+  profile_completed: z.boolean().optional(),
+  /** The whole of what leaves the API about somebody's age. Never a date, never a number. */
+  is_over_18: z.boolean().optional(),
 });
 
 export type CurrentUser = z.infer<typeof currentUserSchema>;
+
+/**
+ * Both Story 1.4 flags read the same way whether the field is present or absent.
+ *
+ * The schema makes them optional so that adding them is a compatible change, and
+ * an optional boolean has three states while the product has two. Every reader —
+ * `apps/web` today, a mobile client later — must collapse the third the same way,
+ * and "absent means no" is the only collapse that fails closed: a client talking
+ * to an older deployment that cannot answer "is this person 18" must not conclude
+ * that they are.
+ *
+ * It lives here rather than in `apps/web` for the reason the whole file exists:
+ * two processes reading one field must not read it two ways (AD-13).
+ */
+export function isProfileCompleted(user: Pick<CurrentUser, 'profile_completed'>): boolean {
+  return user.profile_completed === true;
+}
+
+export function isOver18(user: Pick<CurrentUser, 'is_over_18'>): boolean {
+  return user.is_over_18 === true;
+}
+
+/**
+ * A `/v1/auth/me` body turned into a profile, or `null` — the one place a client
+ * decides that what came back IS a profile.
+ *
+ * Same shape as every other parser here: nothing throws, everything that is not
+ * valid is `null`, and the caller decides what a `null` means.
+ *
+ * It exists because both `apps/web` screens were writing `(await
+ * response.json()) as CurrentUser`. A cast is a claim about a body this process
+ * did not write, and it is the exact opposite of the argument this story rests
+ * on: `toCurrentUser` parses the projection on the way OUT so that adding a
+ * column cannot publish it, and then the client trusted any 200 at all. A body
+ * with `is_over_18: "yes"` would have reached `isOver18` as truthy-looking data
+ * on the one boolean that protects minors.
+ *
+ * Here rather than in `apps/web` for the reason the whole file exists: two
+ * processes reading one shape must not read it two ways (AD-13), and a mobile
+ * client has the same 200 to judge.
+ */
+export function parseCurrentUser(body: unknown): CurrentUser | null {
+  const parsed = currentUserSchema.safeParse(body);
+  return parsed.success ? parsed.data : null;
+}
 
 /**
  * Cookie names are part of the boundary, not of the shell: the browser is the
@@ -127,6 +195,211 @@ export const SIGN_IN_PATHNAME = '/dang-nhap';
  * of agreement as a cookie name, and breaking in the same silent way.
  */
 export const AUTH_REFRESH_PATH = '/v1/auth/refresh';
+
+/**
+ * `GET /v1/auth/me`, spelled once.
+ *
+ * Here for the same reason {@link AUTH_REFRESH_PATH} is, and it was the last `/v1`
+ * route in this family still written as a literal: two screens in `apps/web`, the
+ * OpenAPI document and the contract suite each carried their own copy, so renaming
+ * the route meant finding four strings that nothing connects.
+ */
+export const AUTH_ME_PATH = '/v1/auth/me';
+
+/**
+ * The route the date-of-birth declaration lives at, in `apps/web`.
+ *
+ * Here for the same reason {@link SIGN_IN_PATHNAME} is: it crosses the process
+ * boundary. `apps/web` navigates to it and `apps/api` publishes it in the OpenAPI
+ * description of the endpoint behind it, so a literal in either app is a literal
+ * that gets renamed alone.
+ *
+ * Vietnamese, like `/dang-nhap`: the URL is a user-facing surface in a product
+ * whose default locale is Vietnamese.
+ */
+export const DATE_OF_BIRTH_PATHNAME = '/khai-ngay-sinh';
+
+/**
+ * `POST /v1/auth/date-of-birth`, spelled once.
+ *
+ * English, like `/v1/auth/refresh` and `/v1/auth/me`: the `/v1` surface is the
+ * contract a future mobile client reads, and it is already in English throughout.
+ * The Vietnamese half of the pair is the WEB route above, which is the one a
+ * person actually sees.
+ */
+export const AUTH_DATE_OF_BIRTH_PATH = '/v1/auth/date-of-birth';
+
+/** The single field in the declaration body. snake_case, like every other wire field. */
+export const DATE_OF_BIRTH_FIELD = 'date_of_birth';
+
+/**
+ * The floor on a plausible birth year.
+ *
+ * Not a rule about age — the age rule lives in `packages/domain` and is the ONLY
+ * place a threshold is decided. This is a rule about whether a string is a date
+ * somebody could have been born on at all, and `1900` is comfortably below the
+ * oldest living person while refusing `0001-01-01`, which is what a broken client
+ * or a probe sends.
+ */
+export const MIN_DATE_OF_BIRTH_YEAR = 1900;
+
+/**
+ * Exactly `YYYY-MM-DD`, and nothing that merely starts that way.
+ *
+ * `\d` in JavaScript is ASCII `0-9` only, so no other decimal digit family gets
+ * in. The anchors are what refuse a time component, an offset, a trailing `Z` and
+ * any surrounding whitespace — all of which `new Date(...)` would have accepted
+ * and silently reinterpreted in the runtime's own time zone.
+ */
+export const DATE_OF_BIRTH_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * A calendar day that actually exists, written the one way this product accepts.
+ *
+ * Two steps, and the second is the one that matters: the pattern says the string
+ * is shaped like a date, and the round trip through `Date.UTC` says it NAMES one.
+ * `2026-02-30` and `2025-02-29` pass the pattern and are not days; constructing
+ * them rolls the value forward into March, so comparing the components back out
+ * is what catches them. Doing it in UTC keeps the answer independent of where the
+ * process is running — the same reason every timestamp in this repo is UTC.
+ *
+ * Deliberately NOT `new Date(raw)`: that parser accepts `2026-02-30` (rolling it
+ * to March 2nd), accepts `2026-2-3`, accepts a time and an offset, and is
+ * implementation-defined for anything it does not recognise. A parser described
+ * as strict must not be one of those.
+ */
+export function isCalendarDate(raw: unknown): raw is string {
+  if (typeof raw !== 'string' || !DATE_OF_BIRTH_PATTERN.test(raw)) {
+    return false;
+  }
+  const year = Number(raw.slice(0, 4));
+  const month = Number(raw.slice(5, 7));
+  const day = Number(raw.slice(8, 10));
+  // `Date.UTC` maps years 0-99 onto 1900-1999, so a four-digit year in that band
+  // would come back as a different year. Rejecting it here keeps the round trip
+  // below an honest comparison rather than one with a hole in it; the year floor
+  // in `parseDateOfBirth` refuses the same range again for its own reason.
+  if (year < 100) {
+    return false;
+  }
+  const instant = Date.UTC(year, month - 1, day);
+  const roundTrip = new Date(instant);
+  return (
+    roundTrip.getUTCFullYear() === year &&
+    roundTrip.getUTCMonth() === month - 1 &&
+    roundTrip.getUTCDate() === day
+  );
+}
+
+/**
+ * The one place a date of birth from the outside world is judged, used by BOTH
+ * processes (AD-13) — `apps/api` before it writes one, `apps/web` before it
+ * offers to send one.
+ *
+ * Same shape as {@link parseSignInRetryAfterSeconds} and
+ * {@link parseInternalReturnPath}: everything that is not valid is `null`,
+ * nothing throws, and the caller decides what a `null` means. Testing it by
+ * CLASS rather than by a list of examples is the point — the examples-first
+ * approach is what cost four review rounds on the trusted-proxy list.
+ *
+ * The classes it refuses, stated as rules over the whole input rather than as the
+ * spellings that have been seen:
+ *
+ * - anything that is not a string, including a `Date`, a number and `null`;
+ * - anything not shaped exactly `YYYY-MM-DD` — which is where a time component,
+ *   a time zone, a `T`, surrounding whitespace and `2026-2-3` all die at once;
+ * - a string shaped like a date that names no day (`2026-02-30`, `2025-02-29`);
+ * - a year below {@link MIN_DATE_OF_BIRTH_YEAR};
+ * - a day after `today`, judged on the UTC calendar.
+ *
+ * ## `today` is a parameter, and that is not decoration
+ *
+ * There is no `new Date()` in this function. A rule about ages that reads the
+ * wall clock for itself is a rule that cannot be tested at a chosen instant, and
+ * a product with two processes then has two answers to "what day is it". The
+ * caller supplies the instant — `apps/api` from its `ClockPort`, `apps/web` from
+ * the clock the component was handed — and the comparison is made on UTC calendar
+ * days, so a person at UTC+7 is treated as one day younger rather than one day
+ * older. For a control that protects minors, the strict side is the safe one.
+ */
+export function parseDateOfBirth(raw: unknown, today: Date): string | null {
+  if (!(today instanceof Date) || Number.isNaN(today.getTime())) {
+    return null;
+  }
+  if (!isCalendarDate(raw)) {
+    return null;
+  }
+  const year = Number(raw.slice(0, 4));
+  if (year < MIN_DATE_OF_BIRTH_YEAR) {
+    return null;
+  }
+  const declared = Date.UTC(year, Number(raw.slice(5, 7)) - 1, Number(raw.slice(8, 10)));
+  const todayUtc = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate());
+  if (declared > todayUtc) {
+    return null;
+  }
+  return raw;
+}
+
+/**
+ * The sentence somebody reads when the date they typed is refused, declared ONCE.
+ *
+ * It crosses the process boundary exactly as {@link RATE_LIMITED_MESSAGE} does:
+ * `apps/api` puts it in the `validation_failed` envelope and `apps/web` shows it
+ * beside the field without waiting for a round trip.
+ *
+ * It says what to do and nothing else. No format hint that is really a parser
+ * error, no "you must be over N" — the threshold is not the visitor's business
+ * and telling somebody which side of it they fell on is how a refused person
+ * learns exactly which year to type instead.
+ */
+export const DATE_OF_BIRTH_INVALID_MESSAGE =
+  'Ngày sinh chưa hợp lệ. Hãy chọn lại ngày sinh của bạn rồi thử lại.';
+
+/**
+ * The sentence somebody reads when the profile already carries a date of birth.
+ *
+ * It names no value — not the stored one, not the submitted one.
+ *
+ * It also no longer says "liên hệ hỗ trợ". There IS no support channel: no inbox,
+ * no operator tool, no role that can write the column a second time — the flow that
+ * sentence pointed at is recorded in `deferred-work.md` as belonging to nobody yet.
+ * A message that sends somebody to a queue which does not exist is worse than one
+ * that simply states the fact, because it costs them the effort of looking for it.
+ * The sentence says what is true today and promises nothing else; when the support
+ * flow exists, this is the one string that has to change.
+ */
+export const DATE_OF_BIRTH_ALREADY_SET_MESSAGE =
+  'Hồ sơ đã có ngày sinh, và ngày sinh không tự đổi lại được.';
+
+/**
+ * The words a user-facing message about the declaration must never contain,
+ * declared ONCE for both processes.
+ *
+ * It was duplicated: `packages/contracts/src/auth.test.ts` had nine words and
+ * `apps/web`'s form test had seven — the web copy was missing `'dưới 18'` and
+ * `'trưởng thành'`, so a screen could have said either of them and stayed green
+ * while the contract suite claimed the whole vocabulary was covered. Two lists
+ * about one rule are two lists that drift, which is the class of defect this story
+ * is otherwise entirely about.
+ *
+ * The rule it serves: the threshold is not the visitor's business. Telling somebody
+ * which side of it they fell on is free calibration for anybody who wants to be on
+ * the other side. `'18'` and `'tuổi'` alone were both too narrow — "trên 18", "đủ
+ * tuổi" and "vị thành niên" all passed — so the check is over vocabulary rather
+ * than over two substrings.
+ */
+export const AGE_VOCABULARY = [
+  '18',
+  'tuổi',
+  'đủ tuổi',
+  'trên 18',
+  'dưới 18',
+  'vị thành niên',
+  'người lớn',
+  'trẻ em',
+  'trưởng thành',
+] as const;
 
 /**
  * How the last sign-in attempt ended, in the vocabulary the login page is allowed

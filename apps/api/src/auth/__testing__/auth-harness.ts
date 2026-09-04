@@ -8,7 +8,7 @@ import {
   InMemoryRateLimitAdapter,
   InMemorySessionAdapter,
 } from '@stuwith/db';
-import { FixedClock, type RateLimitPort } from '@stuwith/domain';
+import { FixedClock, type IdentityPort, type RateLimitPort } from '@stuwith/domain';
 import { generateKeyPairSync } from 'node:crypto';
 import { Logger as PinoLogger } from 'nestjs-pino';
 import net from 'node:net';
@@ -206,6 +206,21 @@ export interface HarnessOptions {
    * too slow. The whole fail-open row of the matrix is unreachable without it.
    */
   readonly rateLimitPort?: RateLimitPort;
+
+  /**
+   * Wrap the in-memory identity adapter, so one method can refuse while the rest of
+   * the login flow still works.
+   *
+   * It takes the real adapter and returns a port, rather than replacing it, because
+   * every refusal worth testing here is a refusal that happens to a person who has
+   * signed in normally: `recordDateOfBirth` answering `UserNotFound` means the
+   * `users` row disappeared between authenticating the session and writing to it,
+   * and reaching that state needs the login to have worked first.
+   *
+   * `harness.identity` still points at the wrapped adapter, so the assertions about
+   * stored state read the same object either way.
+   */
+  readonly wrapIdentity?: (base: IdentityPort) => IdentityPort;
 }
 
 export interface AuthHarness {
@@ -350,7 +365,9 @@ export async function createAuthHarness(options: HarnessOptions = {}): Promise<A
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule.forConfig(config, {
       authRuntime: {
-        identity,
+        // The wrapper, when a test asked for one. It delegates everything it does
+        // not override, so the login that has to happen first still happens.
+        identity: options.wrapIdentity === undefined ? identity : options.wrapIdentity(identity),
         sessions,
         audit,
         clock,

@@ -1,6 +1,10 @@
 import type { ApiEnv } from '@stuwith/config';
 import { REQUEST_ID_HEADER } from '@stuwith/config';
-import { REFRESH_COOKIE_NAME, SESSION_COOKIE_NAME } from '@stuwith/contracts';
+import {
+  AUTH_DATE_OF_BIRTH_PATH,
+  REFRESH_COOKIE_NAME,
+  SESSION_COOKIE_NAME,
+} from '@stuwith/contracts';
 import pino from 'pino';
 import { Writable } from 'node:stream';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -105,6 +109,15 @@ describe('apps/api logger wiring (AD-15)', () => {
     ['date_of_birth', '1999-04-02'],
     ['access_token', 'ya29.leak'],
     ['provider_id', 'google-oauth2|1234567890'],
+    // The camelCase halves, run through a REAL pino rather than only checked for
+    // membership in an array. `packages/domain`'s `User` carries `dateOfBirth`,
+    // and that object — not a request body — is what `logger.info({ user })`
+    // writes; until this table had these four rows, no camelCase path had ever
+    // been exercised by a logger.
+    ['dateOfBirth', '1999-04-02'],
+    ['accessToken', 'ya29.leak'],
+    ['refreshToken', 'refresh-leak-me'],
+    ['providerId', 'google-oauth2|1234567890'],
   ])('never writes a %s one level down in the payload', (field, value) => {
     const { logger, lines } = loggerUnderTest();
 
@@ -114,6 +127,33 @@ describe('apps/api logger wiring (AD-15)', () => {
     expect(output).not.toContain(value);
     // The id is not PII and must still be there — otherwise this test would pass
     // just as well against a logger that writes nothing at all.
+    expect(output).toContain('u-1');
+  });
+
+  /**
+   * The one two-level shape Story 1.4 created, run through a real pino.
+   *
+   * `RecordDateOfBirthResult` is `{ ok: true, user: User }`, so `logger.info({
+   * outcome })` puts the date of birth at `outcome.user.dateOfBirth` — two levels
+   * down, which the `*.` wildcard cannot reach. `*.user.dateOfBirth` is the named
+   * path that does. Nothing in `apps/api` logs that object today; the point is
+   * that the return type made the shape expressible, and the covering path is
+   * cheaper than trusting nobody writes the line. Depth beyond this is Story 1.7's
+   * whitelist serializer and is recorded in `deferred-work.md`.
+   */
+  it.each([
+    ['date_of_birth' as const],
+    ['dateOfBirth' as const],
+  ])('never writes a %s TWO levels down, inside a port result', (field) => {
+    const { logger, lines } = loggerUnderTest();
+
+    logger.info(
+      { outcome: { ok: true, user: { id: 'u-1', [field]: '1999-04-02' } } },
+      'date of birth recorded',
+    );
+
+    const output = lines.join('');
+    expect(output).not.toContain('1999-04-02');
     expect(output).toContain('u-1');
   });
 
@@ -322,5 +362,106 @@ describe('a failed and a cancelled login leak nothing into a real pino (AD-15)',
 
   it('never writes the state, which rides in the same URL as the error', () => {
     expect(output).not.toContain('state=');
+  });
+});
+
+/**
+ * Story 1.4's half of the same claim, and the story's own release gate: "run
+ * `apps/api` for real, declare a date of birth over HTTP, then read every line it
+ * wrote."
+ *
+ * This is a different claim from the field-level examples at the top of this
+ * file. Those hand a payload to a logger the test built. This one drives the
+ * declaration through the real controller, the real service, the real adapter and
+ * the real pino, and then greps everything that reached the output stream — which
+ * is the only way to catch the leaks no redaction path can reach: a value inside
+ * `req.url`, a value inside an error message, a value inside a serialised body.
+ *
+ * The date is a REAL one for the profile being logged in, not a random-looking
+ * string, because a value that also appears in `apps/api`'s own vocabulary would
+ * make a "does not contain" assertion pass for the wrong reason.
+ */
+describe('a declared date of birth leaks nothing into a real pino (AD-15)', () => {
+  const profile = {
+    subject: 'google-subject-dob-check',
+    email: 'dob.check@fpt.edu.vn',
+    name: 'Dob Check',
+    picture: 'https://lh3.googleusercontent.com/a/dob',
+  };
+  /** Distinctive enough that a substring match cannot hit it by accident. */
+  const declared = '1993-07-19';
+
+  let harness: AuthHarness;
+  let output: string;
+  let declaration: Response;
+
+  beforeAll(async () => {
+    harness = await createAuthHarness({ captureLogs: true });
+
+    const { jar } = await harness.login('google', profile);
+    declaration = await harness.request(AUTH_DATE_OF_BIRTH_PATH, {
+      method: 'POST',
+      jar,
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ date_of_birth: declared }),
+    });
+    // A second, refused attempt: the 409 path builds a different response and
+    // touches the stored value, so it is a second chance to write it somewhere.
+    await harness.request(AUTH_DATE_OF_BIRTH_PATH, {
+      method: 'POST',
+      jar,
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ date_of_birth: '1970-01-01' }),
+    });
+    // And a rejected one, whose validation error is the classic place an input
+    // value gets echoed into a log line.
+    await harness.request(AUTH_DATE_OF_BIRTH_PATH, {
+      method: 'POST',
+      jar,
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ date_of_birth: '2026-02-30' }),
+    });
+    await harness.request('/v1/auth/me', { jar });
+
+    output = harness.logLines.join('\n');
+  }, 60_000);
+
+  afterAll(async () => {
+    await harness?.close();
+  });
+
+  it('actually declared it — otherwise every assertion below is vacuous', () => {
+    // A test asserting "the log does not contain X" passes perfectly against a run
+    // in which X was never submitted. This is the assertion that makes the rest
+    // mean something.
+    expect(declaration.status).toBe(200);
+    expect(harness.logLines.length).toBeGreaterThan(0);
+    expect(output).toContain('/v1/auth/date-of-birth');
+  });
+
+  it('never writes the declared date, in any spelling', () => {
+    expect(output).not.toContain(declared);
+    // The year alone is enough to narrow somebody down, and it is also what a
+    // partially-redacted structure would leave behind.
+    expect(output).not.toContain('1993');
+    // The refused values travelled the same road and must be just as absent.
+    expect(output).not.toContain('1970-01-01');
+    expect(output).not.toContain('2026-02-30');
+  });
+
+  it('never writes the field name with a value beside it, in either vocabulary', () => {
+    // `date_of_birth` on the wire, `dateOfBirth` on the domain type. The
+    // camelCase half was the hole this story found: `*.date_of_birth` covered the
+    // request body while `User` carries `dateOfBirth`, which is the object
+    // anything in `apps/api` would actually log.
+    expect(output).not.toMatch(/"date_of_birth"\s*:\s*"/);
+    expect(output).not.toMatch(/"dateOfBirth"\s*:\s*"/);
+  });
+
+  it('still records the path and the request id, so the log is worth keeping', () => {
+    // The redaction has to stop short of making the log useless: without this, the
+    // assertions above would pass against a logger that writes nothing at all.
+    expect(output).toContain('request_id');
+    expect(output).toContain('/v1/auth/me');
   });
 });

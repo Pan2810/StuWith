@@ -16,14 +16,18 @@
  */
 
 import {
+  DATE_OF_BIRTH_PATHNAME,
   MAX_SIGN_IN_RETRY_AFTER_SECONDS,
   RATE_LIMITED_MESSAGE,
   SIGN_IN_OUTCOME_QUERY_PARAM,
   SIGN_IN_RETRY_AFTER_QUERY_PARAM,
+  isProfileCompleted,
   isSignInOutcome,
   parseSignInRetryAfterSeconds,
+  type CurrentUser,
   type SignInOutcome,
 } from '@stuwith/contracts';
+import { PROFILE_RETRY_LABEL, unavailableMessage } from '../profile-load';
 import { SignInProviderLinks } from '../sign-in-links';
 import { SignInCountdown } from './countdown';
 
@@ -312,12 +316,15 @@ export function signInOptionsVisible(notice: SignInNotice | null, canSignIn: boo
  * spend another attempt. Folded into one component, there is no decision left in
  * the page to delete, and everything below is rendered by real tests.
  */
+export type SignInPageStatus = 'loading' | 'signed-out' | 'signed-in' | 'unavailable';
+
 export function SignInPanel({
   notice,
-  canSignIn,
-  loading,
+  status,
+  retryAfterSeconds,
   apiBaseUrl,
   onCountdownFinished,
+  onRetry,
 }: {
   /**
    * ONE prop carrying both halves of the notice, and that is the point of its
@@ -325,8 +332,24 @@ export function SignInPanel({
    * so deleting it typechecked and shipped a lock message with no clock.
    */
   readonly notice: SignInNotice | null;
-  readonly canSignIn: boolean;
-  readonly loading: boolean;
+  /**
+   * ONE discriminant, not two booleans.
+   *
+   * It was `canSignIn` and `loading`, which are two projections of one state: three
+   * of their four combinations are meaningless, and nothing said so. The fourth
+   * state — `unavailable` — could not be expressed at all, which is how a `200`
+   * carrying a body this page could not parse ended up rendering four login links
+   * for somebody who was already signed in.
+   */
+  readonly status: SignInPageStatus;
+  /**
+   * The wait that came with an `unavailable`, or `null`.
+   *
+   * Separate from `notice` because it arrives from a different place — a header on
+   * the answer rather than a parameter in the URL — and because only one of the two
+   * has an outcome code attached.
+   */
+  readonly retryAfterSeconds: number | null;
   readonly apiBaseUrl: string;
   /**
    * Told when the wait ends, so the links come back.
@@ -337,7 +360,15 @@ export function SignInPanel({
    * wait, waits, and is then given nothing to click.
    */
   readonly onCountdownFinished: () => void;
+  /**
+   * Re-read the profile, for the `unavailable` branch. REQUIRED for the same reason
+   * the declaration screen's is: a branch that renders a button and loses its
+   * handler is the dead end the branch was added to remove.
+   */
+  readonly onRetry: () => void;
 }) {
+  const canSignIn = status === 'signed-out';
+  const loading = status === 'loading';
   const presentation = notice === null ? null : OUTCOME_NOTICES[notice.outcome];
   // Only one outcome has anything to count, and a number that arrived beside any
   // other one is ignored rather than rendered somewhere it makes no sense.
@@ -373,6 +404,31 @@ export function SignInPanel({
 
       {loading ? <p>Đang kiểm tra phiên…</p> : null}
 
+      {/*
+        The state this page could not express, and the reason it needed to.
+
+        A `200` from `/v1/auth/me` carrying a body that will not parse used to be
+        mapped to `signed-out`, so somebody who WAS signed in got four login links —
+        and signing in again could not help, because the body still would not parse.
+        A loop with no way out, produced by exactly the reasoning `/khai-ngay-sinh`
+        had already rejected in writing for the same answer. Both screens now read
+        that answer through one function, and this is the branch that renders it.
+
+        The retry button is the way forward; when a rate limit told us how long, the
+        clock is shown beside it and the button waits.
+      */}
+      {status === 'unavailable' ? (
+        <>
+          <p role="status">{unavailableMessage(retryAfterSeconds)}</p>
+          {retryAfterSeconds === null ? null : (
+            <SignInCountdown seconds={retryAfterSeconds} onFinished={onCountdownFinished} />
+          )}
+          <button type="button" disabled={retryAfterSeconds !== null} onClick={onRetry}>
+            {PROFILE_RETRY_LABEL}
+          </button>
+        </>
+      ) : null}
+
       {signInOptionsVisible(notice, canSignIn) ? (
         <nav>
           <p>Chọn tài khoản mạng xã hội để tiếp tục:</p>
@@ -397,22 +453,109 @@ export function SignInPanel({
 }
 
 /**
- * What `/v1/auth/me` answering told us, including the case the page could not see.
+ * What a signed-in person is asked to do NEXT, as a pure function of the profile.
  *
- * A rate-limited `/me` answers `429`, and `!response.ok` mapped that to
- * "signed out" — so a locked-out visitor got an ordinary login page with four
- * links and no notice, and the first click spent an `auth_start` and bounced them
- * back. That is exactly the loop the panel above exists to break, arriving through
- * the one entry point it could not see.
+ * ## The defect this exists to close
+ *
+ * `/khai-ngay-sinh` was a dead route. The screen existed, rendered correctly and
+ * had its own tests; the constant existed and was compared with other constants;
+ * the API endpoint behind it worked over real HTTP — and no file in `apps/web` or
+ * `apps/api` navigated to it. The only way to reach the one step Story 1.4 exists
+ * to make happen was to type the URL, which means the acceptance criterion "there
+ * is no way past the declaration step" was not met while 1460 tests were green.
+ * Nothing could see it, because every piece was correct on its own.
+ *
+ * So the decision is a function rather than a condition inside the page: a
+ * DOM-less project cannot execute an effect or a JSX branch reached only through
+ * one, and a decision no test can run is exactly how the gap opened.
+ *
+ * ## Why `isProfileCompleted` and not `user.profile_completed`
+ *
+ * The field is optional in the contract, so it has three states while this
+ * decision has two. The shared reader collapses the third the fail-closed way —
+ * absent means "not declared", which shows the step rather than hiding it. Showing
+ * it to somebody who has already declared costs one page they can leave; hiding it
+ * from somebody who has not is permanent, because the endpoint accepts exactly one
+ * write and nothing else in the product asks.
  */
-export function signInNoticeFromMe(status: number, retryAfterHeader: string | null): SignInNotice | null {
-  if (status !== 429) {
-    return null;
-  }
-  return {
-    outcome: 'bi-khoa',
-    // The same parser the URL parameter goes through, so a header this product did
-    // not write cannot put a nonsense number on the screen either.
-    retryAfterSeconds: parseSignInRetryAfterSeconds(retryAfterHeader),
-  };
+export type SignedInNextStep =
+  /** Nothing outstanding: the profile is complete. */
+  | { readonly kind: 'none' }
+  /** The date of birth has not been declared. The link is where to go. */
+  | { readonly kind: 'declare-date-of-birth'; readonly href: string };
+
+export function signedInNextStep(user: Pick<CurrentUser, 'profile_completed'>): SignedInNextStep {
+  return isProfileCompleted(user)
+    ? { kind: 'none' }
+    : { kind: 'declare-date-of-birth', href: DATE_OF_BIRTH_PATHNAME };
 }
+
+/** The sentence that sends somebody to the declaration screen, and the link's text. */
+export const DECLARE_DATE_OF_BIRTH_PROMPT =
+  'Hồ sơ của bạn còn thiếu ngày sinh. Hãy khai ngày sinh để dùng đầy đủ tính năng.';
+export const DECLARE_DATE_OF_BIRTH_LINK = 'Khai ngày sinh';
+
+/**
+ * The signed-in view, as ONE effect-free component.
+ *
+ * Same shape as `SignInPanel` and for the same reason: who the person is, what is
+ * still missing from their profile and the way out are one decision, and while
+ * they were three pieces of JSX in `page.tsx` any of them could be deleted with a
+ * full green run — which is precisely what had happened to the link below.
+ *
+ * The sign-out button stays here rather than behind the outstanding step. Somebody
+ * who has not declared must still be able to leave their own session; that is a
+ * matrix row of the story ("do not lock people out of their own session"), and on
+ * a shared machine it is a security question rather than a convenience.
+ */
+export function SignedInPanel({
+  user,
+  onSignOut,
+}: {
+  readonly user: CurrentUser;
+  /** REQUIRED: a panel that renders the button and loses the handler is the bug. */
+  readonly onSignOut: () => void;
+}) {
+  const next = signedInNextStep(user);
+
+  return (
+    <section>
+      <p>
+        Đang đăng nhập: <strong>{user.display_name}</strong> (vai trò: {user.role})
+      </p>
+
+      {next.kind === 'declare-date-of-birth' ? (
+        <>
+          {/*
+            `status`, not `alert`: nothing has gone wrong, there is simply a step
+            left. The link is a plain `<a href>` — a full navigation is correct
+            here, and the route comes from `packages/contracts` rather than from a
+            literal, which is the same rule that put `SIGN_IN_PATHNAME` there.
+          */}
+          <p role="status">{DECLARE_DATE_OF_BIRTH_PROMPT}</p>
+          <a href={next.href}>{DECLARE_DATE_OF_BIRTH_LINK}</a>
+        </>
+      ) : null}
+
+      <button type="button" onClick={onSignOut}>
+        Đăng xuất
+      </button>
+    </section>
+  );
+}
+
+/**
+ * `signInNoticeFromMe` used to live here, and it is gone on purpose.
+ *
+ * It answered "what does a status from `/v1/auth/me` mean" for this screen alone —
+ * a `429` becomes the locked notice, everything else becomes nothing — while
+ * `/khai-ngay-sinh` answered the same question with a different function and a
+ * different verdict. Two readings of one answer, which is the class of defect this
+ * whole story is about, sitting in the two screens that read it.
+ *
+ * `profileLoadOutcome` in `../profile-load` is that reading now, for both screens,
+ * and the `unavailable` branch of {@link SignInPanel} renders what it produces —
+ * including the wait, which is the only actionable thing in a `429`. Deleting the
+ * function rather than leaving it beside its replacement is deliberate: an exported
+ * decision nothing calls is the shape that makes two readings possible again.
+ */

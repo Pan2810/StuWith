@@ -1,12 +1,13 @@
 'use client';
 
-import type { CurrentUser } from '@stuwith/contracts';
+import { AUTH_ME_PATH, parseCurrentUser, type CurrentUser } from '@stuwith/contracts';
 import { useCallback, useEffect, useState } from 'react';
+import { profileLoadOutcome } from '../profile-load';
 import { useApiBaseUrl, useAuthorizedFetch } from '../session-expiry-provider';
 import {
   SignInPanel,
+  SignedInPanel,
   nextLocationAfterOutcome,
-  signInNoticeFromMe,
   type SignInNotice,
 } from './sign-in-outcome';
 
@@ -33,7 +34,20 @@ import {
 type LoadState =
   | { status: 'loading' }
   | { status: 'signed-out' }
-  | { status: 'signed-in'; user: CurrentUser };
+  | { status: 'signed-in'; user: CurrentUser }
+  /**
+   * The state this page did not have, and the loop that produced.
+   *
+   * `/v1/auth/me` answering `200` with a body that is not a `CurrentUser` used to
+   * land on `signed-out`, which shows four login links to somebody who IS signed in
+   * — and signing in again cannot help, because the body still will not parse. The
+   * declaration screen had already rejected exactly this collapse in writing, for
+   * exactly this answer. One reading now serves both (`../profile-load`).
+   *
+   * It carries the wait, because `429` is the case it was invented for and the
+   * seconds are the only thing anybody can act on.
+   */
+  | { status: 'unavailable'; retryAfterSeconds: number | null };
 
 export default function DangNhapPage() {
   const [state, setState] = useState<LoadState>({ status: 'loading' });
@@ -71,36 +85,43 @@ export default function DangNhapPage() {
 
   const load = useCallback(async () => {
     try {
-      const response = await authorizedFetch(`${apiBaseUrl}/v1/auth/me`);
-      if (response.status !== 200) {
-        /**
-         * A 429 here is not "signed out", and treating it as one was the bug.
-         *
-         * `!response.ok` covered both, so a rate-limited visitor got an ordinary
-         * login page with four links and no explanation — and the first click
-         * spent an `auth_start` and bounced them back with a longer wait. The
-         * decision lives in `signInNoticeFromMe` so a test can execute it.
-         *
-         * `status !== 200` rather than `!response.ok`, and the difference is not
-         * cosmetic: `ok` is true for the whole 2xx range, and the only shape this
-         * page can render is the `CurrentUser` body a 200 carries. A 204 or a 206
-         * would be parsed as JSON and throw. The signed-in branch takes exactly
-         * the one status that means "here is the profile".
-         */
-        const limited = signInNoticeFromMe(response.status, response.headers.get('retry-after'));
-        if (limited !== null) {
-          setNotice(limited);
-        }
-        setState({ status: 'signed-out' });
-        return;
-      }
-      setState({ status: 'signed-in', user: (await response.json()) as CurrentUser });
+      const response = await authorizedFetch(`${apiBaseUrl}${AUTH_ME_PATH}`);
+      /**
+       * The body is parsed here and judged in `profileLoadOutcome`, which is the
+       * SHARED reading `/khai-ngay-sinh` uses too.
+       *
+       * `status !== 200` rather than `!response.ok`, and the difference is not
+       * cosmetic: `ok` is true for the whole 2xx range, and the only shape this
+       * page can render is the `CurrentUser` body a 200 carries. A 204 or a 206
+       * would be parsed as JSON and throw.
+       *
+       * Parsed, never cast. `as CurrentUser` is a claim about a body this process
+       * did not write, and the whole reason `toCurrentUser` parses on the way out
+       * is that a shape nobody checks is a shape that drifts. A 200 carrying
+       * something else is not a session this page can render — and it is not a
+       * signed-out visitor either, which is what this page used to call it.
+       */
+      const user =
+        response.status === 200 ? parseCurrentUser(await response.json()) : null;
+      const outcome = profileLoadOutcome(
+        response.status,
+        user,
+        response.headers.get('retry-after'),
+      );
+      setState(
+        outcome.kind === 'profile'
+          ? { status: 'signed-in', user: outcome.user }
+          : outcome.kind === 'signed-out'
+            ? { status: 'signed-out' }
+            : { status: 'unavailable', retryAfterSeconds: outcome.retryAfterSeconds },
+      );
     } catch {
-      // A network failure is not a signed-in state, and it is not an expired
-      // session either: nothing came back, so there is no status to report and the
-      // seam is never told. The outcome banner is only about the attempt the
-      // person just made.
-      setState({ status: 'signed-out' });
+      // Nothing came back at all — a network failure, or a 200 whose body would not
+      // even parse as JSON. That is not a signed-in state and it is not an expired
+      // session either, so there is no status to report and the seam is never told.
+      // `0` is the convention both screens share for it, and it reads as
+      // `unavailable`: honest, and it does not offer a login that cannot help.
+      setState({ status: 'unavailable', retryAfterSeconds: null });
     }
   }, [authorizedFetch, apiBaseUrl]);
 
@@ -153,23 +174,34 @@ export default function DangNhapPage() {
       */}
       <SignInPanel
         notice={notice}
-        canSignIn={state.status === 'signed-out'}
-        loading={state.status === 'loading'}
+        // ONE prop, not `canSignIn` plus `loading`: three of those four
+        // combinations meant nothing, and the fourth state — the profile could not
+        // be read, and not because nobody is signed in — could not be said at all.
+        status={state.status}
+        retryAfterSeconds={state.status === 'unavailable' ? state.retryAfterSeconds : null}
         apiBaseUrl={apiBaseUrl}
-        // The wait is over: drop the notice so the links come back.
-        onCountdownFinished={() => setNotice(null)}
+        // The wait is over: drop the notice so the links come back, and drop the
+        // rate-limit wait so the retry button works again.
+        onCountdownFinished={() => {
+          setNotice(null);
+          setState((current) =>
+            current.status === 'unavailable'
+              ? { status: 'unavailable', retryAfterSeconds: null }
+              : current,
+          );
+        }}
+        onRetry={() => void load()}
       />
 
+      {/*
+        The signed-in view is ONE component for the same reason the notice and the
+        login links are: who the person is, what is still missing from their
+        profile and the way out are one decision. While the outstanding step was
+        not rendered at all, `/khai-ngay-sinh` was a route nothing in the product
+        linked to — a screen that existed, worked and could not be reached.
+      */}
       {state.status === 'signed-in' ? (
-        <section>
-          <p>
-            Đang đăng nhập: <strong>{state.user.display_name}</strong> (vai trò:{' '}
-            {state.user.role})
-          </p>
-          <button type="button" onClick={() => void logout()}>
-            Đăng xuất
-          </button>
-        </section>
+        <SignedInPanel user={state.user} onSignOut={() => void logout()} />
       ) : null}
     </main>
   );

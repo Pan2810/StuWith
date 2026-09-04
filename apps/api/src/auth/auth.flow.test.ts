@@ -1,5 +1,9 @@
 import {
   AUTH_COOKIE_PATH,
+  AUTH_DATE_OF_BIRTH_PATH,
+  AUTH_ME_PATH,
+  DATE_OF_BIRTH_ALREADY_SET_MESSAGE,
+  DATE_OF_BIRTH_INVALID_MESSAGE,
   OAUTH_STATE_COOKIE_PREFIX,
   REFRESH_COOKIE_NAME,
   SESSION_COOKIE_NAME,
@@ -11,8 +15,14 @@ import {
   currentUserSchema,
   type SignInOutcome,
 } from '@stuwith/contracts';
+import { RequestMethod } from '@nestjs/common';
+// The metadata KEYS Nest itself writes with. They happen to be `'path'` and
+// `'method'` today; they are Nest's to change, and a test that spells them by hand
+// reads `undefined` on the day they do.
+import { METHOD_METADATA, PATH_METADATA } from '@nestjs/common/constants';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { SIGN_IN_FAILURE_REASONS } from './audit';
+import { AuthController } from './auth.controller';
 import { CookieJar, createAuthHarness, type AuthHarness } from './__testing__/auth-harness';
 
 /**
@@ -179,8 +189,8 @@ describe('Matrix: signing in again', () => {
     expect(second.callback.status).toBe(302);
     expect(await harness.identity.countUsers()).toBe(1);
 
-    const me = await harness.request('/v1/auth/me', { jar: first.jar });
-    const meAgain = await harness.request('/v1/auth/me', { jar: second.jar });
+    const me = await harness.request(AUTH_ME_PATH, { jar: first.jar });
+    const meAgain = await harness.request(AUTH_ME_PATH, { jar: second.jar });
     expect((await me.json()).id).toBe((await meAgain.json()).id);
 
     const rows = harness.audit.byAction('auth.signed_in');
@@ -203,8 +213,8 @@ describe('Matrix: two providers, one email address', () => {
     expect(facebook.callback.status).toBe(302);
     expect(await harness.identity.countUsers()).toBe(2);
 
-    const a = await (await harness.request('/v1/auth/me', { jar: google.jar })).json();
-    const b = await (await harness.request('/v1/auth/me', { jar: facebook.jar })).json();
+    const a = await (await harness.request(AUTH_ME_PATH, { jar: google.jar })).json();
+    const b = await (await harness.request(AUTH_ME_PATH, { jar: facebook.jar })).json();
     expect(a.id).not.toBe(b.id);
   });
 });
@@ -234,7 +244,7 @@ describe('Matrix: Microsoft organisational account', () => {
     });
 
     expect(callback.status).toBe(302);
-    const me = await harness.request('/v1/auth/me', { jar });
+    const me = await harness.request(AUTH_ME_PATH, { jar });
     expect(me.status).toBe(200);
     expect(currentUserSchema.parse(await me.json()).display_name).toBe('An Nguyen');
   });
@@ -281,7 +291,7 @@ describe('Matrix: Apple', () => {
     const { jar, callback } = await harness.login('apple', { subject: 'apple-subject-1' });
 
     expect(callback.status).toBe(302);
-    const me = await harness.request('/v1/auth/me', { jar });
+    const me = await harness.request(AUTH_ME_PATH, { jar });
     expect(me.status).toBe(200);
     // A login must not fail because the provider was stingy with profile fields.
     expect(currentUserSchema.parse(await me.json()).display_name.length).toBeGreaterThan(0);
@@ -492,11 +502,11 @@ describe('Matrix: the provider says no', () => {
     // A failed new login is not a reason to sign someone out of the session they
     // already had. The old code cleared every auth cookie on this path.
     const { jar } = await harness.login('google', googleProfile);
-    expect((await harness.request('/v1/auth/me', { jar })).status).toBe(200);
+    expect((await harness.request(AUTH_ME_PATH, { jar })).status).toBe(200);
 
     await refusedCallback('access_denied', 'google', jar);
 
-    expect((await harness.request('/v1/auth/me', { jar })).status).toBe(200);
+    expect((await harness.request(AUTH_ME_PATH, { jar })).status).toBe(200);
   });
 
   it('answers a cancellation with no state and no cookie at all', async () => {
@@ -639,10 +649,10 @@ describe('Matrix: refresh rotation', () => {
     expect(refreshed.status).toBe(204);
     expect(jar.get(SESSION_COOKIE_NAME)).not.toBe(before);
 
-    expect((await harness.request('/v1/auth/me', { jar })).status).toBe(200);
+    expect((await harness.request(AUTH_ME_PATH, { jar })).status).toBe(200);
     // The previous cookie is spent the instant a newer generation exists — not
     // when its own TTL runs out.
-    expect((await harness.request('/v1/auth/me', { jar: staleJar })).status).toBe(401);
+    expect((await harness.request(AUTH_ME_PATH, { jar: staleJar })).status).toBe(401);
   });
 
   it('refuses a refresh with no refresh cookie', async () => {
@@ -666,7 +676,7 @@ describe('Matrix: a refresh token that comes back after rotation', () => {
     // Not "that one token is dead" — the whole chain is, including the session the
     // legitimate client is holding. A user losing their session is the cheap half
     // of this trade.
-    expect((await harness.request('/v1/auth/me', { jar })).status).toBe(401);
+    expect((await harness.request(AUTH_ME_PATH, { jar })).status).toBe(401);
 
     const failures = harness.audit.byAction('auth.sign_in_failed');
     expect(failures.length).toBe(1);
@@ -677,11 +687,11 @@ describe('Matrix: a refresh token that comes back after rotation', () => {
 describe('Matrix: an expired session', () => {
   it('answers 401 once the TTL has passed', async () => {
     const { jar } = await harness.login('google', googleProfile);
-    expect((await harness.request('/v1/auth/me', { jar })).status).toBe(200);
+    expect((await harness.request(AUTH_ME_PATH, { jar })).status).toBe(200);
 
     harness.clock.advance((harness.config.SESSION_TTL_SECONDS + 1) * 1000);
 
-    const expired = await harness.request('/v1/auth/me', { jar });
+    const expired = await harness.request(AUTH_ME_PATH, { jar });
     expect(expired.status).toBe(401);
     expect(errorEnvelopeSchema.parse(await expired.json()).error.code).toBe('unauthenticated');
   });
@@ -691,7 +701,7 @@ describe('Matrix: an expired session', () => {
     harness.clock.advance((harness.config.SESSION_TTL_SECONDS + 1) * 1000);
 
     expect((await harness.request('/v1/auth/refresh', { method: 'POST', jar })).status).toBe(204);
-    expect((await harness.request('/v1/auth/me', { jar })).status).toBe(200);
+    expect((await harness.request(AUTH_ME_PATH, { jar })).status).toBe(200);
   });
 
   it('refuses a login left at the consent screen past the state TTL', async () => {
@@ -708,31 +718,36 @@ describe('Matrix: an expired session', () => {
   });
 });
 
-describe('/v1/auth/me', () => {
+describe(AUTH_ME_PATH, () => {
   it('publishes no email and no provider id', async () => {
     const { jar } = await harness.login('google', googleProfile);
-    const response = await harness.request('/v1/auth/me', { jar });
+    const response = await harness.request(AUTH_ME_PATH, { jar });
     const raw = await response.text();
 
     expect(response.status).toBe(200);
     expect(raw).not.toContain(googleProfile.email);
     expect(raw).not.toContain(googleProfile.subject);
+    // Story 1.4 added two booleans, and the exact-set assertion is the point:
+    // a body that gains a field nobody decided to publish fails here rather than
+    // in somebody's browser cache.
     expect(Object.keys(JSON.parse(raw)).sort()).toEqual([
       'avatar_url',
       'display_name',
       'id',
+      'is_over_18',
+      'profile_completed',
       'role',
     ]);
   });
 
   it('gives a new account the `user` role and nothing more', async () => {
     const { jar } = await harness.login('google', googleProfile);
-    const me = currentUserSchema.parse(await (await harness.request('/v1/auth/me', { jar })).json());
+    const me = currentUserSchema.parse(await (await harness.request(AUTH_ME_PATH, { jar })).json());
     expect(me.role).toBe('user');
   });
 
   it('answers 401 with the standard envelope when no cookie is presented', async () => {
-    const response = await harness.request('/v1/auth/me');
+    const response = await harness.request(AUTH_ME_PATH);
     expect(response.status).toBe(401);
     expect(errorEnvelopeSchema.safeParse(await response.json()).success).toBe(true);
   });
@@ -746,7 +761,7 @@ describe('/v1/auth/logout', () => {
     const response = await harness.request('/v1/auth/logout', { method: 'POST', jar });
     expect(response.status).toBe(204);
 
-    expect((await harness.request('/v1/auth/me', { jar })).status).toBe(401);
+    expect((await harness.request(AUTH_ME_PATH, { jar })).status).toBe(401);
     // The refresh token must not bring the session back.
     expect(
       (await harness.request('/v1/auth/refresh', { method: 'POST', jar: keptRefresh })).status,
@@ -825,7 +840,7 @@ describe('CORS — the web client is on another origin', () => {
    * asserted directly.
    */
   it('allows the configured web origin, with credentials', async () => {
-    const response = await harness.request('/v1/auth/me', {
+    const response = await harness.request(AUTH_ME_PATH, {
       headers: { origin: harness.webBaseUrl },
     });
 
@@ -849,7 +864,7 @@ describe('CORS — the web client is on another origin', () => {
   });
 
   it('does NOT reflect a foreign origin, and never answers with a wildcard', async () => {
-    const response = await harness.request('/v1/auth/me', {
+    const response = await harness.request(AUTH_ME_PATH, {
       headers: { origin: 'http://evil.example' },
     });
 
@@ -939,7 +954,7 @@ describe('Apple uses response_mode=form_post', () => {
     });
 
     expect(callback.status).toBe(302);
-    expect((await harness.request('/v1/auth/me', { jar })).status).toBe(200);
+    expect((await harness.request(AUTH_ME_PATH, { jar })).status).toBe(200);
   });
 
   it('refuses a form POST whose state does not match', async () => {
@@ -984,7 +999,7 @@ describe('two login attempts in two tabs', () => {
     // Finish the OLDER tab — the one a single fixed cookie name would have lost.
     const callback = await harness.request(firstTab.callbackUrl, { jar });
     expect(callback.status).toBe(302);
-    expect((await harness.request('/v1/auth/me', { jar })).status).toBe(200);
+    expect((await harness.request(AUTH_ME_PATH, { jar })).status).toBe(200);
   });
 
   it('clears only the attempt that completed, leaving the other tab usable', async () => {
@@ -1093,7 +1108,7 @@ describe('logging out after the session token has expired', () => {
     harness.clock.advance((harness.config.SESSION_TTL_SECONDS + 1) * 1000);
     // Sanity: the access token really is unusable by now, so this test is
     // exercising the path it claims to.
-    expect((await harness.request('/v1/auth/me', { jar })).status).toBe(401);
+    expect((await harness.request(AUTH_ME_PATH, { jar })).status).toBe(401);
 
     expect((await harness.request('/v1/auth/logout', { method: 'POST', jar })).status).toBe(204);
 
@@ -1112,7 +1127,7 @@ describe('logging out after the session token has expired', () => {
     expect(
       (await harness.request('/v1/auth/logout', { method: 'POST', jar: refreshOnly })).status,
     ).toBe(204);
-    expect((await harness.request('/v1/auth/me', { jar })).status).toBe(401);
+    expect((await harness.request(AUTH_ME_PATH, { jar })).status).toBe(401);
   });
 });
 
@@ -1494,5 +1509,529 @@ describe('Matrix: coming back to where you were standing', () => {
     harness.clock.advance((harness.config.OAUTH_STATE_TTL_SECONDS + 1) * 1000);
 
     expectOutcomeRedirect(await harness.request(authorized.callbackUrl, { jar }), 'that-bai');
+  });
+});
+
+/**
+ * Story 1.4 — the first-login declaration, over real HTTP.
+ *
+ * Every row of the story's matrix that involves the network is here. The pure
+ * halves are covered where they live (`packages/contracts` for the parser,
+ * `packages/domain` for the age rule, `packages/db`'s contract suite for the
+ * write-once property against BOTH adapters); what only a running process can
+ * show is that those pieces are actually wired to each other — that the endpoint
+ * uses the shared parser, that `/me` reports the flags the domain computed, and
+ * that the value never comes back out.
+ */
+describe('POST /v1/auth/date-of-birth', () => {
+  /** The harness clock is fixed at 2026-09-04, so these two are stable for ever. */
+  const ADULT_BIRTHDAY = '2008-09-04';
+  const DAY_BEFORE_ADULT = '2008-09-05';
+
+  const declare = (jar: CookieJar, body: unknown): Promise<Response> =>
+    harness.request(AUTH_DATE_OF_BIRTH_PATH, {
+      method: 'POST',
+      jar,
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+  const me = async (jar: CookieJar) =>
+    currentUserSchema.parse(await (await harness.request(AUTH_ME_PATH, { jar })).json());
+
+  /**
+   * A browser that has never signed in.
+   *
+   * One helper, used by every example in this suite that needs one. It was written
+   * once and then ignored by the two cases immediately below it, which spelled
+   * `new CookieJar()` inline — a helper nobody uses is a helper that says nothing,
+   * and the inconsistency invites the next reader to add a third spelling.
+   */
+  const anonymousJar = (): CookieJar => new CookieJar();
+
+  it('is mounted at the path the contract declares', () => {
+    /**
+     * Read off the DECORATORS, not compared with a literal — and read with Nest's
+     * OWN metadata keys.
+     *
+     * Two things were wrong before. The test asserted `AUTH_DATE_OF_BIRTH_PATH ===
+     * '/v1/auth/date-of-birth'`, a constant against a copy of itself, which says
+     * nothing about where Nest actually mounted the handler; the controller composes
+     * the route from `@Controller('v1/auth')` and `@Post('date-of-birth')` and either
+     * half can be edited alone. And the fix for that read the metadata with the
+     * string literals `'path'` and `'method'` — today those ARE the values of
+     * `PATH_METADATA` and `METHOD_METADATA`, but they are `@nestjs/common`'s to
+     * change, and the day they do this test reads `undefined` from both sides and
+     * every comparison below quietly compares nothing.
+     */
+    const handler = (AuthController.prototype as unknown as Record<string, object>)[
+      'recordDateOfBirth'
+    ];
+    const controllerPath = Reflect.getMetadata(PATH_METADATA, AuthController) as string;
+    const methodPath = Reflect.getMetadata(PATH_METADATA, handler) as string;
+
+    // The positive control the previous version lacked: metadata was READ at all.
+    // Without it, a `Reflect.getMetadata` returning `undefined` on both halves would
+    // make `/undefined/undefined` the thing compared, which fails for the wrong
+    // reason — or, on the method side alone, silently weakens the comparison.
+    expect(typeof controllerPath).toBe('string');
+    expect(typeof methodPath).toBe('string');
+    expect(controllerPath.length).toBeGreaterThan(0);
+    expect(methodPath.length).toBeGreaterThan(0);
+
+    expect(`/${controllerPath}/${methodPath}`).toBe(AUTH_DATE_OF_BIRTH_PATH);
+    // And it is a POST, with no PATCH or PUT beside it: the value is written once
+    // and there is no endpoint that changes it.
+    expect(Reflect.getMetadata(METHOD_METADATA, handler)).toBe(RequestMethod.POST);
+  });
+
+  it('Matrix row: a brand-new profile is reported as NOT completed', async () => {
+    const { jar } = await harness.login('google', googleProfile);
+
+    const profile = await me(jar);
+
+    expect(profile.profile_completed).toBe(false);
+    // Unknown age fails closed. "We have not asked yet" must never read as "adult".
+    expect(profile.is_over_18).toBe(false);
+  });
+
+  it('Matrix row: a valid declaration is stored and /me then reports it', async () => {
+    const { jar } = await harness.login('google', googleProfile);
+
+    const response = await declare(jar, { date_of_birth: '1999-04-02' });
+
+    expect(response.status).toBe(200);
+    const profile = await me(jar);
+    expect(profile.profile_completed).toBe(true);
+    expect(profile.is_over_18).toBe(true);
+  });
+
+  it('answers with the same projection /me does, and nothing more', async () => {
+    const { jar } = await harness.login('google', googleProfile);
+
+    const body = await (await declare(jar, { date_of_birth: '1999-04-02' })).json();
+
+    expect(Object.keys(body as object).sort()).toEqual([
+      'avatar_url',
+      'display_name',
+      'id',
+      'is_over_18',
+      'profile_completed',
+      'role',
+    ]);
+  });
+
+  it('Matrix row: the eighteenth birthday itself counts as over 18', async () => {
+    const { jar } = await harness.login('google', googleProfile);
+
+    await declare(jar, { date_of_birth: ADULT_BIRTHDAY });
+
+    expect((await me(jar)).is_over_18).toBe(true);
+  });
+
+  it('Matrix row: one day short of eighteen is not over 18, but IS completed', async () => {
+    const { jar } = await harness.login('google', googleProfile);
+
+    await declare(jar, { date_of_birth: DAY_BEFORE_ADULT });
+
+    const profile = await me(jar);
+    // The two flags are independent, and this is the row that proves it: the step
+    // is finished, and the answer is still "no".
+    expect(profile.profile_completed).toBe(true);
+    expect(profile.is_over_18).toBe(false);
+  });
+
+  it('Matrix row: the date NEVER comes back out, on either endpoint', async () => {
+    const { jar } = await harness.login('google', googleProfile);
+    const declared = '1999-04-02';
+
+    const written = await (await declare(jar, { date_of_birth: declared })).text();
+    const read = await (await harness.request(AUTH_ME_PATH, { jar })).text();
+
+    for (const body of [written, read]) {
+      expect(body).not.toContain(declared);
+      expect(body).not.toContain('1999');
+      expect(body).not.toContain('date_of_birth');
+    }
+    // And the responses were not simply empty, which would satisfy the above.
+    expect(read).toContain('display_name');
+  });
+
+  it('Matrix row: a second declaration is refused and the first value stands', async () => {
+    const { jar } = await harness.login('google', googleProfile);
+    await declare(jar, { date_of_birth: '1999-04-02' });
+
+    // A second attempt with a date that WOULD flip the age flag, so a silent
+    // overwrite could not hide behind an unchanged answer.
+    const second = await declare(jar, { date_of_birth: DAY_BEFORE_ADULT });
+
+    expect(second.status).toBe(409);
+    expect(errorEnvelopeSchema.safeParse(await second.json()).success).toBe(true);
+    expect((await me(jar)).is_over_18).toBe(true);
+  });
+
+  it('does not disclose the stored value when it refuses the second attempt', async () => {
+    const { jar } = await harness.login('google', googleProfile);
+    await declare(jar, { date_of_birth: '1999-04-02' });
+
+    const raw = await (await declare(jar, { date_of_birth: '2000-01-01' })).text();
+
+    expect(raw).not.toContain('1999-04-02');
+    expect(raw).not.toContain('1999');
+  });
+
+  it('Matrix row: two simultaneous declarations, exactly one wins', async () => {
+    const { jar } = await harness.login('google', googleProfile);
+
+    const [first, second] = await Promise.all([
+      declare(jar, { date_of_birth: '1999-04-02' }),
+      declare(jar, { date_of_birth: '1970-01-01' }),
+    ]);
+
+    // Numeric sort. The default is LEXICOGRAPHIC — `[200, 409].sort()` is right
+    // here only by the accident that both are three digits and sort the same way
+    // as strings; `[409, 1000]` would not.
+    const statuses = [first.status, second.status].sort((a, b) => a - b);
+
+    // A 409 is not an error the caller did something wrong with — it is the normal
+    // answer to "somebody else got there first", and it must never be a 5xx. The
+    // assertion below used to be a separate `not.toContain(500)` sitting under an
+    // exact `toEqual([200, 409])`, which cannot fail unless the line above already
+    // has.
+    expect(statuses).toEqual([200, 409]);
+  });
+
+  /**
+   * H2 — "no audit row" is a Never in the spec, and nothing held it.
+   *
+   * `audit_events` has no `DELETE` for any role and its `metadata` column has no
+   * key whitelist, so a row carrying a date of birth is permanently uncorrectable.
+   * The whole `POST /v1/auth/date-of-birth` suite touched `harness.audit` zero
+   * times, which means adding `this.audit.record(...)` with the declared date
+   * inside `recordDateOfBirth` passed every gate: `currentUserSchema` still strips
+   * the field from the response, and `InMemoryAuditAdapter` does not go through
+   * pino, so the log suite could not see it either.
+   *
+   * Both halves are needed. "The audit contains no date" is trivially true of an
+   * empty audit, so the count from the login is asserted first.
+   */
+  describe('Never: the declaration writes no audit row', () => {
+    it('leaves the audit exactly as the login left it', async () => {
+      const { jar } = await harness.login('google', googleProfile);
+      const before = harness.audit.all().length;
+
+      // A positive control on the same object: the login DID write, so a suite
+      // asserting emptiness is not passing on an audit nobody wired up.
+      expect(before).toBeGreaterThan(0);
+      expect(harness.audit.byAction('auth.signed_in').length).toBe(1);
+
+      await declare(jar, { date_of_birth: '1999-04-02' });
+
+      expect(harness.audit.all().length, 'the declaration must add no audit row').toBe(before);
+    });
+
+    it('has no audit row anywhere carrying the declared date', async () => {
+      const { jar } = await harness.login('google', googleProfile);
+      const declared = '1999-04-02';
+
+      await declare(jar, { date_of_birth: declared });
+      // The refused second attempt too: a refusal is exactly the event somebody
+      // would be tempted to record, and it carries a date of its own.
+      await declare(jar, { date_of_birth: '1970-01-01' });
+
+      const serialised = JSON.stringify(harness.audit.all());
+      expect(serialised.length).toBeGreaterThan(2);
+      for (const leak of [declared, '1999', '1970-01-01', '1970', 'date_of_birth', 'dateOfBirth']) {
+        expect(serialised, `the audit must not carry ${leak}`).not.toContain(leak);
+      }
+    });
+
+    it('records nothing for a refused declaration either', async () => {
+      const { jar } = await harness.login('google', googleProfile);
+      const before = harness.audit.all().length;
+
+      await declare(jar, { date_of_birth: '2026-02-30' });
+      await declare(anonymousJar(), { date_of_birth: '1999-04-02' });
+
+      expect(harness.audit.all().length).toBe(before);
+    });
+  });
+
+  describe('Matrix row: input that is not a date of birth is refused, and nothing is stored', () => {
+    /**
+     * One example per CLASS, not a list of spellings — the exhaustive sweep over
+     * each family lives in `packages/contracts/src/auth.test.ts`, where it runs in
+     * milliseconds. What this proves is that the endpoint asks that parser at all,
+     * over real HTTP with Fastify's own JSON decoding in front of it.
+     */
+    it.each([
+      ['a day that does not exist', { date_of_birth: '2026-02-30' }],
+      ['a wrong shape', { date_of_birth: '02/04/1999' }],
+      ['an ISO instant', { date_of_birth: '1999-04-02T00:00:00.000Z' }],
+      ['surrounding whitespace', { date_of_birth: ' 1999-04-02 ' }],
+      ['an implausible year', { date_of_birth: '0001-01-01' }],
+      ['a value that is not a string', { date_of_birth: 19_990_402 }],
+      ['null', { date_of_birth: null }],
+      ['a missing field', {}],
+      ['a body that is not an object', 'nope'],
+      ['the field under the camelCase name a careless client would send', {
+        dateOfBirth: '1999-04-02',
+      }],
+    ])('refuses %s with 400', async (_label, body) => {
+      const { jar } = await harness.login('google', googleProfile);
+
+      const response = await declare(jar, body);
+
+      expect(response.status).toBe(400);
+      expect(errorEnvelopeSchema.safeParse(await response.json()).success).toBe(true);
+      // Nothing was written, so the one write this person is allowed is still theirs.
+      expect((await me(jar)).profile_completed).toBe(false);
+    });
+
+    it('Matrix row: a date in the future is refused', async () => {
+      const { jar } = await harness.login('google', googleProfile);
+
+      // The harness clock is fixed at 2026-09-04.
+      const response = await declare(jar, { date_of_birth: '2026-09-05' });
+
+      expect(response.status).toBe(400);
+      expect((await me(jar)).profile_completed).toBe(false);
+    });
+
+    it('says nothing technical and nothing about the threshold', async () => {
+      const { jar } = await harness.login('google', googleProfile);
+
+      const envelope = errorEnvelopeSchema.parse(
+        await (await declare(jar, { date_of_birth: '2026-02-30' })).json(),
+      );
+
+      // The message is the contract's constant, byte for byte — which is where the
+      // "says nothing about the threshold" rule is enforced, over the whole age
+      // vocabulary, in `packages/contracts/src/auth.test.ts`. Repeating a raw
+      // `not.toContain('18')` here would be both weaker (it misses "trên 18", "đủ
+      // tuổi", "vị thành niên") and unreliable, since it is applied to bodies that
+      // carry uuids and dates.
+      expect(envelope.error.message).toBe(DATE_OF_BIRTH_INVALID_MESSAGE);
+      // What is worth checking HERE is that no parser or framework vocabulary
+      // leaked into the envelope on the way out of this process.
+      for (const leak of ['parse', 'YYYY', 'zod', 'date_of_birth', 'Fastify']) {
+        expect(envelope.error.message).not.toContain(leak);
+      }
+      // And no `details`, which is where diagnostics leak out of an envelope.
+      expect(envelope.error.details).toBeUndefined();
+    });
+  });
+
+  it('refuses an unauthenticated caller without looking at the body', async () => {
+    const response = await declare(anonymousJar(), { date_of_birth: '1999-04-02' });
+
+    expect(response.status).toBe(401);
+    expect(errorEnvelopeSchema.safeParse(await response.json()).success).toBe(true);
+  });
+
+  it('answers 401 the same way for a valid and an invalid body, so nothing is enumerable', async () => {
+    const anonymous = anonymousJar();
+
+    const valid = await declare(anonymous, { date_of_birth: '1999-04-02' });
+    const invalid = await declare(anonymous, { date_of_birth: 'nope' });
+
+    expect(valid.status).toBe(401);
+    expect(invalid.status).toBe(401);
+    expect(await valid.text()).toBe(await invalid.text());
+  });
+
+  /**
+   * H4 — the `UserNotFound → 401` branch had no test that ran it.
+   *
+   * `grep -c UserNotFound auth.flow.test.ts` was 0. The 401 cases all stopped at
+   * `userFromSession` with an empty cookie jar, so none of them ever reached
+   * `recordDateOfBirth` at all, and the 409 cases built an `AlreadyRecorded` state.
+   * Changing the mapping to 409 for BOTH refusals turned nothing red — and somebody
+   * whose session points at a profile that has vanished would then read "Hồ sơ đã có
+   * ngày sinh", a sentence that is simply false and that sends them looking for a
+   * support flow about a problem they do not have.
+   *
+   * The state is real rather than contrived: `findUserById` succeeds when the
+   * session is authenticated and the row is gone by the time the conditional UPDATE
+   * runs. A stub is the only way to hold that window open.
+   */
+  describe('a session pointing at a profile that has vanished', () => {
+    let vanished: AuthHarness;
+
+    beforeAll(async () => {
+      vanished = await createAuthHarness({
+        // Everything delegates; only the write refuses, exactly as the adapter would
+        // if the row disappeared between authenticating and updating.
+        wrapIdentity: (base) => ({
+          findOrCreateByIdentity: (identity, now) => base.findOrCreateByIdentity(identity, now),
+          findUserById: (userId) => base.findUserById(userId),
+          recordDateOfBirth: async () => ({ ok: false, reason: 'UserNotFound' }),
+        }),
+      });
+    }, 60_000);
+
+    afterAll(async () => {
+      await vanished?.close();
+    });
+
+    it('answers 401 with the unauthenticated envelope, not 409', async () => {
+      const { jar } = await vanished.login('google', googleProfile);
+
+      const response = await vanished.request(AUTH_DATE_OF_BIRTH_PATH, {
+        method: 'POST',
+        jar,
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ date_of_birth: '1999-04-02' }),
+      });
+
+      expect(response.status).toBe(401);
+      const envelope = errorEnvelopeSchema.parse(await response.json());
+      expect(envelope.error.code).toBe('unauthenticated');
+      // The refusal must not be dressed as the OTHER one: "your profile already has
+      // a date of birth" is a false statement about a profile that no longer exists.
+      expect(envelope.error.message).not.toBe(DATE_OF_BIRTH_ALREADY_SET_MESSAGE);
+    });
+
+    it('clears the session cookies, so the dead session costs one round trip and not every visit', async () => {
+      const { jar } = await vanished.login('google', googleProfile);
+      expect(jar.get(SESSION_COOKIE_NAME)).toBeDefined();
+
+      await vanished.request(AUTH_DATE_OF_BIRTH_PATH, {
+        method: 'POST',
+        jar,
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ date_of_birth: '1999-04-02' }),
+      });
+
+      // A browser that keeps a cookie pointing at a profile that is gone spends one
+      // `/me` plus one `auth_refresh` on every visit, for ever, and is told nothing.
+      expect(jar.get(SESSION_COOKIE_NAME)).toBeUndefined();
+      expect(jar.get(REFRESH_COOKIE_NAME)).toBeUndefined();
+    });
+  });
+
+  /**
+   * The refusals Fastify produces BEFORE this product's handler is asked anything.
+   *
+   * None of them was covered, and the gap has a client-side consequence: the web
+   * screen mapped every unrecognised status to "hãy thử lại sau ít phút", which is
+   * false for a permanent refusal and an invitation to keep pressing a button that
+   * cannot work. These pin what the statuses actually are, so the mapping on the
+   * other side is written against measured behaviour rather than against a guess.
+   */
+  describe('a request Fastify refuses before the handler sees it', () => {
+    const raw = (
+      jar: CookieJar,
+      headers: Record<string, string>,
+      body: string | undefined,
+    ): Promise<Response> =>
+      harness.request(AUTH_DATE_OF_BIRTH_PATH, { method: 'POST', jar, headers, body });
+
+    it('refuses a body sent with no content-type at all', async () => {
+      const { jar } = await harness.login('google', googleProfile);
+
+      const response = await raw(jar, {}, JSON.stringify({ date_of_birth: '1999-04-02' }));
+
+      // Whatever the status, it is NOT a write.
+      expect(response.status).not.toBe(200);
+      expect((await me(jar)).profile_completed).toBe(false);
+      expect([400, 415]).toContain(response.status);
+    });
+
+    it('refuses a body sent as the wrong content-type', async () => {
+      const { jar } = await harness.login('google', googleProfile);
+
+      const response = await raw(
+        jar,
+        { 'content-type': 'text/plain' },
+        JSON.stringify({ date_of_birth: '1999-04-02' }),
+      );
+
+      /**
+       * MEASURED, not assumed: this Fastify answers `400`, not the `415` the media
+       * type rule would suggest, because `configureHttpApp` registers a
+       * urlencoded parser alongside the JSON one and the unmatched type falls into
+       * the generic bad-request path.
+       *
+       * Which is why the web screen keeps a branch for `415` anyway — it costs one
+       * `case` and it is the difference between "hãy thử lại sau ít phút" and the
+       * truth if a future Fastify or a future parser changes this answer. What
+       * matters on both sides, and is asserted here, is that no write happened.
+       */
+      expect(response.status).toBe(400);
+      expect((await me(jar)).profile_completed).toBe(false);
+    });
+
+    it('refuses an empty body under the right content-type, and writes nothing', async () => {
+      const { jar } = await harness.login('google', googleProfile);
+
+      const response = await raw(jar, { 'content-type': 'application/json' }, '');
+
+      expect(response.status).toBe(400);
+      expect((await me(jar)).profile_completed).toBe(false);
+    });
+
+    it('leaks nothing about the parser in any of them', async () => {
+      const { jar } = await harness.login('google', googleProfile);
+
+      for (const response of [
+        await raw(jar, { 'content-type': 'text/plain' }, '{}'),
+        await raw(jar, { 'content-type': 'application/json' }, ''),
+      ]) {
+        const text = await response.text();
+        for (const leak of ['date_of_birth', 'dateOfBirth', 'zod', 'YYYY']) {
+          expect(text, `a refusal must not mention ${leak}`).not.toContain(leak);
+        }
+      }
+    });
+  });
+
+  it('writes the declaration to the person holding the cookie, not to somebody else', async () => {
+    const first = await harness.login('google', googleProfile);
+    const second = await harness.login('google', {
+      subject: 'google-subject-2',
+      email: 'binh.tran@fpt.edu.vn',
+      name: 'Binh Tran',
+      picture: 'https://lh3.googleusercontent.com/a/binh',
+    });
+
+    await declare(second.jar, { date_of_birth: '1999-04-02' });
+
+    expect((await me(second.jar)).profile_completed).toBe(true);
+    expect((await me(first.jar)).profile_completed).toBe(false);
+  });
+});
+
+describe('Matrix row: an incomplete profile is not locked out of its own session', () => {
+  /**
+   * The failure this rules out is the obvious over-correction: making the age
+   * gate mean "nothing works until you declare". Somebody who has not answered
+   * yet has to be able to read `/me` — the only endpoint that can tell them what
+   * is missing — and to sign out, which on a shared machine is a security
+   * question rather than a convenience.
+   */
+  it('answers /v1/auth/me for a profile with no date of birth', async () => {
+    const { jar } = await harness.login('google', googleProfile);
+
+    const response = await harness.request(AUTH_ME_PATH, { jar });
+
+    expect(response.status).toBe(200);
+    expect(currentUserSchema.parse(await response.json()).profile_completed).toBe(false);
+  });
+
+  it('answers /v1/auth/logout for a profile with no date of birth', async () => {
+    const { jar } = await harness.login('google', googleProfile);
+
+    const response = await harness.request('/v1/auth/logout', { method: 'POST', jar });
+
+    expect(response.status).toBe(204);
+  });
+
+  it('refreshes the session for a profile with no date of birth', async () => {
+    const { jar } = await harness.login('google', googleProfile);
+
+    const response = await harness.request('/v1/auth/refresh', { method: 'POST', jar });
+
+    expect(response.status).toBe(204);
   });
 });
