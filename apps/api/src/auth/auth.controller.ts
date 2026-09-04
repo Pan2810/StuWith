@@ -116,9 +116,20 @@ function send(reply: FastifyReply, outcome: AuthOutcome): void {
 
   switch (outcome.kind) {
     case 'redirect':
-      // 302 rather than 303: the provider redirect and the return trip are both
-      // GETs, and 302 is what every OAuth client library and provider expects.
-      void reply.status(302).header('location', outcome.location).send();
+      // 302 by default, because the leg that dominates this flow — `/start`
+      // sending the browser to the provider — is a GET, and 302 is what every
+      // OAuth client library and provider expects there.
+      //
+      // The callback leg is not always a GET, which is why the status is the
+      // service's to choose. Apple delivers its callback as a cross-site form
+      // POST, and answering a POST with 302 formally means "repeat this request
+      // at the new URL"; browsers downgrade it to GET by convention, not by
+      // specification. `failedSignIn` therefore returns 303, where the downgrade
+      // is what the status actually says.
+      void reply
+        .status(outcome.status ?? 302)
+        .header('location', outcome.location)
+        .send();
       return;
     case 'json':
       void reply.status(outcome.status).send(outcome.body);

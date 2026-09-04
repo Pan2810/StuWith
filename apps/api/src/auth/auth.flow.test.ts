@@ -4,10 +4,13 @@ import {
   REFRESH_COOKIE_NAME,
   SESSION_COOKIE_NAME,
   SESSION_COOKIE_PATH,
+  SIGN_IN_OUTCOME_QUERY_PARAM,
   errorEnvelopeSchema,
   currentUserSchema,
+  type SignInOutcome,
 } from '@stuwith/contracts';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { SIGN_IN_FAILURE_REASONS } from './audit';
 import { CookieJar, createAuthHarness, type AuthHarness } from './__testing__/auth-harness';
 
 /**
@@ -40,6 +43,51 @@ const googleProfile = {
   picture: 'https://lh3.googleusercontent.com/a/an',
 };
 
+/**
+ * Assert that a callback ended the way Story 1.3 says every callback ends: a 302
+ * back to the login page carrying one public outcome code and nothing else.
+ *
+ * It also re-checks the leak invariant on every single call, because that is the
+ * property that has to hold on EVERY path rather than on the one path somebody
+ * remembered to write a test for: no internal reason, no provider name, no
+ * provider error code in the URL the browser is sent to.
+ */
+function expectOutcomeRedirect(response: Response, outcome: SignInOutcome): URL {
+  // 303, not 302: Apple's callback is a cross-site form POST, and only 303 says
+  // in the status itself that the method is downgraded to GET.
+  expect(response.status).toBe(303);
+  const location = new URL(response.headers.get('location') ?? '');
+
+  // The WHOLE URL, origin included. Asserting only the path and the parameter
+  // let `WEB_BASE_URL` be swapped for `OAUTH_REDIRECT_BASE_URL` — one line away
+  // in the same config object — with all fourteen call sites still green, while
+  // every failed login landed the browser on the API host, where `/dang-nhap` is
+  // not a route. `deferred-work.md`'s AC4 entry names open-redirect as the risk
+  // to guard in exactly this flow; this is where it gets guarded.
+  expect(response.headers.get('location')).toBe(
+    `${harness.webBaseUrl}/dang-nhap?${SIGN_IN_OUTCOME_QUERY_PARAM}=${outcome}`,
+  );
+  expect(location.origin).toBe(new URL(harness.webBaseUrl).origin);
+  expect(location.pathname).toBe('/dang-nhap');
+  expect(location.searchParams.get(SIGN_IN_OUTCOME_QUERY_PARAM)).toBe(outcome);
+  // The outcome is the ONLY thing that rides back. An extra parameter is how a
+  // diagnostic detail gets smuggled to the client "just for debugging".
+  expect([...location.searchParams.keys()]).toEqual([SIGN_IN_OUTCOME_QUERY_PARAM]);
+
+  const raw = location.toString();
+  for (const reason of SIGN_IN_FAILURE_REASONS) {
+    expect(raw, `the internal reason ${reason} must not reach the URL`).not.toContain(reason);
+  }
+  expect(raw.toLowerCase()).not.toContain('google');
+  expect(raw.toLowerCase()).not.toContain('facebook');
+  expect(raw.toLowerCase()).not.toContain('apple');
+  expect(raw.toLowerCase()).not.toContain('microsoft');
+  expect(raw).not.toContain('access_denied');
+  expect(raw).not.toContain('server_error');
+
+  return location;
+}
+
 function setCookieAttributes(response: Response, name: string): string {
   const found = response.headers
     .getSetCookie()
@@ -55,6 +103,8 @@ describe('Matrix: first sign-in', () => {
     const { jar, callback } = await harness.login('google', googleProfile);
 
     expect(callback.status).toBe(302);
+    // No `ket-qua` at all. A success that redirected with an outcome code would
+    // put a message on the login page for somebody who just signed in fine.
     expect(callback.headers.get('location')).toBe(`${harness.webBaseUrl}/dang-nhap`);
     expect(await harness.identity.countUsers()).toBe(1);
 
@@ -244,9 +294,10 @@ describe('Matrix: state is wrong or missing', () => {
     // No jar — the state cookie is simply not sent.
     const callback = await harness.request(authorized.callbackUrl);
 
-    expect(callback.status).toBe(401);
-    const body = errorEnvelopeSchema.parse(await callback.json());
-    expect(body.error.code).toBe('unauthenticated');
+    // Not a 401 with a JSON envelope: the person got here by a browser redirect
+    // from the provider, so a JSON body would BE the screen they are looking at.
+    expectOutcomeRedirect(callback, 'that-bai');
+    expect(await callback.text()).toBe('');
     expect(await harness.identity.countUsers()).toBe(0);
   });
 
@@ -259,7 +310,7 @@ describe('Matrix: state is wrong or missing', () => {
     tampered.searchParams.set('state', 'not-the-state-we-issued');
     const callback = await harness.request(tampered.toString(), { jar });
 
-    expect(callback.status).toBe(401);
+    expectOutcomeRedirect(callback, 'that-bai');
     expect(await harness.identity.countUsers()).toBe(0);
   });
 
@@ -275,18 +326,31 @@ describe('Matrix: state is wrong or missing', () => {
     jar.replace(name, cookie.slice(0, -1) + (cookie.endsWith('A') ? 'B' : 'A'));
 
     const callback = await harness.request(authorized.callbackUrl, { jar });
-    expect(callback.status).toBe(401);
+    expectOutcomeRedirect(callback, 'that-bai');
   });
 
-  it('names no provider and no provider error code in the response', async () => {
+  /**
+   * The invariant that had to survive the move from a JSON body to a redirect.
+   *
+   * The redirect carries NO body, so the guarantee now lives entirely in the
+   * target URL — an earlier version of this test looped its assertions over the
+   * response text as well, which is always `''` and therefore passed whatever the
+   * URL said. The body is asserted to be empty, once, as a fact rather than as a
+   * disguised leak check.
+   */
+  it('names no provider and no provider error code in the URL it redirects to', async () => {
     const started = await harness.request('/v1/auth/google/start', { jar: new CookieJar() });
     const authorized = harness.fake.authorize(started.headers.get('location') ?? '', googleProfile);
     const callback = await harness.request(authorized.callbackUrl);
 
-    const raw = await callback.text();
-    expect(raw.toLowerCase()).not.toContain('google');
-    expect(raw).not.toContain('provider_error');
-    expect(raw).not.toContain('invalid_grant');
+    const target = expectOutcomeRedirect(callback, 'that-bai').toString();
+    expect(target.toLowerCase()).not.toContain('google');
+    expect(target).not.toContain('provider_error');
+    expect(target).not.toContain('invalid_grant');
+
+    // There is nothing else to inspect, and saying so keeps the next reader from
+    // adding assertions here that cannot fail.
+    expect(await callback.text()).toBe('');
   });
 
   it('writes exactly one auth.sign_in_failed row and no successful one', async () => {
@@ -308,8 +372,241 @@ describe('Matrix: state is wrong or missing', () => {
     const crossed = new URL(authorized.callbackUrl.replace('/google/', '/facebook/'));
     const callback = await harness.request(crossed.toString(), { jar });
 
-    expect(callback.status).toBe(401);
+    expectOutcomeRedirect(callback, 'that-bai');
+
+    // And it does not DESTROY it either. The Google attempt is very likely a live
+    // handshake in another tab; clearing its cookie from a URL anybody can build
+    // would make "kill that person's login" a request away.
+    expect(jar.namesMatching(OAUTH_STATE_COOKIE_PREFIX).length).toBe(1);
+    expect((await harness.request(authorized.callbackUrl, { jar })).status).toBe(302);
   });
+});
+
+/**
+ * Story 1.3. The provider answers the callback with `error=...` instead of a
+ * `code`, and until now that parameter was never read at all: a refusal at the
+ * consent screen arrived with no code, fell through to `code_missing`, and was
+ * counted as a technical failure. Somebody who simply changed their mind was told
+ * the product was broken.
+ */
+describe('Matrix: the provider says no', () => {
+  /** Drives start -> consent screen -> the provider redirecting back with an error. */
+  async function refusedCallback(
+    providerError: string,
+    provider = 'google',
+    jar = new CookieJar(),
+  ): Promise<{ response: Response; jar: CookieJar }> {
+    const started = await harness.request(`/v1/auth/${provider}/start`, { jar });
+    const authorized = harness.fake.authorize(
+      started.headers.get('location') ?? '',
+      googleProfile,
+    );
+
+    // Exactly what a provider sends: the `state` we issued, and an error in place
+    // of the code. Nothing else.
+    const target = new URL(authorized.callbackUrl);
+    target.search = '';
+    target.searchParams.set('state', authorized.state);
+    target.searchParams.set('error', providerError);
+
+    return { response: await harness.request(target.toString(), { jar }), jar };
+  }
+
+  it('treats access_denied as a cancellation, not a failure', async () => {
+    const { response } = await refusedCallback('access_denied');
+    expectOutcomeRedirect(response, 'da-huy');
+    expect(await harness.identity.countUsers()).toBe(0);
+  });
+
+  it("treats Apple's user_cancelled_authorize as the same cancellation", async () => {
+    // Apple does not use the RFC 6749 word. Handling only `access_denied` would
+    // have made "cancel" mean two different things depending on the provider.
+    const { response } = await refusedCallback('user_cancelled_authorize', 'apple');
+    expectOutcomeRedirect(response, 'da-huy');
+  });
+
+  it.each(['server_error', 'temporarily_unavailable', 'invalid_client', 'unauthorized_client'])(
+    'collapses the provider error %s into an ordinary failure',
+    async (providerError) => {
+      // The person cannot act on "Google is having a bad afternoon", and telling
+      // them which provider broke and how is the disclosure AC1 forbids.
+      const { response } = await refusedCallback(providerError);
+      expectOutcomeRedirect(response, 'that-bai');
+    },
+  );
+
+  it('records a cancellation as exactly one audit row carrying a request id', async () => {
+    // "Not an error" is about the interface. A login flow that leaves no trace
+    // when people abandon it cannot answer "why did everyone drop off yesterday".
+    await refusedCallback('access_denied');
+
+    const rows = harness.audit.byAction('auth.sign_in_failed');
+    expect(rows.length).toBe(1);
+    expect(rows[0]?.metadata).toMatchObject({ reason: 'user_cancelled', provider: 'google' });
+    expect(rows[0]?.requestId.length).toBeGreaterThan(0);
+    expect(harness.audit.byAction('auth.signed_in').length).toBe(0);
+  });
+
+  it('records a provider refusal under its own reason, not as a cancellation', async () => {
+    await refusedCallback('server_error');
+
+    const rows = harness.audit.byAction('auth.sign_in_failed');
+    expect(rows.length).toBe(1);
+    expect(rows[0]?.metadata).toMatchObject({ reason: 'provider_authorize_failed' });
+  });
+
+  it("keeps the provider's own error code out of the audit row", async () => {
+    // `audit_events` is permanent and uncorrectable. A third party's vocabulary in
+    // it is how that vocabulary eventually reaches a user-facing message.
+    await refusedCallback('server_error');
+    expect(JSON.stringify(harness.audit.all())).not.toContain('server_error');
+  });
+
+  it('clears the cancelled attempt cookie and nothing else', async () => {
+    const jar = new CookieJar();
+    // Two tabs: one being cancelled, one still at its consent screen.
+    const first = await harness.request('/v1/auth/google/start', { jar });
+    const secondStart = await harness.request('/v1/auth/google/start', { jar });
+    expect(jar.namesMatching(OAUTH_STATE_COOKIE_PREFIX).length).toBe(2);
+
+    const authorized = harness.fake.authorize(first.headers.get('location') ?? '', googleProfile);
+    const target = new URL(authorized.callbackUrl);
+    target.search = '';
+    target.searchParams.set('state', authorized.state);
+    target.searchParams.set('error', 'access_denied');
+    await harness.request(target.toString(), { jar });
+
+    // One gone, one left — and the survivor still completes. Clearing every
+    // handshake cookie would kill a login the person is still in the middle of.
+    expect(jar.namesMatching(OAUTH_STATE_COOKIE_PREFIX).length).toBe(1);
+    const secondTab = harness.fake.authorize(secondStart.headers.get('location') ?? '', {
+      subject: 'cancel-other-tab',
+      name: 'Other Tab',
+    });
+    expect((await harness.request(secondTab.callbackUrl, { jar })).status).toBe(302);
+  });
+
+  it('leaves an already-signed-in session alone when a NEW attempt fails', async () => {
+    // A failed new login is not a reason to sign someone out of the session they
+    // already had. The old code cleared every auth cookie on this path.
+    const { jar } = await harness.login('google', googleProfile);
+    expect((await harness.request('/v1/auth/me', { jar })).status).toBe(200);
+
+    await refusedCallback('access_denied', 'google', jar);
+
+    expect((await harness.request('/v1/auth/me', { jar })).status).toBe(200);
+  });
+
+  it('answers a cancellation with no state and no cookie at all', async () => {
+    // A provider can refuse before we ever see a usable handshake, and someone can
+    // simply type the URL. Neither may become a 500 or a lost audit row.
+    const response = await harness.request('/v1/auth/google/callback?error=access_denied');
+
+    expectOutcomeRedirect(response, 'da-huy');
+    expect(harness.audit.byAction('auth.sign_in_failed').length).toBe(1);
+  });
+
+  it('delivers the same cancellation through the Apple form POST leg', async () => {
+    // `@Get` and `@Post` share one code path in the service, and this is the test
+    // that keeps it that way: Apple posts the error in a form body, not a query.
+    const jar = new CookieJar();
+    const started = await harness.request('/v1/auth/apple/start', { jar });
+    const authorized = harness.fake.authorize(started.headers.get('location') ?? '', {
+      subject: 'apple-cancelled',
+    });
+    const target = new URL(authorized.callbackUrl);
+
+    const response = await harness.request(`${target.origin}${target.pathname}`, {
+      jar,
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        state: authorized.state,
+        error: 'user_cancelled_authorize',
+      }).toString(),
+    });
+
+    expectOutcomeRedirect(response, 'da-huy');
+    expect(harness.audit.byAction('auth.sign_in_failed')[0]?.metadata).toMatchObject({
+      reason: 'user_cancelled',
+      provider: 'apple',
+    });
+    // And the cancelled attempt's cookie is gone, exactly as on the GET leg.
+    expect(jar.namesMatching(OAUTH_STATE_COOKIE_PREFIX)).toEqual([]);
+  });
+
+  it('does not clear ANOTHER provider\'s live attempt, however the state is aimed', async () => {
+    // `state` is matched across every handshake cookie the browser holds, so
+    // without a provider check this URL — which anyone can build once they have
+    // seen their own `state` go past — cancels one provider and takes a different
+    // provider's live login down with it.
+    const jar = new CookieJar();
+    const started = await harness.request('/v1/auth/google/start', { jar });
+    const authorized = harness.fake.authorize(started.headers.get('location') ?? '', {
+      subject: 'cross-provider-cancel',
+      name: 'Cross Provider',
+    });
+
+    const crossed = new URL(`${harness.baseUrl}/v1/auth/facebook/callback`);
+    crossed.searchParams.set('state', authorized.state);
+    crossed.searchParams.set('error', 'access_denied');
+    expectOutcomeRedirect(await harness.request(crossed.toString(), { jar }), 'da-huy');
+
+    // The Google tab is untouched and still finishes.
+    expect(jar.namesMatching(OAUTH_STATE_COOKIE_PREFIX).length).toBe(1);
+    expect((await harness.request(authorized.callbackUrl, { jar })).status).toBe(302);
+  });
+
+  it('reads a REPEATED error parameter, which arrives as an array', async () => {
+    // Fastify parses `?error=a&error=b` into an array. A bare `typeof === string`
+    // guard skipped it entirely, so the callback fell through to `code_missing`
+    // and a cancellation was recorded and shown as a technical failure.
+    const jar = new CookieJar();
+    const started = await harness.request('/v1/auth/google/start', { jar });
+    const authorized = harness.fake.authorize(started.headers.get('location') ?? '', googleProfile);
+
+    const target = new URL(`${harness.baseUrl}/v1/auth/google/callback`);
+    target.searchParams.set('state', authorized.state);
+    target.searchParams.append('error', 'access_denied');
+    target.searchParams.append('error', 'something_else');
+
+    expectOutcomeRedirect(await harness.request(target.toString(), { jar }), 'da-huy');
+    expect(harness.audit.byAction('auth.sign_in_failed')[0]?.metadata).toMatchObject({
+      reason: 'user_cancelled',
+    });
+  });
+
+  it('treats a present-but-empty error as a refusal, not as a missing code', async () => {
+    const jar = new CookieJar();
+    const started = await harness.request('/v1/auth/google/start', { jar });
+    const authorized = harness.fake.authorize(started.headers.get('location') ?? '', googleProfile);
+
+    const target = new URL(`${harness.baseUrl}/v1/auth/google/callback`);
+    target.searchParams.set('state', authorized.state);
+    target.searchParams.set('error', '');
+
+    expectOutcomeRedirect(await harness.request(target.toString(), { jar }), 'that-bai');
+    // `provider_authorize_failed`, not `code_missing`: the provider answered, and
+    // the audit trail should say the provider refused rather than that we lost
+    // track of a parameter.
+    expect(harness.audit.byAction('auth.sign_in_failed')[0]?.metadata).toMatchObject({
+      reason: 'provider_authorize_failed',
+    });
+  });
+
+  it('still answers 404 for a provider that is not enabled, error or no error', async () => {
+    // The refusal path must not become a way to find out which providers exist.
+    const limited = await createAuthHarness({ enabledProviders: ['google'] });
+    try {
+      const response = await limited.request(
+        '/v1/auth/apple/callback?error=access_denied&state=x',
+      );
+      expect(response.status).toBe(404);
+      expect(errorEnvelopeSchema.parse(await response.json()).error.code).toBe('not_found');
+    } finally {
+      await limited.close();
+    }
+  }, 60_000);
 });
 
 describe('Matrix: an authorization code is single use', () => {
@@ -325,7 +622,7 @@ describe('Matrix: an authorization code is single use', () => {
     // Same code, same state cookie: the provider must reject the second exchange,
     // and we must not open a second session off the back of it.
     const second = await harness.request(authorized.callbackUrl, { jar: replayJar });
-    expect(second.status).toBe(401);
+    expectOutcomeRedirect(second, 'that-bai');
     expect(await harness.identity.countUsers()).toBe(1);
   });
 });
@@ -402,7 +699,10 @@ describe('Matrix: an expired session', () => {
 
     harness.clock.advance((harness.config.OAUTH_STATE_TTL_SECONDS + 1) * 1000);
 
-    expect((await harness.request(authorized.callbackUrl, { jar })).status).toBe(401);
+    // `state_expired` is one of the internal reasons that would tell a stranger
+    // exactly which step of our handshake they broke. It collapses to `that-bai`
+    // like every other technical failure.
+    expectOutcomeRedirect(await harness.request(authorized.callbackUrl, { jar }), 'that-bai');
   });
 });
 
@@ -634,7 +934,7 @@ describe('Apple uses response_mode=form_post', () => {
       body: new URLSearchParams({ code: authorized.code, state: 'wrong' }).toString(),
     });
 
-    expect(response.status).toBe(401);
+    expectOutcomeRedirect(response, 'that-bai');
   });
 });
 
@@ -682,6 +982,76 @@ describe('two login attempts in two tabs', () => {
       name: 'Two Tabs',
     });
     expect((await harness.request(secondTab.callbackUrl, { jar })).status).toBe(302);
+  });
+});
+
+describe('handshake cookies left behind by abandoned logins', () => {
+  /**
+   * `start()` mints one cookie per attempt under a random handle, with no cap, and
+   * nothing removed them until their own `Max-Age` ran out. Somebody who opens the
+   * login page repeatedly and finishes nothing carries all of them, on every
+   * `/v1/auth` request, and a large enough pile is answered with 431 rather than a
+   * login page. Dropping `clearAllAuthCookies` from the failure path was right for
+   * the session cookies and left this with no sweeper at all.
+   */
+  it('clears the expired attempts on a failed callback, and only those', async () => {
+    const jar = new CookieJar();
+    for (let i = 0; i < 5; i += 1) {
+      await harness.request('/v1/auth/google/start', { jar });
+    }
+    expect(jar.namesMatching(OAUTH_STATE_COOKIE_PREFIX).length).toBe(5);
+
+    // All five are now past their TTL, and nothing has swept them.
+    harness.clock.advance((harness.config.OAUTH_STATE_TTL_SECONDS + 1) * 1000);
+
+    // A sixth attempt, still live, and the one that will fail.
+    const live = await harness.request('/v1/auth/google/start', { jar });
+    expect(jar.namesMatching(OAUTH_STATE_COOKIE_PREFIX).length).toBe(6);
+
+    const failing = await harness.request(
+      `${harness.baseUrl}/v1/auth/google/callback?state=nothing-we-issued`,
+      { jar },
+    );
+    expectOutcomeRedirect(failing, 'that-bai');
+
+    // The five dead ones are gone; the live attempt survives AND still completes,
+    // which is the half a blanket "clear every state cookie" sweep would break.
+    expect(jar.namesMatching(OAUTH_STATE_COOKIE_PREFIX).length).toBe(1);
+    const authorized = harness.fake.authorize(live.headers.get('location') ?? '', {
+      subject: 'survived-the-sweep',
+      name: 'Survivor',
+    });
+    expect((await harness.request(authorized.callbackUrl, { jar })).status).toBe(302);
+  });
+
+  it('sweeps a cookie we can no longer verify, which is what a rotated secret leaves', async () => {
+    const jar = new CookieJar();
+    await harness.request('/v1/auth/google/start', { jar });
+    const name = jar.namesMatching(OAUTH_STATE_COOKIE_PREFIX)[0] ?? '';
+    const value = jar.get(name) ?? '';
+    jar.replace(name, `${value.slice(0, -1)}${value.endsWith('A') ? 'B' : 'A'}`);
+
+    const response = await harness.request(
+      `${harness.baseUrl}/v1/auth/google/callback?state=nothing-we-issued`,
+      { jar },
+    );
+
+    expectOutcomeRedirect(response, 'that-bai');
+    expect(jar.namesMatching(OAUTH_STATE_COOKIE_PREFIX)).toEqual([]);
+  });
+
+  it('leaves a live attempt alone when an unrelated callback fails', async () => {
+    const jar = new CookieJar();
+    const started = await harness.request('/v1/auth/google/start', { jar });
+
+    await harness.request(`${harness.baseUrl}/v1/auth/google/callback?state=not-ours`, { jar });
+
+    expect(jar.namesMatching(OAUTH_STATE_COOKIE_PREFIX).length).toBe(1);
+    const authorized = harness.fake.authorize(started.headers.get('location') ?? '', {
+      subject: 'untouched-by-a-stranger',
+      name: 'Untouched',
+    });
+    expect((await harness.request(authorized.callbackUrl, { jar })).status).toBe(302);
   });
 });
 
@@ -769,7 +1139,7 @@ describe('every failure leaves an audit row', () => {
 
     const response = await harness.request(authorized.callbackUrl, { jar });
 
-    expect(response.status).toBe(401);
+    expectOutcomeRedirect(response, 'that-bai');
     expect(harness.audit.byAction('auth.sign_in_failed')[0]?.metadata).toMatchObject({
       reason: 'identity_rejected',
     });

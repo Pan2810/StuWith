@@ -18,7 +18,7 @@
     "dep-check": "depcruise --config .dependency-cruiser.cjs packages apps",
     "migrate": "pnpm --filter @stuwith/db migrate",
     "clean": "tsc -b tsconfig.json --clean",
-    "test:unit": "vitest run --project domain --project contracts --project config --project api --project realtime-gateway",
+    "test:unit": "vitest run --project domain --project contracts --project config --project api --project realtime-gateway --project web",
     "test:contract": "vitest run --project db",
     "test:gates": "pnpm run build:packages && pnpm --filter api build && vitest run --project gates",
     "test:migrations": "vitest run --project db migration"

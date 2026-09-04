@@ -1,7 +1,8 @@
 'use client';
 
-import { AUTH_PROVIDERS, type CurrentUser } from '@stuwith/contracts';
+import { AUTH_PROVIDERS, type CurrentUser, type SignInOutcome } from '@stuwith/contracts';
 import { useCallback, useEffect, useState } from 'react';
+import { SignInOutcomeNotice, nextLocationAfterOutcome } from './sign-in-outcome';
 
 /**
  * Deliberately unstyled. The design system — tokens, light/dark, the "Cắm trại"
@@ -37,6 +38,7 @@ type LoadState =
 
 export default function DangNhapPage() {
   const [state, setState] = useState<LoadState>({ status: 'loading' });
+  const [outcome, setOutcome] = useState<SignInOutcome | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -51,8 +53,10 @@ export default function DangNhapPage() {
       }
       setState({ status: 'signed-in', user: (await response.json()) as CurrentUser });
     } catch {
-      // A network failure is not a signed-in state. Story 1.3 owns what the person
-      // is actually told about it.
+      // A network failure is not a signed-in state. Telling the person about a
+      // session that dropped mid-visit — the dialog, and returning them to where
+      // they were — was split out of Story 1.3 and is in `deferred-work.md`; the
+      // outcome banner above is only about the attempt they just made.
       setState({ status: 'signed-out' });
     }
   }, []);
@@ -60,6 +64,31 @@ export default function DangNhapPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  /**
+   * How the last attempt ended, read once and then removed from the address bar.
+   *
+   * Read from `window.location` rather than `useSearchParams()` on purpose. The
+   * parameter has to be *taken off* the URL anyway — leaving it means F5 shows
+   * "Không đăng nhập được" again to somebody who has not retried anything, a
+   * message that is simply lying about the present — and `history.replaceState` is
+   * how that is done without a navigation. Reading the same object the write goes
+   * to keeps the two halves in one place, and avoids the Suspense boundary
+   * `useSearchParams()` requires while prerendering.
+   *
+   * Every decision is in `nextLocationAfterOutcome`, which is a pure function of
+   * the location and is tested — including the ordering, since read and rewrite
+   * come back from one call and cannot be swapped here. What is left in this
+   * effect is only the two things that need a browser.
+   */
+  useEffect(() => {
+    const { outcome: resolved, nextUrl } = nextLocationAfterOutcome(window.location);
+    if (nextUrl === null) {
+      return;
+    }
+    setOutcome(resolved);
+    window.history.replaceState(null, '', nextUrl);
+  }, []);
 
   const logout = useCallback(async () => {
     await fetch(`${API_BASE_URL}/v1/auth/logout`, { method: 'POST', credentials: 'include' });
@@ -69,6 +98,22 @@ export default function DangNhapPage() {
   return (
     <main>
       <h1>Đăng nhập</h1>
+
+      {/*
+        `canSignIn` is why this can sit above everything: the notice hides itself
+        for a visitor who is already signed in, rather than telling them to
+        "chọn lại cách đăng nhập bên dưới" over a view with no login buttons in
+        it. While the session check is still in flight the answer is not known
+        yet, so nothing is claimed.
+
+        Known limit, left for 1.6 rather than papered over: the element only
+        EXISTS once the outcome is read, and a live region that appears at the
+        same moment as its content is announced unreliably. It reads correctly
+        in document order, which is the case that matters on a fresh load; the
+        fix is a region that is always mounted, and that belongs with the layout
+        work rather than in a bare skeleton.
+      */}
+      <SignInOutcomeNotice outcome={outcome} canSignIn={state.status === 'signed-out'} />
 
       {state.status === 'loading' ? <p>Đang kiểm tra phiên…</p> : null}
 

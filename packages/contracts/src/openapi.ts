@@ -1,6 +1,10 @@
 import { z } from 'zod';
 import { auditEventSchema } from './audit';
-import { currentUserSchema } from './auth';
+import {
+  SIGN_IN_OUTCOME_QUERY_PARAM,
+  currentUserSchema,
+  signInOutcomeSchema,
+} from './auth';
 import { errorEnvelopeSchema } from './error';
 import { healthResponseSchema } from './health';
 
@@ -27,6 +31,11 @@ const REGISTERED_SCHEMAS = {
   CurrentUser: currentUserSchema,
   ErrorEnvelope: errorEnvelopeSchema,
   HealthResponse: healthResponseSchema,
+  // Published as a component rather than only described in prose: a client
+  // reading this document has to be able to DISCOVER that `that-bai` and
+  // `da-huy` are the whole set. A closed enum that only exists in a sentence is
+  // one a consumer will re-derive by guessing from the values it happens to see.
+  SignInOutcome: signInOutcomeSchema,
 } as const;
 
 export type RegisteredSchemaName = keyof typeof REGISTERED_SCHEMAS;
@@ -52,9 +61,102 @@ const unauthenticated = {
  * exists as a NestJS decorator is invisible to it (AD-13).
  *
  * The redirect endpoints (`/start`, `/callback`) carry no response body at all —
- * they answer `302` or an error envelope — so there is nothing to register beyond
- * the envelope itself.
+ * they answer a redirect or an error envelope — so there is nothing to register
+ * beyond the envelope and the outcome vocabulary.
  */
+/**
+ * The callback, described once and published under BOTH methods.
+ *
+ * `@Get` and `@Post` share a single outcome path in the service — that is the
+ * story's stated invariant and there is a test for the POST cancellation — so a
+ * document that mentions only `get:` tells an Apple integrator the form_post
+ * transport is unsupported. Apple REQUIRES `response_mode=form_post` once the
+ * scope asks for `name` or `email`, which makes the POST the normal case for one
+ * of the four providers rather than an edge.
+ */
+function callbackPath(): Record<string, unknown> {
+  const description =
+    'Every outcome except an unknown provider is a redirect back to the web ' +
+    "client's login page. A failed or cancelled attempt carries " +
+    `?${SIGN_IN_OUTCOME_QUERY_PARAM}=<SignInOutcome>; a successful one carries ` +
+    'no query at all. The code never carries a provider name, a provider error ' +
+    'code or an internal reason.';
+
+  const parameters = [
+    { name: 'provider', in: 'path', required: true, schema: { type: 'string' } },
+  ];
+
+  const responses = {
+    // Deliberately NOT a 401 with an error envelope. The person arrives here by a
+    // browser redirect from the provider, so a JSON body would be the page they
+    // end up staring at.
+    '302': { description: 'Session opened; redirect back to the web client' },
+    // 303 rather than 302 for the outcome redirect, so that the method is
+    // unambiguously downgraded to GET after Apple's form POST. There is no body:
+    // the outcome rides in the Location header's query string, which is why it is
+    // documented as a header rather than as content.
+    '303': {
+      description: 'The attempt ended without a session; redirect back to the login page',
+      headers: {
+        Location: {
+          description:
+            'The login page URL, carrying ' +
+            `?${SIGN_IN_OUTCOME_QUERY_PARAM}=<SignInOutcome>. The permitted ` +
+            'values are published as the SignInOutcome component schema.',
+          schema: { type: 'string', format: 'uri' },
+        },
+      },
+    },
+    '404': {
+      description: 'The provider is not enabled on this deployment',
+      content: {
+        'application/json': { schema: { $ref: '#/components/schemas/ErrorEnvelope' } },
+      },
+    },
+  };
+
+  return {
+    get: {
+      summary: 'Provider redirect target — opens a session on success',
+      description,
+      parameters: [
+        ...parameters,
+        { name: 'code', in: 'query', required: false, schema: { type: 'string' } },
+        { name: 'state', in: 'query', required: false, schema: { type: 'string' } },
+        {
+          name: 'error',
+          in: 'query',
+          required: false,
+          description: "The provider's own refusal code, if it refused.",
+          schema: { type: 'string' },
+        },
+      ],
+      responses,
+    },
+    post: {
+      summary: "Apple's form_post callback — the same outcomes, delivered as a body",
+      description,
+      parameters,
+      requestBody: {
+        required: false,
+        content: {
+          'application/x-www-form-urlencoded': {
+            schema: {
+              type: 'object',
+              properties: {
+                code: { type: 'string' },
+                state: { type: 'string' },
+                error: { type: 'string' },
+              },
+            },
+          },
+        },
+      },
+      responses,
+    },
+  };
+}
+
 function authPaths(): Record<string, unknown> {
   return {
     '/v1/auth/{provider}/start': {
@@ -74,26 +176,7 @@ function authPaths(): Record<string, unknown> {
         },
       },
     },
-    '/v1/auth/{provider}/callback': {
-      get: {
-        summary: 'Provider redirect target — opens a session on success',
-        parameters: [
-          { name: 'provider', in: 'path', required: true, schema: { type: 'string' } },
-          { name: 'code', in: 'query', required: false, schema: { type: 'string' } },
-          { name: 'state', in: 'query', required: false, schema: { type: 'string' } },
-        ],
-        responses: {
-          '302': { description: 'Session opened; redirect back to the web client' },
-          '401': unauthenticated,
-          '404': {
-            description: 'The provider is not enabled on this deployment',
-            content: {
-              'application/json': { schema: { $ref: '#/components/schemas/ErrorEnvelope' } },
-            },
-          },
-        },
-      },
-    },
+    '/v1/auth/{provider}/callback': callbackPath(),
     '/v1/auth/refresh': {
       post: {
         summary: 'Rotate the refresh token and re-issue both session cookies',

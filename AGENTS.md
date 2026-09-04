@@ -184,7 +184,7 @@ product code.
 | `pnpm typecheck` | `tsc -b` over the reference graph, then `apps/web`. TS 7.0.2. |
 | `pnpm build` | Packages (TS 7), then both Nest apps (tsc6), then Next. |
 | `pnpm test` | Every Vitest project. Needs Docker for the Postgres passes. |
-| `pnpm test:unit` | domain + contracts + config + api. No Docker, no network. |
+| `pnpm test:unit` | domain + contracts + config + api + realtime-gateway + web. No Docker, no network. |
 | `pnpm test:contract` | CI gate 3 — the adapter suite against in-memory and PG18. |
 | `pnpm test:migrations` | CI gate 4 — migrations on a seeded PG18. |
 | `pnpm test:gates` | Proves each gate rejects what it claims to. Builds `apps/api` first — one gate spawns the real process. |
@@ -307,6 +307,21 @@ required check is a silent pass, so both the workflow and
   privilege that can act on it — are both deliberate omissions right now. Whoever
   picks it up: revoking is an UPDATE for a reason, so the answer is probably a
   scheduled job under a THIRD role rather than a `DELETE` grant to either process.
+
+- **The `web` Vitest project has no DOM, on purpose, and that shapes what is
+  testable there.** `jsdom`, `happy-dom` and `@testing-library/*` are all absent,
+  so a component with an effect, state or a `window` read cannot be executed. What
+  runs is `renderToStaticMarkup` from `react-dom` — enough to assert real output
+  HTML for a component with none of those. The pattern to follow when a page needs
+  coverage is `apps/web/src/app/dang-nhap/sign-in-outcome.tsx`: every decision in
+  a pure function or an effect-free component, and only `setState` / `history`
+  calls left in the page.
+
+  Two traps in that project's config. Vite 8 transforms with **oxc**, so a
+  project-level `esbuild: {...}` block is ignored with a warning that scrolls past
+  in CI — JSX settings go in `oxc: { jsx: … }`. And `apps/web/tsconfig.json`
+  excludes `src/**/*.test.ts(x)` the way `apps/api` does, so test files are not
+  typechecked and their imports must not be needed by `next build`.
 
 - **`ClockPort` and `HeartbeatPort` are scaffolding.** They exist so the hexagon and
   the shared contract test-kit are exercised by something real. The money ports

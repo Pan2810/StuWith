@@ -90,6 +90,38 @@ export default defineConfig({
         },
       },
       {
+        /**
+         * `apps/web` had NO project, so nothing executed the login page's
+         * rendering path — the only place the two acceptance-criteria sentences
+         * exist, and the only place a value the visitor controls decides what
+         * appears on screen. `contracts.test.ts` pinned that the outcome guard
+         * rejects an unknown string; nothing pinned that the page asks it, so
+         * swapping the guard for a cast stayed green.
+         *
+         * `environment: 'node'`, deliberately, and not because a DOM would be
+         * wrong: there is no DOM environment in this repo (`jsdom`, `happy-dom`
+         * and `@testing-library/*` are all absent) and adding one is an
+         * "Ask First" dependency. What is testable without one is quite a lot —
+         * `renderToStaticMarkup` comes from `react-dom`, which `apps/web`
+         * already depends on, and renders a component with no effects and no
+         * `window` for real. So the render is asserted on actual HTML.
+         *
+         * The JSX transform is spelled out because `apps/web/tsconfig.json` says
+         * `jsx: "preserve"` — Next does the transform in the real build, and the
+         * transformer would otherwise hand Node a file with JSX still in it.
+         * `oxc`, not `esbuild`: Vite 8 transforms with oxc and ignores the
+         * `esbuild` block entirely (with a warning that is easy to scroll past).
+         */
+        oxc: { jsx: { runtime: 'automatic', importSource: 'react' } },
+        test: {
+          name: 'web',
+          root: './apps/web',
+          environment: 'node',
+          include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
+          setupFiles: [],
+        },
+      },
+      {
         test: {
           name: 'gates',
           root: './tests/gates',
