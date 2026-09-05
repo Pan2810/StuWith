@@ -28,7 +28,20 @@ export const GATEWAY_BASE_URL = `http://127.0.0.1:${GATEWAY_PORT}`;
 export const WEB_BASE_URL = `http://127.0.0.1:${WEB_PORT}`;
 export const FAKE_API_BASE_URL = `http://127.0.0.1:${FAKE_API_PORT}`;
 
-/** Where the E2E build of `apps/web` lands, so it cannot overwrite `.next`. */
+/**
+ * Where the E2E build of `apps/web` lands, so it cannot overwrite `.next`.
+ *
+ * The separate directory is worth its cost, and the cost is not zero: `next build`
+ * regenerates `apps/web/next-env.d.ts` from `distDir`, so this line is why
+ * `globalTeardown` above exists.
+ *
+ * Building into `.next` instead would remove that entirely — and would leave a
+ * developer's `.next` holding a bundle whose `NEXT_PUBLIC_API_BASE_URL` is inlined
+ * as the fake API on port 3200. `pnpm --filter web start` afterwards would then
+ * serve a page that loads perfectly and calls a dead port: a silent wrong answer,
+ * with nothing in `git status` to hint at it. A dirty tracked file is visible and
+ * now self-correcting; a bundle pointing at the wrong origin is neither.
+ */
 const E2E_DIST_DIR = '.next-e2e';
 
 /**
@@ -62,6 +75,16 @@ const sharedEnv = {
 
 export default defineConfig({
   testDir: './tests/e2e',
+  /**
+   * Puts `apps/web/next-env.d.ts` back after the web build rewrote it.
+   *
+   * `next build` REGENERATES that tracked file from `distDir`, so the
+   * `NEXT_DIST_DIR` below leaves it saying `.next-e2e` on every run. Without this
+   * the very next `pnpm test` failed `tests/gates/next-env-distdir.test.ts` — a
+   * broken local loop caused by this suite and paid for by another one. See the
+   * teardown for why it normalises rather than restoring a captured copy.
+   */
+  globalTeardown: './tests/e2e/global-teardown.ts',
   fullyParallel: true,
   forbidOnly: Boolean(process.env['CI']),
   retries: process.env['CI'] ? 2 : 0,

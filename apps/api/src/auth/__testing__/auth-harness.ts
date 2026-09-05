@@ -1,3 +1,4 @@
+import type { Type } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
 import { NO_TRUSTED_PROXIES, type ApiEnv } from '@stuwith/config';
@@ -8,7 +9,7 @@ import {
   InMemoryRateLimitAdapter,
   InMemorySessionAdapter,
 } from '@stuwith/db';
-import { FixedClock, type IdentityPort, type RateLimitPort } from '@stuwith/domain';
+import { FixedClock, type ClockPort, type IdentityPort, type RateLimitPort } from '@stuwith/domain';
 import { generateKeyPairSync } from 'node:crypto';
 import { Logger as PinoLogger } from 'nestjs-pino';
 import net from 'node:net';
@@ -221,6 +222,31 @@ export interface HarnessOptions {
    * stored state read the same object either way.
    */
   readonly wrapIdentity?: (base: IdentityPort) => IdentityPort;
+
+  /**
+   * Extra controllers to mount on the real application.
+   *
+   * Story 1.5 needs it: no route in this product takes money IN yet (Epic 3 owns
+   * them all), so the only way to show that a new endpoint is protected by nothing
+   * but its `@MoneyIn()` mark is to mount one here and drive it over real HTTP,
+   * behind the real global guard.
+   */
+  readonly controllers?: readonly Type<unknown>[];
+
+  /**
+   * The `ClockPort` the whole process reads time through.
+   *
+   * It defaults to the {@link FixedClock} every existing suite relies on. The seam
+   * exists because "one request, one instant" was UNTESTABLE without it: with a
+   * fixed clock, code that reads the clock once and code that reads it three times
+   * produce identical answers, so the property `SessionAuthenticator` was extracted
+   * to hold could be reverted with every example still green.
+   *
+   * A test that supplies a clock which MOVES will usually want to supply
+   * `rateLimitPort` as well — the default in-memory limiter is built on this same
+   * clock, and its reads would otherwise be interleaved with the ones under test.
+   */
+  readonly clock?: ClockPort;
 }
 
 export interface AuthHarness {
@@ -231,7 +257,14 @@ export interface AuthHarness {
   readonly identity: InMemoryIdentityAdapter;
   readonly sessions: InMemorySessionAdapter;
   readonly audit: InMemoryAuditAdapter;
-  readonly clock: FixedClock;
+  /**
+   * The clock the process is running on.
+   *
+   * `ClockPort`, not `FixedClock`, because {@link HarnessOptions.clock} can replace
+   * it — a suite that calls `.advance(...)` is relying on the default and says so
+   * by not passing one.
+   */
+  readonly clock: ClockPort;
   readonly rateLimit: RateLimitPort;
   readonly logLines: readonly string[];
   request(path: string, init?: RequestInit & { jar?: CookieJar }): Promise<Response>;
@@ -346,7 +379,7 @@ export async function createAuthHarness(options: HarnessOptions = {}): Promise<A
   const identity = new InMemoryIdentityAdapter();
   const sessions = new InMemorySessionAdapter();
   const audit = new InMemoryAuditAdapter();
-  const clock = new FixedClock(new Date('2026-09-04T09:00:00.000Z'));
+  const clock = options.clock ?? new FixedClock(new Date('2026-09-04T09:00:00.000Z'));
   // The SAME clock the rest of the flow runs on, so `harness.clock.advance(...)`
   // moves the rate-limit windows too and a "wait out the window" example needs no
   // real sleeping.
@@ -378,6 +411,7 @@ export async function createAuthHarness(options: HarnessOptions = {}): Promise<A
         registry: createProviderRegistry(config, fake.fetch),
       },
       ...(destination === undefined ? {} : { logDestination: destination }),
+      ...(options.controllers === undefined ? {} : { fixtureControllers: options.controllers }),
     }),
     // The SAME adapter options `main.ts` builds. `trustProxy` is in there, and a
     // harness that built its own would leave the two proxy rows of the matrix

@@ -7,4 +7,5 @@ export * from './ports/rate-limit-port';
 export * from './policies/liveness';
 export * from './policies/date-of-birth';
 export * from './policies/identity';
+export * from './policies/money';
 export * from './policies/rate-limit';

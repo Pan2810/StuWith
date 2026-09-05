@@ -513,3 +513,80 @@ describe('Matrix: several 401s at once share ONE renewal', () => {
     expect(calls[0]?.input).toBe(AUTH_REFRESH_PATH);
   });
 });
+
+/**
+ * Story 1.5. The money gate answers 403, and 403 is not 401.
+ *
+ * The seam already treats "anything that is not a 401" as nothing to do, so
+ * nothing in `session-expiry.ts` had to change for this — which is exactly why the
+ * row belongs in a test rather than in a diff. A 403 from `POST /v1/coin/...` says
+ * "you are signed in, and this is not permitted"; renewing the session cannot
+ * change that answer, and the dialog would tell somebody their session had expired
+ * when it is perfectly alive.
+ *
+ * Two ways that would have gone wrong without a test to hold it: a later change
+ * broadening the renewal trigger to "any 4xx" would spend a rate-limited
+ * `auth_refresh` on every refusal and then replay a call that is refused again;
+ * and a dialog opened here would send somebody to the login page to fix something
+ * signing in cannot fix. Both are silent.
+ */
+describe('Matrix: the client meets a 403 from the money gate', () => {
+  const room = at('/phong-hoc/abc');
+  const deps = (fetchImpl: FetchLike, renew: () => Promise<boolean>) => ({
+    fetchImpl,
+    locationOf: () => room,
+    renew,
+  });
+
+  const FORBIDDEN_STATUS = 403;
+
+  it('does NOT renew the session and does NOT replay the call', async () => {
+    const { fetchImpl, calls } = scriptedFetch([answering(FORBIDDEN_STATUS)]);
+    let renewals = 0;
+
+    const outcome = await authorizedCall(
+      deps(fetchImpl, async () => {
+        renewals += 1;
+        return true;
+      }),
+      '/v1/coin/nhan',
+      { method: 'POST' },
+    );
+
+    expect(renewals).toBe(0);
+    expect(calls.length).toBe(1);
+    // The refusal reaches the caller unchanged, which is what lets the screen say
+    // something true about it instead of about the session.
+    expect(outcome.status).toBe(FORBIDDEN_STATUS);
+    expect(outcome.response.status).toBe(FORBIDDEN_STATUS);
+  });
+
+  it('opens no dialog, and closes none that is already open', async () => {
+    // `nextSessionExpiry` returns `current` for any status that is not 401, so a
+    // 403 arriving while a genuinely expired session is being shown must not
+    // dismiss that dialog either.
+    expect(nextSessionExpiry(null, FORBIDDEN_STATUS, room)).toBeNull();
+
+    const open: SessionExpiryState = { returnPath: '/phong-hoc/abc' };
+    expect(nextSessionExpiry(open, FORBIDDEN_STATUS, room)).toBe(open);
+  });
+
+  it('is decided by the status alone, on the same path a 401 would open one', async () => {
+    // The contrast, in one example: same location, same seam, two statuses. If the
+    // 403 row above were passing because of the path rather than the status, this
+    // would pass too and say nothing.
+    const forbidden = scriptedFetch([answering(FORBIDDEN_STATUS)]);
+    const expired = scriptedFetch([answering(SESSION_EXPIRED_STATUS)]);
+
+    const refused = await authorizedCall(
+      deps(forbidden.fetchImpl, async () => false),
+      '/v1/coin/nhan',
+    );
+    const dead = await authorizedCall(deps(expired.fetchImpl, async () => false), '/v1/coin/nhan');
+
+    expect(nextSessionExpiry(null, refused.status, refused.location)).toBeNull();
+    expect(nextSessionExpiry(null, dead.status, dead.location)).toEqual({
+      returnPath: '/phong-hoc/abc',
+    });
+  });
+});
