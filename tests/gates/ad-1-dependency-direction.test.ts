@@ -349,6 +349,46 @@ describe('AD-1 gate — secondary layer (dependency-cruiser)', () => {
     expectRule(output, 'ad1-web-touches-contracts-only');
   }, 300_000);
 
+  it('fires ad1-web-touches-contracts-only on a reach into apps/api', () => {
+    /**
+     * The half of that rule that was NOT enforced until the Epic 1 retrospective
+     * measured it.
+     *
+     * The rule's name said "contracts only" and its pattern named three packages,
+     * so this exact import — a browser page reaching into the API process by
+     * relative path — cruised clean: 184 modules, zero violations. The consequence
+     * is not stylistic. `apps/api/src/app.module.ts` transitively pulls NestJS,
+     * `pg` and the code that reads the session secret, and Next.js will happily
+     * bundle whatever a client component imports.
+     *
+     * `ad24-no-direct-call-between-processes` does not cover this: its `from` is
+     * `^apps/(api|realtime-gateway)/`, so the web app is outside it entirely.
+     */
+    writeViolation(
+      'apps/web/src',
+      "import type { AppModule } from '../../api/src/app.module';\n\nexport type Leaked = AppModule;\n",
+    );
+
+    const { status, output } = runDependencyCruiser();
+
+    expect(status).not.toBe(0);
+    expectRule(output, 'ad1-web-touches-contracts-only');
+  }, 300_000);
+
+  it('does NOT fire ad1-web-touches-contracts-only when apps/web imports its own files', () => {
+    // Guards the `pathNot: '^apps/web/'` carve-out. Without it the widened `to`
+    // pattern would flag every ordinary intra-app import in the web app, someone
+    // would narrow the rule back, and the reach into apps/api would go with it.
+    writeViolation(
+      'apps/web/src',
+      "import type { ProfileLoadOutcome } from './app/profile-load';\n\nexport type Local = ProfileLoadOutcome;\n",
+    );
+
+    const { output } = runDependencyCruiser();
+
+    expect(output).not.toContain('error ad1-web-touches-contracts-only:');
+  }, 300_000);
+
   it('fires ad1-adapter-and-config-stay-below-the-shells', () => {
     // The inverted arrow: an adapter reaching UP into a process shell. Nothing
     // forbade this before — it satisfied every other rule in the file.

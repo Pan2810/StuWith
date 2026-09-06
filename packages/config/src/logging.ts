@@ -1,3 +1,4 @@
+import { REQUEST_ID_HEADER } from '@stuwith/contracts';
 import { LOG_ALLOWED_FIELDS } from './log-fields';
 import { filterLoggedFields, serializeLoggedError } from './log-filter';
 import type { LogLevel } from './schema';
@@ -190,8 +191,20 @@ export function sanitizeLoggedUrl(rawUrl: unknown): string {
   return `${rawUrl.slice(0, cut)}?<redacted>`;
 }
 
-/** Header carrying the request id across both processes (spine, "Logging"). */
-export const REQUEST_ID_HEADER = 'x-request-id';
+/**
+ * Header carrying the request id across both processes (spine, "Logging").
+ *
+ * Re-exported rather than declared, so there is exactly one spelling of it in the
+ * repo. It used to be a second literal here, and a second literal is how the
+ * echo (`http-setup.ts`) and the CORS exposure list (`BROWSER_READABLE_RESPONSE_HEADERS`)
+ * could have drifted apart with nothing failing — which is the shape of the bug
+ * `Retry-After` actually hit.
+ *
+ * The direction is legal: `packages/config` already depends on
+ * `@stuwith/contracts`, and `ad13-contracts-stay-standalone` forbids only the
+ * reverse.
+ */
+export { REQUEST_ID_HEADER };
 
 /**
  * An inbound `x-request-id` is attacker-controlled text. It ends up stamped on

@@ -1,5 +1,6 @@
 import {
   AUTH_DATE_OF_BIRTH_PATH,
+  BROWSER_READABLE_RESPONSE_HEADERS,
   RATE_LIMITED_MESSAGE,
   REFRESH_COOKIE_NAME,
   SIGN_IN_OUTCOME_QUERY_PARAM,
@@ -89,6 +90,42 @@ describe('Matrix row: over the threshold, by address', () => {
     expect(retryAfter).not.toBeNull();
     expect(Number(retryAfter)).toBeGreaterThan(0);
     expect(body.error.details?.['retry_after_seconds']).toBe(Number(retryAfter));
+  }, 60_000);
+
+  /**
+   * The assertion the test above could not make, and the reason it could not.
+   *
+   * Node's `fetch` ignores CORS entirely: `blocked.headers.get('retry-after')`
+   * reads what the SERVER sent, so every check above stayed green for the whole of
+   * Epic 1 while a browser was being handed `null` for that same header. Setting
+   * `Retry-After` and forgetting to expose it are two different facts, and only one
+   * of them was ever tested.
+   *
+   * This asks the second question directly: does the response carry permission for
+   * script on `WEB_BASE_URL` to read the header. `Origin` has to be sent by hand —
+   * without it Fastify's CORS plugin adds no `Access-Control-*` at all, and an
+   * assertion that skipped it would pass against a header that is simply absent.
+   */
+  it('exposes Retry-After to the browser, not only to a CORS-blind client', async () => {
+    harness = await createAuthHarness({ enabledProviders: ['google'], ipLimit: 2 });
+
+    const origin = { origin: harness.webBaseUrl };
+    await harness.request('/v1/auth/me', { headers: origin });
+    await harness.request('/v1/auth/me', { headers: origin });
+    const blocked = await harness.request('/v1/auth/me', { headers: origin });
+
+    expect(blocked.status).toBe(429);
+    expect(blocked.headers.get('retry-after')).not.toBeNull();
+
+    const exposed = (blocked.headers.get('access-control-expose-headers') ?? '')
+      .split(',')
+      .map((name) => name.trim().toLowerCase())
+      .filter((name) => name !== '');
+
+    // Every header the contract declares browser-readable, not just the one this
+    // route happens to set — the list is the unit that drifts.
+    expect(exposed).toEqual(expect.arrayContaining([...BROWSER_READABLE_RESPONSE_HEADERS]));
+    expect(exposed).toContain('retry-after');
   }, 60_000);
 
   /**
