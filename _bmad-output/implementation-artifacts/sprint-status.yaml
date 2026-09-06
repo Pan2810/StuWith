@@ -29,21 +29,21 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 08-21-2026 21:27
-last_updated: 09-06-2026 18:00
+last_updated: 09-06-2026 21:00
 project: StuWith
 project_key: NOKEY
 tracking_system: file-system
 story_location: _bmad-output/implementation-artifacts
 development_status:
-  epic-1: in-progress
+  epic-1: done
   1-1-dựng-khung-monorepo-hai-process-và-bốn-cổng-ci: done
   1-2-đăng-nhập-bằng-bốn-provider-mạng-xã-hội: done
   1-3-trạng-thái-lỗi-đăng-nhập-và-chống-brute-force: done
   1-4-khai-ngày-sinh-khi-tạo-hồ-sơ-lần-đầu: done
   1-5-cổng-chặn-hành-vi-có-tiền-theo-tuổi: done
   1-6-hệ-thiết-kế-cắm-trại-token-light-và-dark: done
-  1-7-audit-log-append-only-và-lọc-pii-khỏi-log: review
-  epic-1-retrospective: optional
+  1-7-audit-log-append-only-và-lọc-pii-khỏi-log: done
+  epic-1-retrospective: done
 
   epic-2: backlog
   2-1-tạo-phòng-học-với-chủ-đề-và-quyền: backlog
@@ -87,18 +87,138 @@ development_status:
 
 action_items:
   - epic: 1
-    action: "Chốt nền tảng CI + framework test — Story 1.1 dựng bốn cổng chất lượng (AD-20) nên phải chọn trước khi build story đầu tiên"
+    action: "Chốt nền tảng CI + framework test — Story 1.1 dựng bốn cổng chất lượng
+      (AD-20) nên phải chọn trước khi build story đầu tiên"
     owner: "IPan"
     status: done
   - epic: 2
-    action: "Chốt SDK face-filter client-side cho Story 2.7 — PRD §6 hẹn quyết ở Architecture nhưng bảng Stack không có dòng nào; ràng buộc đã đủ (client-side, >=20 FPS trên máy 4 nhân/8GB/không GPU rời, 3 chế độ, tự hạ bậc)"
+    action: "Chốt SDK face-filter client-side cho Story 2.7 — PRD §6 hẹn quyết ở Architecture
+      nhưng bảng Stack không có dòng nào; ràng buộc đã đủ (client-side, >=20 FPS trên
+      máy 4 nhân/8GB/không GPU rời, 3 chế độ, tự hạ bậc)"
     owner: "IPan"
     status: open
   - epic: 4
-    action: "Chốt nhà cung cấp embedding và SỐ CHIỀU vector cho Story 4.2 — AC ghi nguyên văn vector(n) với n chưa có giá trị; spine cảnh báo đổi số chiều là migration sinh lại toàn bộ vector"
+    action: "Chốt nhà cung cấp embedding và SỐ CHIỀU vector cho Story 4.2 — AC ghi
+      nguyên văn vector(n) với n chưa có giá trị; spine cảnh báo đổi số chiều là migration
+      sinh lại toàn bộ vector"
     owner: "IPan"
     status: open
   - epic: 5
-    action: "Chốt cổng thanh toán (Stripe/VNPay/Momo) cho Story 5.2 — phụ thuộc pháp nhân và tài khoản merchant, AD-8 đã cô lập khỏi sổ cái nên hoãn được tới sát Epic 5"
+    action: "Chốt cổng thanh toán (Stripe/VNPay/Momo) cho Story 5.2 — phụ thuộc pháp
+      nhân và tài khoản merchant, AD-8 đã cô lập khỏi sổ cái nên hoãn được tới sát
+      Epic 5"
     owner: "IPan"
     status: open
+  - id: "epic-1-retro-item-5-p1-sửa-cors-retry-after-thêm-retry-after"
+    epic: 1
+    action: "P1 — Sửa CORS Retry-After: thêm 'retry-after' vào exposedHeaders (apps/api/src/http-setup.ts:135),
+      assert access-control-expose-headers trong auth.flow.test.ts, thêm header vào
+      tests/e2e/support/fake-api.cjs, và một ca e2e kiểm đồng hồ hiện ra + nút thử
+      lại bị vô hiệu. Đo được trong Chromium: retry-after là null cross-origin, nên
+      nút thử lại đang được bật đúng lúc phải khoá."
+    owner: "IPan"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-09-06.md"
+  - id: "epic-1-retro-item-6-p1-đóng-lỗ-ranh-giới-apps-web-apps-api-t"
+    epic: 1
+    action: "P1 — Đóng lỗ ranh giới apps/web -> apps/api: thêm '^apps/' vào 'to' của
+      ad1-web-touches-contracts-only trong .dependency-cruiser.cjs, kèm một ca trong
+      tests/gates/ad-1-dependency-direction.test.ts. Đo được: một import tương đối
+      vào apps/api cho dep-check xanh với 184 module."
+    owner: "IPan"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-09-06.md"
+  - id: "epic-1-retro-item-7-p1-chốt-chủ-cho-bốn-yêu-cầu-not-met-của"
+    epic: 1
+    action: "P1 — Chốt chủ cho bốn yêu cầu NOT MET của Epic 1: WAF/chống DDoS ở gateway,
+      risk registry, i18n VI+EN, và luồng hỗ trợ đổi ngày sinh. Hai cái đầu hôm nay
+      không có cả một dòng trong deferred-work. Điều kiện gắn với verdict accepted-with-open-items."
+    owner: "IPan"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-09-06.md"
+  - id: "epic-1-retro-item-8-p1-đo-là-mặc-định-không-phải-thói-quen-m"
+    epic: 1
+    action: "P1 — Đo là mặc định, không phải thói quen: mỗi story cắt qua một ranh
+      giới process hoặc origin phải khai một probe tầng trình duyệt hoặc socket trong
+      spec TRƯỚC khi bắt đầu. Năm trong bảy lỗi lớp seam của Epic 1 chỉ bị bắt vì
+      có người tự nghi ngờ rồi dựng probe."
+    owner: "IPan"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-09-06.md"
+  - id: "epic-1-retro-item-9-p2-story-1-4-ac1a-dựng-cổng-đọc-profile_"
+    epic: 1
+    action: "P2 — Story 1.4 AC1a: dựng cổng đọc profile_completed ở layout hoặc middleware,
+      hoặc sửa AC. Hôm nay sản phẩm tuyên bố 'không có đường bỏ qua bước khai' và
+      không có cổng nào; ai đăng nhập với ?quay-ve=/ đáp thẳng trang chủ với hồ sơ
+      dở dang."
+    owner: "IPan"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-09-06.md"
+  - id: "epic-1-retro-item-10-p2-story-1-4-ac2b-dựng-luồng-hỗ-trợ-đổi"
+    epic: 1
+    action: "P2 — Story 1.4 AC2b: dựng luồng hỗ trợ đổi ngày sinh, hoặc đổi câu chữ
+      trên giao diện. DATE_OF_BIRTH_ALREADY_SET_MESSAGE đang chỉ người dùng liên hệ
+      hỗ trợ cho một quy trình chưa tồn tại."
+    owner: "IPan"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-09-06.md"
+  - id: "epic-1-retro-item-11-p2-chiều-user-của-rate-limit-không-khoá"
+    epic: 1
+    action: "P2 — Chiều 'user' của rate limit không khoá theo tài khoản: nó băm cookie
+      đang trình (request-identity.ts:134-147), vắng mặt trên chính hai chặng đăng
+      nhập, và reset được bằng một lần gia hạn vì auth.service.ts:536 cấp refresh
+      token mới. Sửa cách khoá, hoặc sửa câu 'theo IP và theo user' trong epic."
+    owner: "IPan"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-09-06.md"
+  - id: "epic-1-retro-item-12-p2-xoá-nhánh-chết-trong-requestidof-auth"
+    epic: 1
+    action: "P2 — Xoá nhánh chết trong requestIdOf (auth.controller.ts:228 đọc reply.raw.getHeader,
+      nhưng 1.7 chuyển echo sang reply.header nên nó không bao giờ chạy) và sửa docblock
+      :220-226 đang mô tả cơ chế cũ. Mối nối audit-log đang tựa vào request.raw.id
+      do middie vendored đặt: pin nó hoặc đọc thẳng request.id."
+    owner: "IPan"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-09-06.md"
+  - id: "epic-1-retro-item-13-p2-rà-70-mục-deferred-work-đang-mở-gán-m"
+    epic: 1
+    action: "P2 — Rà 70 mục deferred-work đang mở: gán mỗi mục cho một epic hoặc đóng
+      nó. Việc này đã bị hoãn từ Story 1.5. Phân bố hiện tại: 1.1 có 15 mục, 1.3b
+      có 12, 1.5 có 11."
+    owner: "IPan"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-09-06.md"
+  - id: "epic-1-retro-item-14-p3-trích-cụm-brute-force-khỏi-auth-servi"
+    epic: 1
+    action: "P3 — Trích cụm brute-force khỏi auth.service.ts (1380 dòng, tám trách
+      nhiệm): countFailure:1095, forgetFailures:1150, withRateLimitStore:1187 — 123
+      dòng, this.rateLimit và this.health không xuất hiện ngoài cụm, đúng ba cạnh
+      gọi ra ngoài. Tiền lệ: SessionAuthenticator đã được trích khỏi chính file này
+      ở Story 1.5."
+    owner: "IPan"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-09-06.md"
+  - id: "epic-1-retro-item-15-p3-tách-packages-db-src-test-kit-ts-1706"
+    epic: 1
+    action: "P3 — Tách packages/db/src/test-kit.ts (1706 dòng) thành năm file theo
+      năm bộ contract độc lập, re-export từ một index. Chỉ có đúng một cạnh cắt ngang
+      giữa chúng."
+    owner: "IPan"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-09-06.md"
+  - id: "epic-1-retro-item-16-p3-gom-năm-bản-stripcomments-và-năm-chỗ"
+    epic: 1
+    action: "P3 — Gom năm bản stripComments và năm chỗ dựng Writable bắt log về tests/support/;
+      sửa bản freePort ở apps/realtime-gateway/src/http-setup.test.ts:51 đang âm thầm
+      trả 0 thay vì báo lỗi. Mục nợ hiện có chỉ nêu hai trong năm bản stripComments."
+    owner: "IPan"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-09-06.md"
+  - id: "epic-1-retro-item-17-p3-tiêu-đề-commit-phải-mang-mã-story-28"
+    epic: 1
+    action: "P3 — Tiêu đề commit phải mang mã story: 28 trong 46 commit của Epic 1
+      không gán được về story nào từ git, nên không truy được thay đổi nào thuộc story
+      nào."
+    owner: "IPan"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-09-06.md"
