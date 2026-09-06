@@ -7,6 +7,7 @@ The main verification gap shapes are:
 1. **Regression gap:** the changed code regresses where it's used, and no test covering that use would fail.
 2. **Missing-adoption gap:** a place that should now use the new behavior doesn't; it handles the same case its own way, or not at all, and no test would flag the omission.
 3. **Broken-verification gap:** a test appears to cover the changed behavior, but would not actually protect it because it is skipped, flaky, not run in the normal verification path, or too weak to observe the regression.
+4. **Seam gap:** two suites test the two ends of a boundary and nothing runs the middle. The classic shape: each side is asserted against a value handed to it, so both stay green while the value never survives the crossing. Node's `fetch` ignoring CORS, a fake server mirroring the real one's omission, a unit test passed the header string as an argument — all three happened in one project, on one bug, at the same time. When the spec has a `## Probe ranh giới` section, check the probe was BUILT and runs in the medium the section names; a declared probe that turned into an in-process function call is this gap, not a fulfilled one. A missing probe is an `intent_gap`, because that section lives inside `<frozen-after-approval>`.
 
 ## Evidence Rules
 
