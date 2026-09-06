@@ -34,7 +34,9 @@ const {
   AUTH_ME_PATH,
   AUTH_DATE_OF_BIRTH_PATH,
   AUTH_REFRESH_PATH,
+  BROWSER_READABLE_RESPONSE_HEADERS,
   DATE_OF_BIRTH_FIELD,
+  REQUEST_ID_HEADER,
   SESSION_COOKIE_NAME,
   SESSION_REFRESHED_STATUS,
   currentUserSchema,
@@ -124,7 +126,19 @@ function corsHeaders() {
     'access-control-allow-origin': WEB_ORIGIN,
     'access-control-allow-credentials': 'true',
     'access-control-allow-methods': 'GET, POST, OPTIONS',
-    'access-control-allow-headers': 'content-type, x-request-id',
+    'access-control-allow-headers': `content-type, ${REQUEST_ID_HEADER}`,
+    /**
+     * The line this file was MISSING, and the reason the E2E suite could not see
+     * the bug it was best placed to catch.
+     *
+     * Without `Access-Control-Expose-Headers` the browser hands script only the
+     * CORS-safelisted headers, so `response.headers.get('retry-after')` returned
+     * `null` here for exactly the same reason it did against the real API — this
+     * fake mirrored the production omission, and a green E2E run was therefore
+     * evidence of nothing. Built from the shared contract so it cannot drift from
+     * `apps/api` again: whichever of the two someone edits, they edit the array.
+     */
+    'access-control-expose-headers': BROWSER_READABLE_RESPONSE_HEADERS.join(', '),
     vary: 'Origin',
   };
 }

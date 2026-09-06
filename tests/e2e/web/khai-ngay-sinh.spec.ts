@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { FAKE_API_BASE_URL } from '../../../playwright.config';
 import { DATE_OF_BIRTH_PATHNAME, scenario } from '../support/scenario';
 
 /**
@@ -87,7 +88,59 @@ test.describe('khai ngày sinh', () => {
     await scenario(page, { signedIn: true, meStatus: 429 });
     await page.goto(DATE_OF_BIRTH_PATHNAME);
 
-    await expect(page.getByRole('status')).toBeVisible();
+    // `.first()`, and the reason is itself the evidence the fix landed: now that
+    // `Retry-After` survives the CORS boundary this screen renders TWO live regions
+    // — the notice and the countdown beside it — and a bare `getByRole('status')`
+    // is a strict-mode violation. Before the fix there was exactly one, which is
+    // why this line passed while the screen was wrong.
+    await expect(page.getByRole('status').first()).toBeVisible();
+    // The specific thing that must NOT have happened. "Some status region appeared"
+    // was too weak a claim to notice the no-clock branch being taken.
+    await expect(page.getByText('Bạn cần đăng nhập trước khi khai ngày sinh.')).toHaveCount(0);
     expect(new URL(page.url()).pathname).toBe(DATE_OF_BIRTH_PATHNAME);
+  });
+
+  /**
+   * The seventh instance of "tests at both ends of a seam with nothing running the
+   * middle", and the one that reached production.
+   *
+   * `Retry-After` was missing from `Access-Control-Expose-Headers`, so the browser
+   * withheld it from script — no error, just `null`. The case above passed anyway,
+   * because it asked only whether SOME status region appeared. It did: the wrong
+   * one, the no-clock branch, next to an enabled button that spends another attempt.
+   *
+   * Measured in Chromium against the real API before the fix:
+   * `{"status":429,"retryAfter":null,"visibleHeaders":["content-length","content-type"]}`.
+   *
+   * Three assertions, deliberately at three levels, because each fails for a
+   * different cause: the header is readable AT ALL (CORS), the countdown branch was
+   * chosen (`profile-load.ts`), and the button that closes the retry loop is
+   * actually disabled (the screen).
+   */
+  test('a rate-limited profile read shows the clock and disables the retry button', async ({
+    page,
+  }) => {
+    await scenario(page, { signedIn: true, meStatus: 429 });
+    await page.goto(DATE_OF_BIRTH_PATHNAME);
+
+    // Level 1 — the browser hands `retry-after` to script. `page.evaluate` and not
+    // Playwright's `response.headers()`, which reports what the SERVER sent and
+    // would have been green throughout the bug: only script inside the page is
+    // subject to the CORS exposure list.
+    const seen = await page.evaluate(async (apiOrigin) => {
+      const response = await fetch(`${apiOrigin}/v1/auth/me`, { credentials: 'include' });
+      return { status: response.status, retryAfter: response.headers.get('retry-after') };
+    }, FAKE_API_BASE_URL);
+    expect(seen.status).toBe(429);
+    expect(seen.retryAfter, 'the browser must hand Retry-After to script').toBe('30');
+
+    // Level 2 — the screen took the countdown branch, not the generic one.
+    await expect(page.getByText('Bạn đã thử quá nhiều lần. Hãy chờ một lát rồi thử lại.')).toBeVisible();
+    await expect(page.getByText(/Thử lại sau \d+ giây\./)).toBeVisible();
+
+    // Level 3 — the loop is actually closed. This is the assertion the product
+    // failed: with `retryAfterSeconds` null the button stayed enabled for the whole
+    // lockout, and every press made the wait longer.
+    await expect(page.getByRole('button', { name: 'Thử lại' })).toBeDisabled();
   });
 });

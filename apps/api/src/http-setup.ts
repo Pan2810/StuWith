@@ -1,6 +1,7 @@
 import type { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
 import type { ApiEnv } from '@stuwith/config';
 import { REQUEST_ID_HEADER, compileTrustedProxies, resolveRequestId } from '@stuwith/config';
+import { BROWSER_READABLE_RESPONSE_HEADERS } from '@stuwith/contracts';
 import { randomUUID } from 'node:crypto';
 
 /**
@@ -131,8 +132,22 @@ export function configureHttpApp(app: NestFastifyApplication, config: ApiEnv): v
     methods: ['GET', 'POST', 'OPTIONS'],
     // `Vary: Origin` matters once a cache sits in front of this: without it a
     // response allowed for one origin can be replayed to another.
-    allowedHeaders: ['content-type', 'x-request-id'],
-    exposedHeaders: ['x-request-id'],
+    allowedHeaders: ['content-type', REQUEST_ID_HEADER],
+    /**
+     * From the contract, never a literal.
+     *
+     * This line read `['x-request-id']` for all of Epic 1 while every `429` also
+     * carried `Retry-After` — so the browser dropped that header before any
+     * JavaScript saw it, three screens read `null`, and the retry button they
+     * disable on a countdown stayed enabled for the whole lockout. Nothing failed:
+     * the API's own flow tests use Node's `fetch`, which ignores CORS.
+     *
+     * Spreading a shared `as const` array is what stops the next header from
+     * repeating it: `tests/gates/cors-exposed-headers.test.ts` scans the response
+     * headers this process actually sets and fails when one is neither exposed
+     * here nor declared server-only.
+     */
+    exposedHeaders: [...BROWSER_READABLE_RESPONSE_HEADERS],
     maxAge: 600,
   });
 

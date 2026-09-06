@@ -81,9 +81,21 @@ module.exports = {
       severity: 'error',
       comment:
         'apps/web is a client. It may read packages/contracts and nothing else from the workspace: ' +
-        'it must never link the domain, an adapter, or server config into a browser bundle.',
+        'it must never link the domain, an adapter, server config, or a SERVER PROCESS into a ' +
+        'browser bundle.',
       from: { path: '^apps/web' },
-      to: { path: '^packages/(db|domain|config)/' },
+      // `^apps/` was missing until the Epic 1 retrospective measured it. The rule
+      // named three packages and stopped there, so `apps/web` importing
+      // `apps/api/src/...` by relative path violated nothing: dep-check ran green
+      // on 184 modules WITH the violating file and 183 without. The name of the
+      // rule already claimed "contracts only"; the pattern only enforced part of
+      // it, and the part it left out is the one that drags NestJS, `pg` and the
+      // session secret into a browser bundle.
+      //
+      // `pathNot` rather than a lookahead: `^apps/(?!web/)` would also exclude
+      // `apps/website/` if one ever existed, and the two-field spelling is the one
+      // `ad24-no-direct-call-between-processes` above already uses.
+      to: { path: '^(apps/|packages/(db|domain|config)/)', pathNot: '^apps/web/' },
     },
     {
       name: 'no-unresolvable',
