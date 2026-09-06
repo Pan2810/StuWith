@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 08-21-2026 21:27
-last_updated: 09-06-2026 22:10
+last_updated: 09-06-2026 23:30
 project: StuWith
 project_key: NOKEY
 tracking_system: file-system
@@ -46,6 +46,7 @@ development_status:
   epic-1-retrospective: done
 
   epic-2: backlog
+  2-0-rút-chuỗi-ra-i18n-vi-mặc-định-en-song-song: backlog
   2-1-tạo-phòng-học-với-chủ-đề-và-quyền: backlog
   2-2-cấp-token-vào-phòng-kèm-giữ-chỗ-nguyên-tử: backlog
   2-3-màn-pre-join-xem-trước-chọn-khuôn-mặt-thử-mic: backlog
@@ -130,12 +131,29 @@ action_items:
     ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-09-06.md"
   - id: "epic-1-retro-item-7-p1-chốt-chủ-cho-bốn-yêu-cầu-not-met-của"
     epic: 1
-    action: "P1 — Chốt chủ cho bốn yêu cầu NOT MET của Epic 1: WAF/chống DDoS ở gateway,
-      risk registry, i18n VI+EN, và luồng hỗ trợ đổi ngày sinh. Hai cái đầu hôm nay
-      không có cả một dòng trong deferred-work. Điều kiện gắn với verdict accepted-with-open-items."
+    action: "P1 — Chốt chủ cho bốn yêu cầu NOT MET của Epic 1. ĐÃ CHỐT 2026-09-06:
+      WAF + chống DDoS -> track vận hành (kiến trúc đã ruling là hoãn được ở tầng edge,
+      không story nào dựng được bằng code); i18n VI+EN -> Story 2.0 MỚI, đứng trước 2.1;
+      luồng đổi ngày sinh -> Story 4.7; risk registry -> Story 4.7, và đây là ĐÍNH CHÍNH:
+      nó có chủ từ đầu, retrospective đọc nhầm epic-1-context.md. Cả bốn đã ghi nợ có chủ
+      trong deferred-work.md."
+    owner: "IPan"
+    status: done
+    ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-09-06.md"
+  - id: "epic-1-retro-item-14-p2-ba-mệnh-đề-nfr-vô-chủ-mới-tìm-thấy"
+    epic: 1
+    action: "P2 — Ba mệnh đề NFR vô chủ, tìm thấy khi dựng epics.md § NFR Coverage Map
+      ngày 2026-09-06, chưa từng được ai ghi nhận ở đâu: (a) NFR4 'sandbox cho tác vụ'
+      — grep sandbox trong mọi thân story ra 0, Story 4.1 chỉ có AC cho timeout;
+      (b) NFR6 'retry' — grep retry và backoff ra 0, trong khi retry một lệnh trừ coin
+      không idempotent là trừ hai lần; (c) NFR9 'MVP không ghi hình' và 'không lưu tệp
+      nhị phân nào' — chỉ mệnh đề thứ ba (object store) có AC ở 1.1, hai cái đầu không,
+      và LiveKit bật ghi hình được bằng cấu hình. Cả ba trốn bằng đúng cơ chế đã làm mất
+      WAF: một mã NFR gói nhiều nghĩa vụ, epic nhận cả mã. Chi tiết và ứng viên chủ nằm
+      trong deferred-work.md."
     owner: "IPan"
     status: open
-    ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-09-06.md"
+    ref: "_bmad-output/planning-artifacts/epics.md"
   - id: "epic-1-retro-item-8-p1-đo-là-mặc-định-không-phải-thói-quen-m"
     epic: 1
     action: "P1 — Đo là mặc định, không phải thói quen: mỗi story cắt qua một ranh
@@ -156,9 +174,11 @@ action_items:
     ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-09-06.md"
   - id: "epic-1-retro-item-10-p2-story-1-4-ac2b-dựng-luồng-hỗ-trợ-đổi"
     epic: 1
-    action: "P2 — Story 1.4 AC2b: dựng luồng hỗ trợ đổi ngày sinh, hoặc đổi câu chữ
-      trên giao diện. DATE_OF_BIRTH_ALREADY_SET_MESSAGE đang chỉ người dùng liên hệ
-      hỗ trợ cho một quy trình chưa tồn tại."
+    action: "P2 — Story 1.4 AC2b: dựng luồng hỗ trợ đổi ngày sinh. ĐÃ HẸP LẠI 2026-09-06:
+      nửa câu chữ KHÔNG còn việc — DATE_OF_BIRTH_ALREADY_SET_MESSAGE đã bỏ chữ 'liên hệ
+      hỗ trợ' ngay trong commit 16904be của chính Story 1.4; retrospective chép bằng chứng
+      cũ mà không đo lại. Còn lại đúng phần LUỒNG, và nó đã có chủ: Story 4.7 — phải nhận
+      cả đường gian lận (AC đã có) lẫn đường gõ nhầm (chưa có)."
     owner: "IPan"
     status: open
     ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-09-06.md"

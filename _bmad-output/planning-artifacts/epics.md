@@ -266,6 +266,86 @@ Hai phụ thuộc cần nói rõ:
 
 **47/47 FR có ít nhất một story.**
 
+### NFR Coverage Map
+
+FR được theo dõi theo nguyên tử và có bản đồ hai chiều ở trên. NFR thì **hợp chất** —
+NFR7 gói bốn nghĩa vụ độc lập dưới một mã — và cho tới retrospective Epic 1 chúng chỉ
+được ghi nhận bằng một dòng `**NFRs:** ...` dưới mỗi epic. Một dòng như thế đọc là "epic
+này phủ NFR7" kể cả khi hai trong bốn mệnh đề không có story nào.
+
+Đó không phải suy đoán. Epic 1 tuyên bố NFR5 và NFR7 trong danh sách của mình; WAF, chống
+DDoS và risk registry rời epic mà **không để lại một dòng nào trong `deferred-work.md`**
+(79 mục, grep không ra chữ nào trong ba chữ đó). Bảng dưới là để lần sau việc đó không im
+lặng được: **một dòng một mệnh đề**, và mệnh đề không có story thì lộ ra ngay thay vì trốn
+dưới một mã.
+
+Dựng bảng lần đầu tìm thấy **năm** mệnh đề vô chủ, chứ không phải hai như retrospective
+đếm được.
+
+Cột "Neo" trích một cụm phân biệt được thay vì số dòng: bảng này nằm trong chính file mà
+nó đánh số, nên một lần chèn ở trên làm lệch mọi số dòng ở dưới — đã xảy ra ngay lần viết
+đầu tiên của bảng này.
+
+| NFR | Mệnh đề | Story | Neo |
+|---|---|---|---|
+| NFR1 | Audio ưu tiên tuyệt đối | 2.4 | "audio được ưu tiên băng thông hơn video trong mọi hoàn cảnh" |
+| NFR1 | Video tụt bậc rồi tắt hẳn | 2.5 | Story 2.5 — "Thang suy giảm mạng bốn bậc" |
+| NFR1 | Tiếng không bao giờ rớt | 2.5 | như trên |
+| NFR2 | Vào phòng p90 < 5s trên 4G | 2.4 | "nghe được tiếng đầu tiên trong **p90 dưới 5 giây**" |
+| NFR3 | Chạy được bằng `docker compose` local | 1.1 ✅ | "**When** chạy `docker compose up`" |
+| NFR3 | Tách thành hai process | 1.1 ✅ | Story 1.1 — "hai process và bốn cổng CI" |
+| NFR4 | Prompt-injection scan mọi input vào AI | 4.1 | "**Then** chạy prompt-injection scan" |
+| NFR4 | Credential chỉ trong env var/secret store | 1.1 ✅ | "bốn cổng đều phải xanh: quét credential …" |
+| NFR4 | PII không vào log | 1.7 ✅ | Story 1.7 — "lọc PII khỏi log" |
+| NFR4 | Timeout cho tác vụ | 4.1 | "có timeout; lời gọi treo không làm treo request của người dùng" |
+| NFR4 | **Sandbox cho tác vụ** | **— chưa có chủ** | grep `sandbox` trong toàn bộ story: **0 kết quả** |
+| NFR5 | Audit log bất biến cho coin | 3.1 | Story 3.1 — "Sổ cái coin và số dư không ghi trực tiếp được" |
+| NFR5 | Audit log bất biến cho report | 4.7 | "hành động ghi audit bất biến kèm hồ sơ hành vi và risk registry" |
+| NFR5 | Approval checkpoint trước deploy | 1.1 ✅ | "deploy lên VPS đòi một bước duyệt thủ công" |
+| NFR5 | Risk registry | 4.7 | cùng dòng AC với audit report ở trên |
+| NFR6 | Idempotency key cho giao dịch coin và thao tác ghi | 3.1 | "ràng buộc `UNIQUE(source, idempotency_key)` chặn lệnh thứ hai ở tầng DB" |
+| NFR6 | Audit mỗi call | 4.1 | "**Then** ghi một dòng audit" |
+| NFR6 | Rate limit | 1.3 ✅ · 2.4 · 2.8 | "vượt ngưỡng rate limit" (2.8), "rate limit áp theo cả IP lẫn user" (2.4) |
+| NFR6 | **Retry** | **— chưa có chủ** | grep `retry`/`backoff` trong toàn bộ story: **0 kết quả** |
+| NFR7 | Rate limit theo IP | 1.3 ✅ | "quá nhiều lần thử đăng nhập từ cùng một IP hoặc cùng một tài khoản" |
+| NFR7 | Rate limit theo user | 1.3 ⚠️ · 2.4 | cùng dòng AC ở trên — xem ghi chú 1 dưới bảng |
+| NFR7 | **WAF** | **— track vận hành** | không story nào dựng được; xem ghi chú 3 và `deferred-work.md` |
+| NFR7 | **Chống DDoS ở gateway** | **— track vận hành** | như trên |
+| NFR7 | Khoá brute-force đăng nhập | 1.3 ✅ | Story 1.3 — "chống brute-force" |
+| NFR8 | Material 3 làm xương, nhận diện "Cắm trại" | 1.6 ✅ | Story 1.6 — "Hệ thiết kế Cắm trại" |
+| NFR8 | i18n VI/EN | **2.0** | quyết định 2026-09-06 — xem ghi chú 2 |
+| NFR8 | Light và dark ngang hàng | 1.6 ✅ | "tất cả đạt tối thiểu WCAG AA 4.5:1 ở **cả** light và dark" |
+| NFR8 | WCAG 2.1 AA là sàn | 1.6 ✅ · mọi story có giao diện | cùng dòng trên, và UX-DR29 (reflow 320px) |
+| NFR9 | **MVP không ghi hình** | **— chưa có AC** | chỉ xuất hiện trong câu "So that" của Story 1.7, không phải một AC |
+| NFR9 | **Không lưu tệp nhị phân nào của người dùng** | **— chưa có AC** | grep `tệp nhị phân` trong story: **0 kết quả** |
+| NFR9 | Không có object store trong stack | 1.1 ✅ | "**And** **không có** object store trong compose" |
+| NFR10 | Khuôn mặt ở chế độ ẩn/filter không rời máy | 2.7 | Story 2.7 — "xử lý client-side" |
+| NFR10 | Trạng thái bận không tiết lộ danh tính hay thời gian còn lại | 3.8 | Story 3.8 — "Trạng thái bận và xin tham gia hai phiếu" |
+| NFR11 | Mọi hành vi có tiền đi vào bị chặn với tài khoản dưới 18 | 1.5 ✅ | Story 1.5 — "Cổng chặn hành vi có tiền theo tuổi" |
+| NFR12 | Giao dịch coin chính xác 100% cho từng người tham gia | 3.7 | "dạy hai người cùng lúc mà **mỗi người trả đủ**" |
+| NFR13 | 0 rò rỉ credential trong log | 1.1 ✅ | cổng CI "quét credential" |
+| NFR13 | 0 rò rỉ PII trong log; ngày sinh tính là PII | 1.7 ✅ | Story 1.7 — "lọc PII khỏi log" |
+
+**Phủ: 33/38 mệnh đề có story. Năm mệnh đề chưa có chủ**, và ba trong năm — sandbox, retry,
+và nửa đầu NFR9 — chưa từng được ai ghi nhận ở đâu cho tới khi bảng này được dựng.
+
+Ba ghi chú không đọc được từ bảng:
+
+1. **NFR7 "rate limit theo user" là ⚠️ chứ không phải ✅.** Story 1.3 có AC và mã đã ship,
+   nhưng retrospective Epic 1 đo được rằng chiều `user` băm **cookie đang trình**
+   (`request-identity.ts:134-147`) chứ không khoá theo tài khoản, vắng mặt trên chính hai
+   chặng đăng nhập, và reset được bằng một lần gia hạn. Story 2.4 đòi đúng cơ chế đó cho
+   bắt tay WebSocket, nên nó sẽ **thừa hưởng một cơ chế đã hỏng** nếu không sửa trước.
+2. **NFR8 i18n giao cho Story 2.0**, một story mới đứng trước 2.1. Chi phí thật nằm ở việc
+   RÚT chuỗi chứ không phải dịch: hôm nay mọi chuỗi hiển thị là literal tiếng Việt trong
+   khoảng tám file, và tám story phòng live của Epic 2 sẽ đẻ thêm chừng ấy nữa nếu làm sau.
+   Danh sách NFR của Epic 2 đã có NFR8 từ đầu; thứ thiếu là một story nhận nó.
+3. **WAF và chống DDoS không thuộc epic nào, và đó là kết luận chứ không phải bỏ sót.**
+   `architecture/…/reviews/review-rubric-independent.md:223` đã chốt: *"WAF / chống DDoS ở
+   tầng edge hoãn được; ba scope này thì không."* Chúng là hạ tầng tầng edge — không story
+   nào dựng được bằng code — nên chúng thuộc track vận hành cùng chỗ với coturn TLS và
+   `use_external_ip`, và được ghi nợ có chủ trong `deferred-work.md`.
+
 ## Epic List
 
 ### Epic 1: Vào được StuWith với danh tính của mình
@@ -527,6 +607,48 @@ So that khi có tranh chấp hoặc sự cố thì có bằng chứng — nhất
 ## Epic 2: Học cùng người khác trong phòng live, ẩn mặt được
 
 Người dùng tạo hoặc tìm một phòng, vào học cùng người lạ, chọn được mình hiện lên thế nào **trước khi ai thấy**, và buổi học không gãy khi mạng yếu. Sau epic này đo được ngay tỉ lệ phiên ẩn mặt — chỉ số quan trọng nhất của MVP theo PRD §1.4.
+
+### Story 2.0: Rút chuỗi ra i18n — VI mặc định, EN song song
+
+As a người dùng đọc tiếng Anh,
+I want giao diện nói ngôn ngữ của tôi,
+So that tôi dùng được StuWith mà không phải đoán nghĩa từng nút.
+
+*Story này đứng **trước** 2.1 chứ không sau tám story kia, và lý do là chi phí chứ không
+phải thứ tự đọc. `EXPERIENCE.md:23` viết "mọi chuỗi đều phải qua i18n **ngay từ đầu** —
+không có chuỗi cứng, kể cả trong thông báo lỗi". Hôm nay mọi chuỗi hiển thị là literal
+tiếng Việt nằm trong khoảng tám file của Epic 1; tám story phòng live sắp tới sẽ đẻ thêm
+chừng ấy nữa. Rút sau nghĩa là rút hai lần lượng chuỗi. Ra đời từ retrospective Epic 1
+(2026-09-06), khi NFR8 bị phát hiện xẻ đôi giữa hai epic mà mệnh đề i18n không rơi vào
+story nào.*
+
+**Acceptance Criteria:**
+
+**Given** codebase sau Epic 1
+**When** tìm chuỗi hiển thị cho người dùng trong `apps/web`
+**Then** **không còn** literal ngôn ngữ tự nhiên nào nằm trong component
+**And** một luật quét được trong `tests/gates/` bắt được literal mới thêm vào
+
+**Given** một người đặt trình duyệt sang tiếng Anh
+**When** mở bất kỳ màn hình nào đã có
+**Then** toàn bộ nhãn, thông báo lỗi và nội dung vùng `role="status"` hiện bằng tiếng Anh
+**And** `<html lang>` mang đúng mã ngôn ngữ đang hiển thị, không cố định `vi`
+
+**Given** một đoạn tiếng Anh nhúng trong câu tiếng Việt ("Study Circle", "Opus", "filter")
+**When** trình đọc màn hình tiếng Việt đọc tới
+**Then** đoạn đó mang `lang="en"` (`EXPERIENCE.md § Accessibility Floor`)
+
+**Given** một khoá thông điệp có trong catalogue VI nhưng thiếu ở EN, hoặc ngược lại
+**When** chạy CI
+**Then** cổng đỏ — thiếu bản dịch là lỗi build, không phải chuỗi rơi về khoá thô
+
+**Given** chuỗi tiếng Việt dài hơn tiếng Anh khoảng 15–25% (`EXPERIENCE.md:23`)
+**When** dựng nút và chip ở cả hai ngôn ngữ
+**Then** không nhãn nào bị cắt chữ, ở cả 320px lẫn desktop
+
+**Given** ràng buộc "không thêm dependency" của dự án
+**When** chọn cách hiện thực
+**Then** quyết định dùng thư viện hay tự dựng catalogue là **Ask First**, và ghi lại lý do
 
 ### Story 2.1: Tạo phòng học với chủ đề và quyền
 
