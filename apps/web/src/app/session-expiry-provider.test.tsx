@@ -8,7 +8,8 @@ import {
   useApiBaseUrl,
   useAuthorizedFetch,
 } from './session-expiry-provider';
-import { SESSION_EXPIRY_TITLE } from './session-expiry-dialog';
+import { VI_TRANSLATE } from './i18n/messages';
+import { SESSION_EXPIRY_TITLE_KEY } from './session-expiry-dialog';
 
 /**
  * The wiring between the seam and the screen, rendered for real.
@@ -61,7 +62,7 @@ describe('the shell: the page and the dialog are siblings', () => {
     // "the dialog appears" and break the acceptance criterion.
     expect(html).toContain('id="phong-hoc"');
     expect(html).toContain('role="dialog"');
-    expect(html).toContain(SESSION_EXPIRY_TITLE);
+    expect(html).toContain(VI_TRANSLATE(SESSION_EXPIRY_TITLE_KEY));
     // A SIBLING after the page, not a wrapper around it.
     expect(html.indexOf('id="phong-hoc"')).toBeLessThan(html.indexOf('role="dialog"'));
   });

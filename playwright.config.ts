@@ -117,6 +117,20 @@ export default defineConfig({
       use: {
         baseURL: WEB_BASE_URL,
         browserName: 'chromium',
+        /**
+         * Vietnamese, because Vietnamese is the product's default and 43 existing
+         * assertions are written in it.
+         *
+         * This became load-bearing with Story 2.0. `locale` is what Playwright puts
+         * in `Accept-Language`, and the server now READS that header: leaving it
+         * unset gives Chromium's default `en-US`, which would silently turn every
+         * `getByRole('button', { name: 'Lưu ngày sinh' })` in this suite into an
+         * assertion about the English catalogue. Those cases are proving that the
+         * ACCESSIBLE NAMES on these screens are right, which is a different claim
+         * from "the locale is chosen correctly" — `web/ngon-ngu.spec.ts` owns the
+         * second one and sets its own locale per context.
+         */
+        locale: 'vi-VN',
       },
     },
   ],

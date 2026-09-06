@@ -1,4 +1,5 @@
 import { AUTH_PROVIDERS } from '@stuwith/contracts';
+import { useT } from './i18n/use-t';
 import { signInStartHref } from './session-expiry';
 
 /**
@@ -18,18 +19,24 @@ import { signInStartHref } from './session-expiry';
  * provider list and the href builder.
  *
  * No `'use client'`, no state, no effect, no `window`: it renders under
- * `renderToStaticMarkup` in the `web` Vitest project, which has no DOM.
+ * `renderToStaticMarkup` in the `web` Vitest project, which has no DOM. `useT()` is
+ * the one hook here and it changes nothing about that — `useContext` runs perfectly
+ * well under `renderToStaticMarkup`, and outside a provider it yields the
+ * Vietnamese default, which is why every existing assertion about this markup still
+ * reads Vietnamese.
  */
 
 /**
- * Vietnamese, because Vietnamese is the only locale this product has.
+ * PROPER NOUNS, and therefore deliberately NOT in the message catalogue.
  *
- * This used to say "full i18n arrives with Story 1.6", and so did `layout.tsx`.
- * Neither was true: `epics.md` gives Story 1.6 the design system and says nothing
- * about internationalisation, so two files were promising work no story owned —
- * the shape that turns into "somebody must have done it" three stories later.
- * `EXPERIENCE.md:27` does want VI + EN eventually; that intention now sits in
- * `deferred-work.md` with no owner, which is what an unfunded intention is.
+ * Google is Google in every language. Putting these in `i18n/messages.ts` would
+ * invite somebody to "translate" them, and would make the catalogue's key set grow
+ * with a contract enum it does not own. The spec's "Never" list names this table
+ * explicitly as a thing that looks like a string and is not.
+ *
+ * What DID change is how they are rendered: an English name inside a Vietnamese
+ * sentence now carries `lang="en"`, so a screen reader in the Vietnamese locale
+ * does not read "Microsoft" with Vietnamese phonology.
  *
  * One table, because the two screens must not be able to say different things
  * about the same provider.
@@ -56,6 +63,8 @@ export function SignInProviderLinks({
    */
   readonly returnPath: string | null;
 }) {
+  const t = useT();
+
   return (
     /*
       `provider-list` rather than a bare `<ul>`: the list markers and the default
@@ -80,7 +89,18 @@ export function SignInProviderLinks({
             className="button-secondary"
             href={signInStartHref(apiBaseUrl, provider, returnPath)}
           >
-            Tiếp tục với {PROVIDER_LABELS[provider]}
+            {/*
+              The provider name is INSIDE the translated sentence rather than
+              concatenated after it, and that is what `t.nodes` exists for.
+
+              Splitting this into "Tiếp tục với" plus a name would hand a translator
+              half a sentence, and word order is exactly the thing that differs
+              between languages. Passing the name as a NODE keeps the sentence whole
+              while letting the name carry its own `lang`.
+            */}
+            {t.nodes('signIn.continueWith', {
+              provider: <span lang="en">{PROVIDER_LABELS[provider]}</span>,
+            })}
           </a>
         </li>
       ))}

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { useT } from '../i18n/use-t';
 import {
   countdownDeadline,
   countdownViewAt,
@@ -46,6 +47,7 @@ export function SignInCountdown({
   /** Told once the wait is over, so the page can offer the login links again. */
   readonly onFinished?: () => void;
 }) {
+  const t = useT();
   const [deadline, setDeadline] = useState(() => countdownDeadline(clock.now(), seconds));
   const [now, setNow] = useState(() => clock.now());
 
@@ -90,7 +92,7 @@ export function SignInCountdown({
     return () => clearTimeout(timer);
   }, [deadline, now, clock]);
 
-  const view = countdownViewAt(deadline, now);
+  const view = countdownViewAt(deadline, now, t);
 
   /**
    * Announced twice and no more: once when it appears, once when it ends.

@@ -1,4 +1,6 @@
 import type { RefObject } from 'react';
+import { useT } from './i18n/use-t';
+import type { MessageKey } from './i18n/messages';
 import { SignInProviderLinks } from './sign-in-links';
 import type { SessionExpiryPrompt } from './session-expiry';
 
@@ -72,10 +74,20 @@ import type { SessionExpiryPrompt } from './session-expiry';
  * the page.
  */
 
-export const SESSION_EXPIRY_TITLE = 'Phiên đăng nhập đã kết thúc';
-export const SESSION_EXPIRY_MESSAGE =
-  'Đăng nhập lại để tiếp tục từ chỗ bạn đang đứng. Trang này vẫn ở đây trong lúc đó.';
-export const SESSION_EXPIRY_DISMISS_LABEL = 'Để sau';
+/**
+ * The three things this dialog says, as catalogue KEYS.
+ *
+ * They were the sentences themselves. The words now live in `i18n/messages.ts`,
+ * because a sentence has a language and this module has no way to know which one
+ * the visitor asked for; what stays here is WHICH sentence, which is genuinely this
+ * dialog's decision. `session-expiry-provider.test.tsx` and
+ * `session-expiry-dialog.test.tsx` still name these constants — they now translate
+ * them through `VI_TRANSLATE` rather than comparing raw text, which is the same
+ * assertion with the locale made explicit.
+ */
+export const SESSION_EXPIRY_TITLE_KEY: MessageKey = 'sessionExpiry.title';
+export const SESSION_EXPIRY_MESSAGE_KEY: MessageKey = 'sessionExpiry.message';
+export const SESSION_EXPIRY_DISMISS_KEY: MessageKey = 'sessionExpiry.dismiss';
 
 const TITLE_ID = 'phien-het-han-tieu-de';
 const MESSAGE_ID = 'phien-het-han-noi-dung';
@@ -106,6 +118,8 @@ export function SessionExpiryDialog({
    */
   readonly onDismiss: () => void;
 }) {
+  const t = useT();
+
   if (prompt === null) {
     return null;
   }
@@ -128,8 +142,8 @@ export function SessionExpiryDialog({
       */
       tabIndex={-1}
     >
-      <h2 id={TITLE_ID}>{SESSION_EXPIRY_TITLE}</h2>
-      <p id={MESSAGE_ID}>{SESSION_EXPIRY_MESSAGE}</p>
+      <h2 id={TITLE_ID}>{t(SESSION_EXPIRY_TITLE_KEY)}</h2>
+      <p id={MESSAGE_ID}>{t(SESSION_EXPIRY_MESSAGE_KEY)}</p>
       {/*
         The same list the login page offers, from `sign-in-links.tsx`.
 
@@ -141,7 +155,7 @@ export function SessionExpiryDialog({
       */}
       <SignInProviderLinks apiBaseUrl={apiBaseUrl} returnPath={prompt.returnPath} />
       <button type="button" className="button-secondary" onClick={onDismiss}>
-        {SESSION_EXPIRY_DISMISS_LABEL}
+        {t(SESSION_EXPIRY_DISMISS_KEY)}
       </button>
     </div>
   );

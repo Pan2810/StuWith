@@ -30,6 +30,8 @@
  * wall clock cannot drift: a throttled tab simply catches up on its next tick.
  */
 
+import { VI_TRANSLATE, type Translate } from '../i18n/messages';
+
 /**
  * The clock the countdown reads, as the smallest interface that will do.
  *
@@ -78,13 +80,17 @@ export interface CountdownView {
  * Rounded UP, so the last partial second is still shown as one: telling somebody
  * "0 giây" while the lock is still live invites the retry that gets refused.
  */
-export function countdownViewAt(deadlineMs: number, nowMs: number): CountdownView {
+export function countdownViewAt(
+  deadlineMs: number,
+  nowMs: number,
+  t: Translate = VI_TRANSLATE,
+): CountdownView {
   const remainingMs = deadlineMs - nowMs;
   if (!Number.isFinite(remainingMs) || remainingMs <= 0) {
-    return { secondsRemaining: 0, message: COUNTDOWN_DONE_MESSAGE, done: true };
+    return { secondsRemaining: 0, message: countdownDoneLabel(t), done: true };
   }
   const secondsRemaining = Math.ceil(remainingMs / 1_000);
-  return { secondsRemaining, message: countdownLabel(secondsRemaining), done: false };
+  return { secondsRemaining, message: countdownLabel(secondsRemaining, t), done: false };
 }
 
 /**
@@ -105,14 +111,33 @@ export function nextTickDelayMs(deadlineMs: number, nowMs: number): number | nul
   return untilBoundary === 0 ? 1_000 : untilBoundary;
 }
 
-/** Vietnamese is the default locale; full i18n is Story 1.6. */
-export function countdownLabel(seconds: number): string {
-  return `Thử lại sau ${seconds} giây.`;
+/**
+ * The one sentence in this product that needs a PLURAL, and the whole reason
+ * `Intl.PluralRules` appears anywhere in it.
+ *
+ * Vietnamese has a single plural category, so `giây` is `giây` for one second and for
+ * thirty. English has two, and `Retry in 1 seconds.` is the sort of thing a
+ * hand-rolled catalogue ships if the shape is not there from the start. The
+ * catalogue therefore carries `countdown.retryIn.one` and `countdown.retryIn.other`
+ * for both locales, and the translator picks between them.
+ *
+ * `t` defaults to Vietnamese so this stays a one-argument pure function for the
+ * tests that assert the sentence, and so a caller with no locale in hand cannot
+ * accidentally produce a raw key.
+ */
+export function countdownLabel(seconds: number, t: Translate = VI_TRANSLATE): string {
+  return t.plural('countdown.retryIn', seconds, { seconds });
 }
 
 /**
  * What the live region says when the wait is over — the one sentence a screen
  * reader is meant to hear from this component. See `countdown.tsx` for why it is
  * the only announcement rather than one per second.
+ *
+ * A function rather than the constant it used to be, for the same reason
+ * {@link countdownLabel} is one: the sentence depends on the locale, and a constant
+ * evaluated at module load has no way to know it.
  */
-export const COUNTDOWN_DONE_MESSAGE = 'Bạn có thể thử lại ngay bây giờ.';
+export function countdownDoneLabel(t: Translate = VI_TRANSLATE): string {
+  return t('countdown.done');
+}

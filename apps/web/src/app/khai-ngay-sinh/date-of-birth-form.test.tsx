@@ -9,21 +9,24 @@ import {
   type CurrentUser,
 } from '@stuwith/contracts';
 import { countdownLabel } from '../dang-nhap/countdown-text';
-import { PROFILE_RETRY_LABEL, PROFILE_UNAVAILABLE_MESSAGE } from '../profile-load';
+import { LOCALES, type Locale } from '../i18n/locale';
+import { I18nProvider } from '../i18n/use-t';
+import { VI_TRANSLATE, translatorFor, type MessageKey } from '../i18n/messages';
+import { PROFILE_RETRY_KEY, PROFILE_UNAVAILABLE_KEY } from '../profile-load';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import {
-  BACK_TO_ACCOUNT_LINK,
+  BACK_TO_ACCOUNT_KEY,
   DATE_OF_BIRTH_ERROR_ID,
-  DATE_OF_BIRTH_HINT,
+  DATE_OF_BIRTH_HINT_KEY,
   DATE_OF_BIRTH_HINT_ID,
-  DATE_OF_BIRTH_LABEL,
-  DATE_OF_BIRTH_SUBMIT,
-  DECLARED_HEADING,
+  DATE_OF_BIRTH_LABEL_KEY,
+  DATE_OF_BIRTH_SUBMIT_KEY,
+  DECLARED_HEADING_KEY,
   DateOfBirthPanel,
-  REQUEST_NOT_SENT_MESSAGE,
-  SESSION_LOST_MESSAGE,
-  TRY_AGAIN_MESSAGE,
+  REQUEST_NOT_SENT_KEY,
+  SESSION_LOST_KEY,
+  TRY_AGAIN_KEY,
   dateOfBirthDescribedBy,
   dateOfBirthInputBounds,
   dateOfBirthRequestBody,
@@ -33,6 +36,22 @@ import {
   screenStateFor,
   type DateOfBirthScreenState,
 } from './date-of-birth-form';
+
+/**
+ * The Vietnamese sentences these keys name.
+ *
+ * Every render below happens with no `I18nProvider` above it, so the context falls
+ * back to Vietnamese and the markup reads exactly as it did before the catalogue
+ * existed. The DECISIONS, though, are asserted against keys — `declarationOutcomeFor`
+ * is a pure function of an HTTP status and has no business choosing a language.
+ */
+const PROFILE_RETRY_LABEL = VI_TRANSLATE(PROFILE_RETRY_KEY);
+const PROFILE_UNAVAILABLE_MESSAGE = VI_TRANSLATE(PROFILE_UNAVAILABLE_KEY);
+const BACK_TO_ACCOUNT_LINK = VI_TRANSLATE(BACK_TO_ACCOUNT_KEY);
+const DATE_OF_BIRTH_HINT = VI_TRANSLATE(DATE_OF_BIRTH_HINT_KEY);
+const DATE_OF_BIRTH_LABEL = VI_TRANSLATE(DATE_OF_BIRTH_LABEL_KEY);
+const DATE_OF_BIRTH_SUBMIT = VI_TRANSLATE(DATE_OF_BIRTH_SUBMIT_KEY);
+const DECLARED_HEADING = VI_TRANSLATE(DECLARED_HEADING_KEY);
 
 /**
  * The web half of Story 1.4's matrix, executed.
@@ -60,11 +79,11 @@ function user(overrides: Partial<CurrentUser> = {}): CurrentUser {
  * There is no clock to inject any more: the picker's `max` is gone, so nothing this
  * component renders depends on what day it is. See `dateOfBirthInputBounds`.
  */
-function render(state: DateOfBirthScreenState, message: string | null = null): string {
+function render(state: DateOfBirthScreenState, messageKey: MessageKey | null = null): string {
   return renderToStaticMarkup(
     <DateOfBirthPanel
       state={state}
-      notice={message === null ? null : { message, retryAfterSeconds: null }}
+      notice={messageKey === null ? null : { messageKey, retryAfterSeconds: null }}
       submitting={false}
       onRetry={() => undefined}
       onWaitFinished={() => undefined}
@@ -197,9 +216,12 @@ describe('dateOfBirthSubmission — nothing unusable is ever sent', () => {
   ])('refuses %s with the same sentence the server would have sent', (_label, raw) => {
     const submission = dateOfBirthSubmission(raw);
     expect(submission.kind).toBe('invalid');
-    expect(submission.kind === 'invalid' && submission.message).toBe(
-      DATE_OF_BIRTH_INVALID_MESSAGE,
+    expect(submission.kind === 'invalid' && submission.messageKey).toBe(
+      'error.dateOfBirthInvalid',
     );
+    // And the sentence behind that key IS the contract's, imported rather than
+    // retyped — which is the whole claim "the field says what the server would".
+    expect(VI_TRANSLATE('error.dateOfBirthInvalid')).toBe(DATE_OF_BIRTH_INVALID_MESSAGE);
   });
 
   /**
@@ -294,14 +316,14 @@ describe('declarationOutcomeFor — what the endpoint said', () => {
   it('shows the same refusal sentence for a 400 as the field does locally', () => {
     expect(declarationOutcomeFor(400, null)).toEqual({
       kind: 'message',
-      notice: { message: DATE_OF_BIRTH_INVALID_MESSAGE, retryAfterSeconds: null },
+      notice: { messageKey: 'error.dateOfBirthInvalid', retryAfterSeconds: null },
     });
   });
 
   it('says the session ended for a 401', () => {
     expect(declarationOutcomeFor(401, null)).toEqual({
       kind: 'message',
-      notice: { message: SESSION_LOST_MESSAGE, retryAfterSeconds: null },
+      notice: { messageKey: SESSION_LOST_KEY, retryAfterSeconds: null },
     });
   });
 
@@ -317,9 +339,12 @@ describe('declarationOutcomeFor — what the endpoint said', () => {
   it.each([[413], [415]])('says a %i cannot be retried into working', (status) => {
     expect(declarationOutcomeFor(status, null)).toEqual({
       kind: 'message',
-      notice: { message: REQUEST_NOT_SENT_MESSAGE, retryAfterSeconds: null },
+      notice: { messageKey: REQUEST_NOT_SENT_KEY, retryAfterSeconds: null },
     });
-    expect(REQUEST_NOT_SENT_MESSAGE).not.toContain('ít phút');
+    expect(VI_TRANSLATE(REQUEST_NOT_SENT_KEY)).not.toContain('ít phút');
+    // The English half of the same promise: waiting changes nothing about a 413 or
+    // a 415, so neither catalogue may suggest it.
+    expect(translatorFor('en')(REQUEST_NOT_SENT_KEY).toLowerCase()).not.toContain('minutes');
   });
 
   /**
@@ -332,7 +357,7 @@ describe('declarationOutcomeFor — what the endpoint said', () => {
     it('says what /dang-nhap says, with the wait the header carried', () => {
       expect(declarationOutcomeFor(429, '30')).toEqual({
         kind: 'message',
-        notice: { message: RATE_LIMITED_MESSAGE, retryAfterSeconds: 30 },
+        notice: { messageKey: 'error.rateLimited', retryAfterSeconds: 30 },
       });
     });
 
@@ -342,25 +367,70 @@ describe('declarationOutcomeFor — what the endpoint said', () => {
       for (const header of [null, 'abc', '-5', '0', '99999999', ' 30 ']) {
         expect(declarationOutcomeFor(429, header)).toEqual({
           kind: 'message',
-          notice: { message: RATE_LIMITED_MESSAGE, retryAfterSeconds: null },
+          notice: { messageKey: 'error.rateLimited', retryAfterSeconds: null },
         });
       }
     });
 
-    it('renders the wait beside the message, so the number reaches the screen', () => {
-      const html = renderToStaticMarkup(
-        <DateOfBirthPanel
-          state={{ kind: 'needs-declaration', user: user() }}
-          notice={{ message: RATE_LIMITED_MESSAGE, retryAfterSeconds: 30 }}
-          submitting={false}
-          onRetry={() => undefined}
-          onWaitFinished={() => undefined}
-          onSubmit={() => undefined}
-        />,
+    /**
+     * The panel, rendered inside a real provider at a chosen locale.
+     *
+     * Every other render in this file deliberately has NO provider above it, so the
+     * context default applies and the markup is Vietnamese — which is what keeps the
+     * pre-existing assertions asserting the same strings. That is also precisely why
+     * those renders cannot see a missing translator: with `t` Vietnamese on both
+     * sides, `declarationWaitLabel(current)` and `declarationWaitLabel(current, t)`
+     * produce identical output and the expected value `countdownLabel(30)` is
+     * Vietnamese too. Demonstrated: dropping the second argument at
+     * `date-of-birth-form.tsx` left this whole file green.
+     *
+     * So the countdown beside a rate-limited declaration is asserted in ENGLISH, in
+     * a provider, where the two spellings differ. No E2E case reaches a 429 on
+     * submit here — this is the only place that sentence is checked in a second
+     * language.
+     */
+    const renderIn = (locale: Locale, retryAfterSeconds: number | null): string =>
+      renderToStaticMarkup(
+        <I18nProvider locale={locale}>
+          <DateOfBirthPanel
+            state={{ kind: 'needs-declaration', user: user() }}
+            notice={{ messageKey: 'error.rateLimited', retryAfterSeconds }}
+            submitting={false}
+            onRetry={() => undefined}
+            onWaitFinished={() => undefined}
+            onSubmit={() => undefined}
+          />
+        </I18nProvider>,
       );
+
+    it('renders the wait beside the message, so the number reaches the screen', () => {
+      const html = renderIn('vi', 30);
 
       expect(html).toContain(RATE_LIMITED_MESSAGE);
       expect(html).toContain(countdownLabel(30));
+    });
+
+    it('renders BOTH the message and the wait in English for an English request', () => {
+      const html = renderIn('en', 30);
+      const en = translatorFor('en');
+
+      // The message, which was already going through `t`...
+      expect(html).toContain(en('error.rateLimited'));
+      // ...and the countdown beside it, which was the half that could be dropped
+      // silently. `Thử lại sau 30 giây.` under an English sentence is what a lost
+      // translator argument actually looks like on screen.
+      expect(html).toContain('Retry in 30 seconds.');
+      expect(html).not.toContain('giây');
+      expect(html).not.toContain(RATE_LIMITED_MESSAGE);
+    });
+
+    it('picks the English SINGULAR beside the message, one second before the plural', () => {
+      // The plural is only visible in English, and only at 1. A wait rendered
+      // through a Vietnamese translator says `giây` at every count, so this is the
+      // assertion that distinguishes "the translator arrived" from "a translator
+      // arrived".
+      expect(renderIn('en', 1)).toContain('Retry in 1 second.');
+      expect(renderIn('en', 2)).toContain('Retry in 2 seconds.');
     });
   });
 
@@ -371,17 +441,28 @@ describe('declarationOutcomeFor — what the endpoint said', () => {
       // complete on the strength of a 502 means they never come back to finish it.
       expect(declarationOutcomeFor(status, null)).toEqual({
         kind: 'message',
-        notice: { message: TRY_AGAIN_MESSAGE, retryAfterSeconds: null },
+        notice: { messageKey: TRY_AGAIN_KEY, retryAfterSeconds: null },
       });
     },
   );
 
-  it('never says anything technical', () => {
-    for (const status of [0, 400, 401, 415, 429, 500, 502]) {
-      const outcome = declarationOutcomeFor(status, null);
-      if (outcome.kind !== 'message') continue;
-      for (const leak of [String(status), 'HTTP', 'server', 'API', 'fetch']) {
-        expect(outcome.notice.message).not.toContain(leak);
+  it('never says anything technical, in EITHER locale', () => {
+    /**
+     * Translated, and both locales are asked.
+     *
+     * The rule is about the WORDS somebody reads, so checking the key would be
+     * checking nothing — and checking only Vietnamese would leave an English
+     * catalogue free to say "the server returned 500" with every assertion green.
+     */
+    for (const locale of LOCALES) {
+      const t = translatorFor(locale);
+      for (const status of [0, 400, 401, 415, 429, 500, 502]) {
+        const outcome = declarationOutcomeFor(status, null);
+        if (outcome.kind !== 'message') continue;
+        const sentence = t(outcome.notice.messageKey);
+        for (const leak of [String(status), 'http', 'server', 'api', 'fetch']) {
+          expect(sentence.toLowerCase(), `${locale}: ${sentence}`).not.toContain(leak);
+        }
       }
     }
   });
@@ -519,7 +600,7 @@ describe('the screen never renders a date of birth or an age', () => {
 
 describe('a notice is shown where it belongs and nowhere else', () => {
   it('renders the refusal beside the field, as an alert', () => {
-    const html = render({ kind: 'needs-declaration', user: user() }, DATE_OF_BIRTH_INVALID_MESSAGE);
+    const html = render({ kind: 'needs-declaration', user: user() }, 'error.dateOfBirthInvalid');
     expect(html).toContain('role="alert"');
     expect(html).toContain(DATE_OF_BIRTH_INVALID_MESSAGE);
   });
@@ -531,7 +612,7 @@ describe('a notice is shown where it belongs and nowhere else', () => {
   it('does not carry a stale notice onto the confirmation screen', () => {
     // Once the declaration is made, a refusal from a previous attempt is telling
     // somebody about a problem that no longer exists.
-    const html = render({ kind: 'declared' }, DATE_OF_BIRTH_INVALID_MESSAGE);
+    const html = render({ kind: 'declared' }, 'error.dateOfBirthInvalid');
     expect(html).not.toContain(DATE_OF_BIRTH_INVALID_MESSAGE);
   });
 });
@@ -576,7 +657,7 @@ describe('the field is wired up for somebody who cannot see it', () => {
     expect(dateOfBirthDescribedBy(true)).toBe(`${DATE_OF_BIRTH_HINT_ID} ${DATE_OF_BIRTH_ERROR_ID}`);
     expect(dateOfBirthDescribedBy(false)).toBe(DATE_OF_BIRTH_HINT_ID);
 
-    const html = render({ kind: 'needs-declaration', user: user() }, DATE_OF_BIRTH_INVALID_MESSAGE);
+    const html = render({ kind: 'needs-declaration', user: user() }, 'error.dateOfBirthInvalid');
     expect(html).toContain(
       `aria-describedby="${DATE_OF_BIRTH_HINT_ID} ${DATE_OF_BIRTH_ERROR_ID}"`,
     );
@@ -586,7 +667,7 @@ describe('the field is wired up for somebody who cannot see it', () => {
   it('marks the field invalid only while a message is on screen', () => {
     expect(render({ kind: 'needs-declaration', user: user() })).not.toContain('aria-invalid');
     expect(
-      render({ kind: 'needs-declaration', user: user() }, DATE_OF_BIRTH_INVALID_MESSAGE),
+      render({ kind: 'needs-declaration', user: user() }, 'error.dateOfBirthInvalid'),
     ).toContain('aria-invalid="true"');
   });
 

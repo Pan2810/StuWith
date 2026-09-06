@@ -1,9 +1,6 @@
 import {
-  DATE_OF_BIRTH_ALREADY_SET_MESSAGE,
   DATE_OF_BIRTH_FIELD,
-  DATE_OF_BIRTH_INVALID_MESSAGE,
   MIN_DATE_OF_BIRTH_YEAR,
-  RATE_LIMITED_MESSAGE,
   SIGN_IN_PATHNAME,
   isProfileCompleted,
   parseDateOfBirth,
@@ -13,10 +10,12 @@ import {
 import type { FormEvent } from 'react';
 import { SignInCountdown } from '../dang-nhap/countdown';
 import { countdownLabel } from '../dang-nhap/countdown-text';
+import { VI_TRANSLATE, type MessageKey, type Translate } from '../i18n/messages';
+import { useT } from '../i18n/use-t';
 import {
-  PROFILE_RETRY_LABEL,
+  PROFILE_RETRY_KEY,
   profileLoadOutcome,
-  unavailableMessage,
+  unavailableMessageKey,
   type ProfileLoadOutcome,
 } from '../profile-load';
 
@@ -143,7 +142,7 @@ export function screenStateFromOutcome(outcome: ProfileLoadOutcome): DateOfBirth
  */
 export type DateOfBirthSubmission =
   | { readonly kind: 'send'; readonly value: string }
-  | { readonly kind: 'invalid'; readonly message: string };
+  | { readonly kind: 'invalid'; readonly messageKey: MessageKey };
 
 /**
  * The instant this screen asks the shared parser about, and it is deliberately
@@ -173,7 +172,7 @@ const NO_FUTURE_CHECK = new Date(8_640_000_000_000_000);
 export function dateOfBirthSubmission(raw: unknown): DateOfBirthSubmission {
   const parsed = parseDateOfBirth(raw, NO_FUTURE_CHECK);
   return parsed === null
-    ? { kind: 'invalid', message: DATE_OF_BIRTH_INVALID_MESSAGE }
+    ? { kind: 'invalid', messageKey: 'error.dateOfBirthInvalid' }
     : { kind: 'send', value: parsed };
 }
 
@@ -236,7 +235,15 @@ export function dateOfBirthRequestBody(value: string): string {
  * no clock in it.
  */
 export interface DeclarationNotice {
-  readonly message: string;
+  /**
+   * WHICH sentence, not the sentence.
+   *
+   * The decision below reads a status code and has no idea what language the
+   * visitor asked for; the panel does, because it runs inside the provider. A
+   * notice that carried words would have had to choose a locale in
+   * {@link declarationOutcomeFor}, which is a pure function of an HTTP status.
+   */
+  readonly messageKey: MessageKey;
   /** `null` means "no clock", never "zero". */
   readonly retryAfterSeconds: number | null;
 }
@@ -260,9 +267,9 @@ export type DeclarationOutcome =
   | { readonly kind: 'already-declared' }
   | { readonly kind: 'message'; readonly notice: DeclarationNotice };
 
-const notice = (message: string, retryAfterSeconds: number | null): DeclarationOutcome => ({
+const notice = (messageKey: MessageKey, retryAfterSeconds: number | null): DeclarationOutcome => ({
   kind: 'message',
-  notice: { message, retryAfterSeconds },
+  notice: { messageKey, retryAfterSeconds },
 });
 
 /**
@@ -285,7 +292,7 @@ export function declarationOutcomeFor(
     case 409:
       return { kind: 'already-declared' };
     case 400:
-      return notice(DATE_OF_BIRTH_INVALID_MESSAGE, null);
+      return notice('error.dateOfBirthInvalid', null);
     case 413:
     case 415:
       /**
@@ -299,12 +306,12 @@ export function declarationOutcomeFor(
        * that no longer matches the server, so fetching the page again is the one
        * action that could change the outcome.
        */
-      return notice(REQUEST_NOT_SENT_MESSAGE, null);
+      return notice(REQUEST_NOT_SENT_KEY, null);
     case 401:
       // The session died between loading this page and submitting it. The seam
       // has already tried a refresh and raised the dialog; this sentence is what
       // is left on the screen underneath it.
-      return notice(SESSION_LOST_MESSAGE, null);
+      return notice(SESSION_LOST_KEY, null);
     case 429:
       /**
        * The route carries `@RateLimited('auth_date_of_birth')` on a `json`
@@ -318,37 +325,47 @@ export function declarationOutcomeFor(
        * `parseSignInRetryAfterSeconds` is what stops a header this product did not
        * write putting a nonsense number on the screen.
        */
-      return notice(RATE_LIMITED_MESSAGE, parseSignInRetryAfterSeconds(retryAfterHeader));
+      return notice('error.rateLimited', parseSignInRetryAfterSeconds(retryAfterHeader));
     default:
-      return notice(TRY_AGAIN_MESSAGE, null);
+      return notice(TRY_AGAIN_KEY, null);
   }
 }
 
-/** The countdown sentence beside a notice, or `null` when there is no clock. */
-export function declarationWaitLabel(current: DeclarationNotice | null): string | null {
+/**
+ * The countdown sentence beside a notice, or `null` when there is no clock.
+ *
+ * `t` defaults to Vietnamese so this is still a one-argument pure function for the
+ * tests that assert the sentence; the panel passes the request's translator, which
+ * is what makes the plural come out right in English.
+ */
+export function declarationWaitLabel(
+  current: DeclarationNotice | null,
+  t: Translate = VI_TRANSLATE,
+): string | null {
   return current === null || current.retryAfterSeconds === null
     ? null
-    : countdownLabel(current.retryAfterSeconds);
+    : countdownLabel(current.retryAfterSeconds, t);
 }
 
 /**
- * The two sentences that belong to this screen alone and cross no boundary, so
- * they live here rather than in `packages/contracts`.
+ * The three sentences that belong to this screen alone and cross no boundary, so
+ * their keys live here rather than in `packages/contracts`.
  *
- * Neither says anything technical: no status code, no endpoint, no "the server
+ * None says anything technical: no status code, no endpoint, no "the server
  * returned". The acceptance criterion is that a person is told what happened and
- * what to do next, and a number from an HTTP specification is neither.
- *
- * Vietnamese is the default locale; full i18n is Story 1.6.
+ * what to do next, and a number from an HTTP specification is neither. The words
+ * are in `i18n/messages.ts` in both locales, and
+ * `date-of-birth-form.test.tsx` holds every locale's version of them against the
+ * same rule.
  */
-export const SESSION_LOST_MESSAGE = 'Phiên đăng nhập đã kết thúc. Hãy đăng nhập lại rồi thử lại.';
-export const TRY_AGAIN_MESSAGE = 'Chưa lưu được. Hãy thử lại sau ít phút.';
+export const SESSION_LOST_KEY: MessageKey = 'dateOfBirth.sessionLost';
+export const TRY_AGAIN_KEY: MessageKey = 'dateOfBirth.tryAgain';
 
 /**
  * What a PERMANENT refusal says — and it deliberately does not say "in a few
  * minutes", because waiting changes nothing about it.
  */
-export const REQUEST_NOT_SENT_MESSAGE = 'Không gửi được yêu cầu này. Hãy tải lại trang rồi thử lại.';
+export const REQUEST_NOT_SENT_KEY: MessageKey = 'dateOfBirth.requestNotSent';
 
 /** The ids that wire the field to its hint and its error, for a screen reader. */
 export const DATE_OF_BIRTH_INPUT_ID = 'ngay-sinh';
@@ -378,13 +395,13 @@ export function dateOfBirthDescribedBy(hasNotice: boolean): string {
  * exist. It states the consequence instead, which is the part that is true and the
  * part somebody needs before they type.
  */
-export const DATE_OF_BIRTH_LABEL = 'Ngày sinh của bạn';
-export const DATE_OF_BIRTH_HINT = 'Chỉ khai một lần, và sau đó không tự đổi lại được.';
-export const DATE_OF_BIRTH_SUBMIT = 'Lưu ngày sinh';
-export const DECLARED_HEADING = 'Bạn đã khai ngày sinh';
+export const DATE_OF_BIRTH_LABEL_KEY: MessageKey = 'dateOfBirth.label';
+export const DATE_OF_BIRTH_HINT_KEY: MessageKey = 'dateOfBirth.hint';
+export const DATE_OF_BIRTH_SUBMIT_KEY: MessageKey = 'dateOfBirth.submit';
+export const DECLARED_HEADING_KEY: MessageKey = 'dateOfBirth.declaredHeading';
 
 /** Where the terminal branch sends somebody who has nothing left to do here. */
-export const BACK_TO_ACCOUNT_LINK = 'Về trang tài khoản';
+export const BACK_TO_ACCOUNT_KEY: MessageKey = 'dateOfBirth.backToAccount';
 
 /**
  * The whole screen below the heading, as ONE effect-free component.
@@ -437,7 +454,8 @@ export function DateOfBirthPanel({
    */
   readonly onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
-  const waitLabel = declarationWaitLabel(current);
+  const t = useT();
+  const waitLabel = declarationWaitLabel(current, t);
   const bounds = dateOfBirthInputBounds();
 
   switch (state.kind) {
@@ -447,7 +465,7 @@ export function DateOfBirthPanel({
       // the one it starts in.
       return (
         <p className="meta" role="status">
-          Đang kiểm tra phiên…
+          {t('signIn.checkingSession')}
         </p>
       );
 
@@ -457,7 +475,7 @@ export function DateOfBirthPanel({
       return (
         <>
           <p className="notice" role="status">
-            {unavailableMessage(state.retryAfterSeconds)}
+            {t(unavailableMessageKey(state.retryAfterSeconds))}
           </p>
           {/*
             The wait, when the server told us one. Without it this branch said "thử
@@ -478,7 +496,7 @@ export function DateOfBirthPanel({
             disabled={state.retryAfterSeconds !== null}
             onClick={onRetry}
           >
-            {PROFILE_RETRY_LABEL}
+            {t(PROFILE_RETRY_KEY)}
           </button>
         </>
       );
@@ -487,7 +505,7 @@ export function DateOfBirthPanel({
       return (
         <>
           <p className="notice" role="status">
-            Bạn cần đăng nhập trước khi khai ngày sinh.
+            {t('dateOfBirth.signedOut')}
           </p>
           {/*
             A plain link to the login page, and the route comes from
@@ -495,7 +513,7 @@ export function DateOfBirthPanel({
             `SIGN_IN_PATHNAME` there in the first place.
           */}
           <a className="button-primary" href={SIGN_IN_PATHNAME}>
-            Tới trang đăng nhập
+            {t('dateOfBirth.toSignIn')}
           </a>
         </>
       );
@@ -503,13 +521,13 @@ export function DateOfBirthPanel({
     case 'declared':
       return (
         <section className="card">
-          <h2>{DECLARED_HEADING}</h2>
+          <h2>{t(DECLARED_HEADING_KEY)}</h2>
           {/*
             What is NOT here is the point: not the date, not the age, not a field to
             change it. The screen confirms that the step is done and offers no way
             to redo it, because there is no endpoint that would accept one.
           */}
-          <p>{DATE_OF_BIRTH_ALREADY_SET_MESSAGE}</p>
+          <p>{t('error.dateOfBirthAlreadySet')}</p>
           {/*
             And a way ONWARD, which this branch used to lack entirely.
 
@@ -521,7 +539,7 @@ export function DateOfBirthPanel({
             for the same reason every other route on this screen does.
           */}
           <a className="button-secondary" href={SIGN_IN_PATHNAME}>
-            {BACK_TO_ACCOUNT_LINK}
+            {t(BACK_TO_ACCOUNT_KEY)}
           </a>
         </section>
       );
@@ -530,7 +548,7 @@ export function DateOfBirthPanel({
       return (
         <form className="card" onSubmit={onSubmit}>
           <label className="form-label" htmlFor={DATE_OF_BIRTH_INPUT_ID}>
-            {DATE_OF_BIRTH_LABEL}
+            {t(DATE_OF_BIRTH_LABEL_KEY)}
           </label>
           {/*
             `type="date"` so a browser offers its own picker and produces the one
@@ -564,16 +582,16 @@ export function DateOfBirthPanel({
             aria-invalid={current === null ? undefined : true}
           />
           <p className="meta" id={DATE_OF_BIRTH_HINT_ID}>
-            {DATE_OF_BIRTH_HINT}
+            {t(DATE_OF_BIRTH_HINT_KEY)}
           </p>
           {current === null ? null : (
             <p className="notice notice-alert" id={DATE_OF_BIRTH_ERROR_ID} role="alert">
-              {current.message}
+              {t(current.messageKey)}
               {waitLabel === null ? null : ` ${waitLabel}`}
             </p>
           )}
           <button type="submit" className="button-primary" disabled={submitting}>
-            {DATE_OF_BIRTH_SUBMIT}
+            {t(DATE_OF_BIRTH_SUBMIT_KEY)}
           </button>
         </form>
       );

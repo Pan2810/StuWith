@@ -18,7 +18,6 @@
 import {
   DATE_OF_BIRTH_PATHNAME,
   MAX_SIGN_IN_RETRY_AFTER_SECONDS,
-  RATE_LIMITED_MESSAGE,
   SIGN_IN_OUTCOME_QUERY_PARAM,
   SIGN_IN_RETRY_AFTER_QUERY_PARAM,
   isProfileCompleted,
@@ -27,7 +26,9 @@ import {
   type CurrentUser,
   type SignInOutcome,
 } from '@stuwith/contracts';
-import { PROFILE_RETRY_LABEL, unavailableMessage } from '../profile-load';
+import { roleMessageKey, type MessageKey } from '../i18n/messages';
+import { useT } from '../i18n/use-t';
+import { PROFILE_RETRY_KEY, unavailableMessageKey } from '../profile-load';
 import { SignInProviderLinks } from '../sign-in-links';
 import { SignInCountdown } from './countdown';
 
@@ -38,11 +39,12 @@ import { SignInCountdown } from './countdown';
  * outcome is one fact, and splitting it across two declarations is how a code
  * ends up with a sentence and no role, or a role and no sentence.
  *
- * The sentences are the acceptance criteria's, word for word, and this is the
- * only place either exists. It is also the only place a code from the URL becomes
- * text: what is rendered is always one of these constants, never the value that
- * arrived, so there is nothing for `?ket-qua=<script>…` to reflect even before
- * {@link isSignInOutcome} refuses it.
+ * The sentences are the acceptance criteria's, word for word, and they live in
+ * `i18n/messages.ts`; what this table holds is the KEY, which is the part that is
+ * really about the outcome. It is still the only place a code from the URL becomes
+ * text: what is rendered is always the sentence one of these keys names, never the
+ * value that arrived, so there is nothing for `?ket-qua=<script>…` to reflect even
+ * before {@link isSignInOutcome} refuses it.
  *
  * Cancelling is NOT an error and the markup is what says so — not a colour.
  * `status` is announced politely and carries no alarm; `alert` interrupts.
@@ -51,25 +53,26 @@ import { SignInCountdown } from './countdown';
  * channel (WCAG 1.4.1), so the distinction had to exist before there was anything
  * to paint and it still has to survive being repainted.
  *
- * Vietnamese, and there is no second locale: `epics.md` gives Story 1.6 the design
- * system and nothing about i18n. `deferred-work.md` carries that intention.
+ * `error.rateLimited` is the one key here whose Vietnamese value the catalogue
+ * IMPORTS from `packages/contracts`: `apps/api` puts that exact string in the
+ * `rate_limited` envelope, and one sentence with two consumers must not exist twice.
  */
 export const OUTCOME_NOTICES: Record<
   SignInOutcome,
   {
-    readonly message: string;
+    readonly messageKey: MessageKey;
     readonly role: 'status' | 'alert';
     /** Whether a `?giay=` value means anything for this outcome. Only one does. */
     readonly showsCountdown: boolean;
   }
 > = {
   'that-bai': {
-    message: 'Không đăng nhập được. Thử lại hoặc chọn cách khác.',
+    messageKey: 'signIn.outcome.failed',
     role: 'alert',
     showsCountdown: false,
   },
   'da-huy': {
-    message: 'Bạn đã huỷ ở bước cấp quyền. Chọn lại cách đăng nhập bên dưới.',
+    messageKey: 'signIn.outcome.cancelled',
     role: 'status',
     showsCountdown: false,
   },
@@ -83,7 +86,7 @@ export const OUTCOME_NOTICES: Record<
    * it. The countdown beside it carries the only number in the story.
    */
   'bi-khoa': {
-    message: RATE_LIMITED_MESSAGE,
+    messageKey: 'error.rateLimited',
     role: 'status',
     showsCountdown: true,
   },
@@ -369,6 +372,7 @@ export function SignInPanel({
    */
   readonly onRetry: () => void;
 }) {
+  const t = useT();
   const canSignIn = status === 'signed-out';
   const loading = status === 'loading';
   const presentation = notice === null ? null : OUTCOME_NOTICES[notice.outcome];
@@ -407,7 +411,7 @@ export function SignInPanel({
             className={presentation.role === 'alert' ? 'notice notice-alert' : 'notice'}
             role={presentation.role}
           >
-            {presentation.message}
+            {t(presentation.messageKey)}
           </p>
           {seconds === null ? null : (
             <SignInCountdown seconds={seconds} onFinished={onCountdownFinished} />
@@ -415,7 +419,7 @@ export function SignInPanel({
         </>
       )}
 
-      {loading ? <p className="meta">Đang kiểm tra phiên…</p> : null}
+      {loading ? <p className="meta">{t('signIn.checkingSession')}</p> : null}
 
       {/*
         The state this page could not express, and the reason it needed to.
@@ -433,7 +437,7 @@ export function SignInPanel({
       {status === 'unavailable' ? (
         <>
           <p className="notice" role="status">
-            {unavailableMessage(retryAfterSeconds)}
+            {t(unavailableMessageKey(retryAfterSeconds))}
           </p>
           {retryAfterSeconds === null ? null : (
             <SignInCountdown seconds={retryAfterSeconds} onFinished={onCountdownFinished} />
@@ -444,14 +448,14 @@ export function SignInPanel({
             disabled={retryAfterSeconds !== null}
             onClick={onRetry}
           >
-            {PROFILE_RETRY_LABEL}
+            {t(PROFILE_RETRY_KEY)}
           </button>
         </>
       ) : null}
 
       {signInOptionsVisible(notice, canSignIn) ? (
         <nav className="card">
-          <p>Chọn tài khoản mạng xã hội để tiếp tục:</p>
+          <p>{t('signIn.chooseProvider')}</p>
           {/*
             The same list the session-expiry dialog offers — one module, so the two
             screens cannot come to say different things about the same provider.
@@ -462,10 +466,7 @@ export function SignInPanel({
             changes nothing while looking like it changes something.
           */}
           <SignInProviderLinks apiBaseUrl={apiBaseUrl} returnPath={null} />
-          <p className="meta">
-            Provider chưa được bật trên máy chủ này sẽ trả về &ldquo;không tìm
-            thấy&rdquo;.
-          </p>
+          <p className="meta">{t('signIn.providerDisabled')}</p>
         </nav>
       ) : null}
     </>
@@ -510,10 +511,9 @@ export function signedInNextStep(user: Pick<CurrentUser, 'profile_completed'>): 
     : { kind: 'declare-date-of-birth', href: DATE_OF_BIRTH_PATHNAME };
 }
 
-/** The sentence that sends somebody to the declaration screen, and the link's text. */
-export const DECLARE_DATE_OF_BIRTH_PROMPT =
-  'Hồ sơ của bạn còn thiếu ngày sinh. Hãy khai ngày sinh để dùng đầy đủ tính năng.';
-export const DECLARE_DATE_OF_BIRTH_LINK = 'Khai ngày sinh';
+/** Which sentence sends somebody to the declaration screen, and which link text. */
+export const DECLARE_DATE_OF_BIRTH_PROMPT_KEY: MessageKey = 'signIn.declarePrompt';
+export const DECLARE_DATE_OF_BIRTH_LINK_KEY: MessageKey = 'signIn.declareLink';
 
 /**
  * The signed-in view, as ONE effect-free component.
@@ -536,12 +536,30 @@ export function SignedInPanel({
   /** REQUIRED: a panel that renders the button and loses the handler is the bug. */
   readonly onSignOut: () => void;
 }) {
+  const t = useT();
   const next = signedInNextStep(user);
 
   return (
     <section className="card">
+      {/*
+        ONE sentence with two slots, not three pieces of text stitched together.
+
+        `t.nodes` is what lets the display name keep its `<strong>` while the
+        sentence around it stays translatable in one go — word order differs between
+        languages, and a sentence assembled from fragments in JSX fixes Vietnamese
+        word order for every locale.
+
+        The ROLE goes through `roleMessageKey`. This line used to render
+        `{user.role}` RAW, so an organisation administrator read
+        "(vai trò: org_admin)" on their own account page: `USER_ROLES` is the
+        vocabulary two processes agree on, and a wire enum is not a label in any
+        language.
+      */}
       <p>
-        Đang đăng nhập: <strong>{user.display_name}</strong> (vai trò: {user.role})
+        {t.nodes('signIn.signedInAs', {
+          name: <strong>{user.display_name}</strong>,
+          role: t(roleMessageKey(user.role)),
+        })}
       </p>
 
       {next.kind === 'declare-date-of-birth' ? (
@@ -553,16 +571,16 @@ export function SignedInPanel({
             literal, which is the same rule that put `SIGN_IN_PATHNAME` there.
           */}
           <p className="notice" role="status">
-            {DECLARE_DATE_OF_BIRTH_PROMPT}
+            {t(DECLARE_DATE_OF_BIRTH_PROMPT_KEY)}
           </p>
           <a className="button-primary" href={next.href}>
-            {DECLARE_DATE_OF_BIRTH_LINK}
+            {t(DECLARE_DATE_OF_BIRTH_LINK_KEY)}
           </a>
         </>
       ) : null}
 
       <button type="button" className="button-secondary" onClick={onSignOut}>
-        Đăng xuất
+        {t('signIn.signOut')}
       </button>
     </section>
   );
