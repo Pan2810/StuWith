@@ -68,10 +68,16 @@ function renderPanel(notice: SignInNotice | null, canSignIn = true): string {
  * The panel now renders the login links too — they are one decision and used to be
  * two deletable ones — so the sentence assertions look at everything before the
  * `<nav>`.
+ *
+ * `'<nav'` and not `'<nav>'`: Story 1.6 gave the element a class, and a helper
+ * looking for the closing angle bracket silently found nothing, returned the WHOLE
+ * panel, and turned every exact-markup assertion below into a comparison against
+ * the wrong string. The same one-character difference makes the `not.toContain`
+ * cases real rather than vacuously true.
  */
 function render(notice: SignInNotice | null, canSignIn = true): string {
   const html = renderPanel(notice, canSignIn);
-  const nav = html.indexOf('<nav>');
+  const nav = html.indexOf('<nav');
   return nav === -1 ? html : html.slice(0, nav);
 }
 
@@ -96,10 +102,29 @@ function renderLoadFor(search: string): string {
 }
 
 describe('the sentences on the screen are the ones the AC specifies', () => {
+  /**
+   * The SENTENCE and the ROLE, checked separately from the class.
+   *
+   * These examples exist to protect the two sentences the acceptance criteria
+   * specify, word for word, and the role that says which of them is an error. They
+   * used to assert one exact string of markup — which meant Story 1.6 could not add
+   * a class without editing the acceptance criteria's own test, and the next restyle
+   * cannot either. The `'<nav>'` -> `'<nav'` edit this same file needed was the
+   * warning shot.
+   *
+   * The class is still asserted, in its own example below, where a failure says
+   * "the styling changed" instead of "the acceptance criteria changed".
+   */
+  const notice = (html: string): { text: string; role: string | null } => ({
+    text: html.replace(/<[^>]*>/g, '').trim(),
+    role: /role="([^"]*)"/.exec(html)?.[1] ?? null,
+  });
+
   it('renders AC1 verbatim, in the voice of an error', () => {
-    expect(renderLoadFor('?ket-qua=that-bai')).toBe(
-      '<p role="alert">Không đăng nhập được. Thử lại hoặc chọn cách khác.</p>',
-    );
+    expect(notice(renderLoadFor('?ket-qua=that-bai'))).toEqual({
+      text: 'Không đăng nhập được. Thử lại hoặc chọn cách khác.',
+      role: 'alert',
+    });
   });
 
   it('renders AC2 verbatim, and NOT as an error', () => {
@@ -108,10 +133,22 @@ describe('the sentences on the screen are the ones the AC specifies', () => {
     // `status` rather than `alert`: the person changed their mind, and the page
     // must not present that as something going wrong. Colour is not the channel —
     // there is no colour here yet, and there must not need to be.
-    expect(html).toBe(
-      '<p role="status">Bạn đã huỷ ở bước cấp quyền. Chọn lại cách đăng nhập bên dưới.</p>',
-    );
+    expect(notice(html)).toEqual({
+      text: 'Bạn đã huỷ ở bước cấp quyền. Chọn lại cách đăng nhập bên dưới.',
+      role: 'status',
+    });
     expect(html).not.toContain('alert');
+  });
+
+  it('paints the two apart as well as marking them apart', () => {
+    // The styling half, separated on purpose: colour must never be the only channel
+    // (`EXPERIENCE.md § Accessibility Floor`), so the role above is the load-bearing
+    // difference and this is the decoration that follows it. A failure here reads as
+    // "the design changed"; a failure above reads as "the product started saying
+    // something else".
+    expect(renderLoadFor('?ket-qua=that-bai')).toContain('class="notice notice-alert"');
+    expect(renderLoadFor('?ket-qua=da-huy')).toContain('class="notice"');
+    expect(renderLoadFor('?ket-qua=da-huy')).not.toContain('notice-alert');
   });
 
   it.each([...SIGN_IN_OUTCOMES])('says something for the declared code %s', (outcome) => {
@@ -696,7 +733,7 @@ describe('a lock hides the login links for as long as the lock can really last',
     const html = renderPanel({ outcome: 'bi-khoa', retryAfterSeconds: 3_600 }, true);
 
     expect(html).toContain(countdownLabel(3_600));
-    expect(html).not.toContain('<nav>');
+    expect(html).not.toContain('<nav');
   });
 });
 
@@ -736,7 +773,7 @@ describe('a rate-limited /v1/auth/me is not "signed out"', () => {
           onRetry={() => undefined}
         />,
       ),
-    ).not.toContain('<nav>');
+    ).not.toContain('<nav');
   });
 });
 
@@ -744,12 +781,12 @@ describe('the panel is one decision, not two', () => {
   it('offers the login links on an ordinary signed-out visit', () => {
     const html = renderPanel(null, true);
 
-    expect(html).toContain('<nav>');
+    expect(html).toContain('<nav');
     expect(html).toContain('/v1/auth/google/start');
   });
 
   it('offers none of them to a visitor who is already signed in', () => {
-    expect(renderPanel(null, false)).not.toContain('<nav>');
+    expect(renderPanel(null, false)).not.toContain('<nav');
   });
 
   it('never shows a wait message above links that would spend another attempt', () => {
@@ -759,7 +796,7 @@ describe('the panel is one decision, not two', () => {
     const html = renderPanel({ outcome: 'bi-khoa', retryAfterSeconds: 30 }, true);
 
     expect(html).toContain(RATE_LIMITED_MESSAGE);
-    expect(html).not.toContain('<nav>');
+    expect(html).not.toContain('<nav');
     expect(html).not.toContain('/v1/auth/google/start');
   });
 
@@ -826,7 +863,7 @@ describe('the login page can say "we could not read your profile"', () => {
     expect(html).toContain(PROFILE_RETRY_LABEL);
     // The four links are the loop: signing in again cannot fix a body that will not
     // parse, and each click spends an attempt.
-    expect(html).not.toContain('<nav>');
+    expect(html).not.toContain('<nav');
     expect(html).not.toContain('/v1/auth/google/start');
   });
 
@@ -836,7 +873,7 @@ describe('the login page can say "we could not read your profile"', () => {
     expect(html).toContain(RATE_LIMITED_MESSAGE);
     expect(html).toContain(countdownLabel(45));
     expect(html).toContain('disabled');
-    expect(html).not.toContain('<nav>');
+    expect(html).not.toContain('<nav');
   });
 
   it('leaves the retry usable when there is no wait', () => {
@@ -851,7 +888,7 @@ describe('the login page can say "we could not read your profile"', () => {
     const html = renderPanel(null, true);
 
     expect(html).not.toContain(PROFILE_UNAVAILABLE_MESSAGE);
-    expect(html).toContain('<nav>');
+    expect(html).toContain('<nav');
   });
 });
 

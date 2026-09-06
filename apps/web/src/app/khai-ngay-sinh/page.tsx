@@ -23,11 +23,11 @@ import {
 /**
  * The first-login declaration screen.
  *
- * Deliberately unstyled. The design system — tokens, light/dark, the "Cắm trại"
- * identity — is Story 1.6, and provisional styling here would only have to be
- * deleted. What this page proves now is what Story 1.4 owns: a person who has not
- * declared a date of birth is offered exactly one chance to, through the shared
- * seam, and everything the screen decides is in a function a test can execute.
+ * Styled by Story 1.6, and styled the only way this app allows: classes from
+ * `globals.css`, tokens from `tokens.css`, nothing written here. What this page
+ * proves is still what Story 1.4 owns — a person who has not declared a date of
+ * birth is offered exactly one chance to, through the shared seam, and everything
+ * the screen decides is in a function a test can execute.
  *
  * Everything left in this file needs a browser and nothing else: two calls
  * through `authorizedFetch`, `setState`, and reading the submitted form. Every
@@ -199,7 +199,7 @@ export default function KhaiNgaySinhPage() {
   );
 
   return (
-    <main>
+    <main className="page-shell">
       <h1>Khai ngày sinh</h1>
       {/*
         The panel owns the `<form>`, because whether there is one at all is one of

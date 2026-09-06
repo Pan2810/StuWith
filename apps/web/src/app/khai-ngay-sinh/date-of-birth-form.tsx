@@ -445,14 +445,20 @@ export function DateOfBirthPanel({
       // `status` like the other two non-form branches. It was the only one without
       // it, so a screen reader was told about every state of this screen except
       // the one it starts in.
-      return <p role="status">Đang kiểm tra phiên…</p>;
+      return (
+        <p className="meta" role="status">
+          Đang kiểm tra phiên…
+        </p>
+      );
 
     case 'unavailable':
       // `status`, not `alert`: nothing is wrong with what the person did, and
       // nothing here is urgent enough to interrupt a screen reader mid-sentence.
       return (
         <>
-          <p role="status">{unavailableMessage(state.retryAfterSeconds)}</p>
+          <p className="notice" role="status">
+            {unavailableMessage(state.retryAfterSeconds)}
+          </p>
           {/*
             The wait, when the server told us one. Without it this branch said "thử
             lại sau ít phút" and offered a button that called straight back into the
@@ -468,6 +474,7 @@ export function DateOfBirthPanel({
           )}
           <button
             type="button"
+            className="button-secondary"
             disabled={state.retryAfterSeconds !== null}
             onClick={onRetry}
           >
@@ -479,19 +486,23 @@ export function DateOfBirthPanel({
     case 'signed-out':
       return (
         <>
-          <p role="status">Bạn cần đăng nhập trước khi khai ngày sinh.</p>
+          <p className="notice" role="status">
+            Bạn cần đăng nhập trước khi khai ngày sinh.
+          </p>
           {/*
             A plain link to the login page, and the route comes from
             `packages/contracts` rather than from a literal — the same rule that put
             `SIGN_IN_PATHNAME` there in the first place.
           */}
-          <a href={SIGN_IN_PATHNAME}>Tới trang đăng nhập</a>
+          <a className="button-primary" href={SIGN_IN_PATHNAME}>
+            Tới trang đăng nhập
+          </a>
         </>
       );
 
     case 'declared':
       return (
-        <section>
+        <section className="card">
           <h2>{DECLARED_HEADING}</h2>
           {/*
             What is NOT here is the point: not the date, not the age, not a field to
@@ -509,14 +520,18 @@ export function DateOfBirthPanel({
             the sign-out button in it, and the route comes from `packages/contracts`
             for the same reason every other route on this screen does.
           */}
-          <a href={SIGN_IN_PATHNAME}>{BACK_TO_ACCOUNT_LINK}</a>
+          <a className="button-secondary" href={SIGN_IN_PATHNAME}>
+            {BACK_TO_ACCOUNT_LINK}
+          </a>
         </section>
       );
 
     case 'needs-declaration':
       return (
-        <form onSubmit={onSubmit}>
-          <label htmlFor={DATE_OF_BIRTH_INPUT_ID}>{DATE_OF_BIRTH_LABEL}</label>
+        <form className="card" onSubmit={onSubmit}>
+          <label className="form-label" htmlFor={DATE_OF_BIRTH_INPUT_ID}>
+            {DATE_OF_BIRTH_LABEL}
+          </label>
           {/*
             `type="date"` so a browser offers its own picker and produces the one
             format the contract accepts — `YYYY-MM-DD` is exactly what a date
@@ -537,6 +552,7 @@ export function DateOfBirthPanel({
             disagreement is not expressible.
           */}
           <input
+            className="field"
             id={DATE_OF_BIRTH_INPUT_ID}
             name={DATE_OF_BIRTH_FIELD}
             type="date"
@@ -547,14 +563,16 @@ export function DateOfBirthPanel({
             // "unavailable" and "signed out" never render this input at all.
             aria-invalid={current === null ? undefined : true}
           />
-          <p id={DATE_OF_BIRTH_HINT_ID}>{DATE_OF_BIRTH_HINT}</p>
+          <p className="meta" id={DATE_OF_BIRTH_HINT_ID}>
+            {DATE_OF_BIRTH_HINT}
+          </p>
           {current === null ? null : (
-            <p id={DATE_OF_BIRTH_ERROR_ID} role="alert">
+            <p className="notice notice-alert" id={DATE_OF_BIRTH_ERROR_ID} role="alert">
               {current.message}
               {waitLabel === null ? null : ` ${waitLabel}`}
             </p>
           )}
-          <button type="submit" disabled={submitting}>
+          <button type="submit" className="button-primary" disabled={submitting}>
             {DATE_OF_BIRTH_SUBMIT}
           </button>
         </form>

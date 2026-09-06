@@ -46,11 +46,13 @@ import { SignInCountdown } from './countdown';
  *
  * Cancelling is NOT an error and the markup is what says so — not a colour.
  * `status` is announced politely and carries no alarm; `alert` interrupts.
- * Styling is Story 1.6's, but colour must never be the only channel carrying the
- * difference, so the distinction has to exist before there is anything to paint.
+ * Story 1.6 painted the two differently, and the ROLE is still what carries the
+ * difference: `EXPERIENCE.md § Accessibility Floor` forbids colour as the only
+ * channel (WCAG 1.4.1), so the distinction had to exist before there was anything
+ * to paint and it still has to survive being repainted.
  *
- * Full i18n is Story 1.6; Vietnamese is the default locale and these are its
- * strings.
+ * Vietnamese, and there is no second locale: `epics.md` gives Story 1.6 the design
+ * system and nothing about i18n. `deferred-work.md` carries that intention.
  */
 export const OUTCOME_NOTICES: Record<
   SignInOutcome,
@@ -395,14 +397,25 @@ export function SignInPanel({
       */}
       {presentation === null || !canSignIn ? null : (
         <>
-          <p role={presentation.role}>{presentation.message}</p>
+          {/*
+            `notice-alert` only on the `alert` role, so the two are one decision
+            rather than two: a failure reads as `warn-container`, a cancellation
+            reads as an ordinary `surface-sunken` note. Neither relies on the
+            colour alone — the sentence says which is which.
+          */}
+          <p
+            className={presentation.role === 'alert' ? 'notice notice-alert' : 'notice'}
+            role={presentation.role}
+          >
+            {presentation.message}
+          </p>
           {seconds === null ? null : (
             <SignInCountdown seconds={seconds} onFinished={onCountdownFinished} />
           )}
         </>
       )}
 
-      {loading ? <p>Đang kiểm tra phiên…</p> : null}
+      {loading ? <p className="meta">Đang kiểm tra phiên…</p> : null}
 
       {/*
         The state this page could not express, and the reason it needed to.
@@ -419,18 +432,25 @@ export function SignInPanel({
       */}
       {status === 'unavailable' ? (
         <>
-          <p role="status">{unavailableMessage(retryAfterSeconds)}</p>
+          <p className="notice" role="status">
+            {unavailableMessage(retryAfterSeconds)}
+          </p>
           {retryAfterSeconds === null ? null : (
             <SignInCountdown seconds={retryAfterSeconds} onFinished={onCountdownFinished} />
           )}
-          <button type="button" disabled={retryAfterSeconds !== null} onClick={onRetry}>
+          <button
+            type="button"
+            className="button-secondary"
+            disabled={retryAfterSeconds !== null}
+            onClick={onRetry}
+          >
             {PROFILE_RETRY_LABEL}
           </button>
         </>
       ) : null}
 
       {signInOptionsVisible(notice, canSignIn) ? (
-        <nav>
+        <nav className="card">
           <p>Chọn tài khoản mạng xã hội để tiếp tục:</p>
           {/*
             The same list the session-expiry dialog offers — one module, so the two
@@ -442,7 +462,7 @@ export function SignInPanel({
             changes nothing while looking like it changes something.
           */}
           <SignInProviderLinks apiBaseUrl={apiBaseUrl} returnPath={null} />
-          <p>
+          <p className="meta">
             Provider chưa được bật trên máy chủ này sẽ trả về &ldquo;không tìm
             thấy&rdquo;.
           </p>
@@ -519,7 +539,7 @@ export function SignedInPanel({
   const next = signedInNextStep(user);
 
   return (
-    <section>
+    <section className="card">
       <p>
         Đang đăng nhập: <strong>{user.display_name}</strong> (vai trò: {user.role})
       </p>
@@ -532,12 +552,16 @@ export function SignedInPanel({
             here, and the route comes from `packages/contracts` rather than from a
             literal, which is the same rule that put `SIGN_IN_PATHNAME` there.
           */}
-          <p role="status">{DECLARE_DATE_OF_BIRTH_PROMPT}</p>
-          <a href={next.href}>{DECLARE_DATE_OF_BIRTH_LINK}</a>
+          <p className="notice" role="status">
+            {DECLARE_DATE_OF_BIRTH_PROMPT}
+          </p>
+          <a className="button-primary" href={next.href}>
+            {DECLARE_DATE_OF_BIRTH_LINK}
+          </a>
         </>
       ) : null}
 
-      <button type="button" onClick={onSignOut}>
+      <button type="button" className="button-secondary" onClick={onSignOut}>
         Đăng xuất
       </button>
     </section>

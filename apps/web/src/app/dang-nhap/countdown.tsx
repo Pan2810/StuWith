@@ -105,7 +105,13 @@ export function SignInCountdown({
   const announced = view.done || now === deadline - seconds * 1_000;
 
   return (
-    <p role="status" aria-live="polite">
+    /*
+      `notice-countdown` carries `tabular-nums` — `DESIGN.md § Typography` makes it
+      a hard rule for every number that changes over time, because a digit that
+      changes width makes the layout jump once a second, and a clock that twitches
+      while somebody waits out a lockout reads as a malfunction.
+    */
+    <p className="notice-countdown" role="status" aria-live="polite">
       {announced ? view.message : <span aria-hidden="true">{view.message}</span>}
     </p>
   );

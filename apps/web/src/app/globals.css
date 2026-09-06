@@ -1,0 +1,632 @@
+@import './tokens.css';
+
+/* =========================================================================
+   StuWith — hệ thiết kế "Cắm trại" · tầng trình bày
+   =========================================================================
+
+   `tokens.css` sở hữu GIÁ TRỊ; file này sở hữu CÁCH GHÉP. Ranh giới đó là thứ
+   khiến `design-tokens.test.ts` đọc được một file duy nhất và nói chắc chắn rằng
+   nó khớp `DESIGN.md`: nếu một mã màu xuất hiện ở đây, nó là bản giá trị thứ hai
+   và luật quét không nhìn thấy nó.
+
+   Nên ở đây không có một màu chữ thẳng nào — không hex, không `rgb()`, không tên
+   màu — mọi màu là `var(--…)`. HAI luật quét giữ câu đó, chứ không phải thiện chí:
+   một luật từ chối mọi màu chữ thẳng trong file này, và một luật bắt mọi `var()`
+   phải trỏ tới một biến có thật. Bản đầu của docblock này khẳng định điều thứ nhất
+   trong khi chỉ có điều thứ hai tồn tại — một câu đúng mà không có gì giữ, tức là
+   tệ hơn cả hai lựa chọn.
+
+   Tên class của component là **khoá chung với `DESIGN.md` và `EXPERIENCE.md`**:
+   `button-primary`, `button-secondary`, `chip-status`. Ghép hai spine bằng khoá,
+   không bằng nhãn — `DESIGN.md § Quy ước đọc token` khoản 2.
+   ========================================================================= */
+
+/*
+  Bóng lệch cứng, ba mức của `DESIGN.md § Elevation & Depth`.
+
+  Ở đây chứ không ở `tokens.css` vì frontmatter không có nhóm `shadow`: ba giá trị
+  này sống trong khối `components` dưới dạng tham chiếu (`'3px 3px 0 {colors.border-ink}'`),
+  và khối đó là composition chứ không phải giá trị. Màu vẫn là `var(--border-ink)`,
+  nên nó tự đổi theo chế độ; thứ đổi theo chế độ ở đây chỉ là ĐỘ LỆCH — "ở chế độ
+  tối, bóng lệch giảm một mức vì tương phản nền đã tự tạo chiều sâu".
+
+  Ba khối giống hệt khuôn của `tokens.css`, kể cả guard, và `design-tokens.test.ts`
+  kiểm khuôn đó trên cả hai file.
+*/
+:root {
+  --shadow-1: 3px 3px 0 var(--border-ink);
+  --shadow-2: 4px 4px 0 var(--border-ink);
+  --shadow-3: 6px 6px 0 var(--border-ink);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --shadow-1: 2px 2px 0 var(--border-ink);
+    --shadow-2: 3px 3px 0 var(--border-ink);
+    --shadow-3: 4px 4px 0 var(--border-ink);
+  }
+}
+
+:root[data-theme="dark"] {
+  --shadow-1: 2px 2px 0 var(--border-ink);
+  --shadow-2: 3px 3px 0 var(--border-ink);
+  --shadow-3: 4px 4px 0 var(--border-ink);
+}
+
+/* ============================ nền ============================ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  /*
+    Nói cho trình duyệt biết bề mặt này có hai chế độ, để form control gốc
+    (`input[type="date"]`, con trỏ nhập, thanh cuộn) đi theo — không có dòng này
+    thì lịch của `type="date"` vẫn trắng trên nền tối.
+  */
+  color-scheme: light dark;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--surface-base);
+  color: var(--ink-primary);
+  font-family: var(--typography-base-font-family);
+  font-size: var(--typography-body-font-size);
+  font-weight: var(--typography-body-font-weight);
+  line-height: var(--typography-body-line-height);
+  -webkit-font-smoothing: antialiased;
+}
+
+/*
+  Reflow ở tương đương 320px (WCAG 1.4.10) là một tính chất của BỐ CỤC, không phải
+  một lần `overflow-x: hidden`.
+
+  Cắt phần tràn cũng làm mất thanh cuộn ngang, và nó làm điều đó bằng cách giấu nội
+  dung — đúng thứ 1.4.10 tồn tại để chặn — đồng thời làm mọi phép đo tràn trong test
+  trở thành xanh giả. Nên không có dòng đó ở đây; thay vào đó mọi khối co giãn được,
+  và ca e2e đo `scrollWidth` ở 320px là thứ nói rằng nó thật sự co được.
+*/
+
+/* ======================= typography ======================= */
+
+h1 {
+  font-size: var(--typography-display-font-size);
+  font-weight: var(--typography-display-font-weight);
+  line-height: var(--typography-display-line-height);
+  letter-spacing: var(--typography-display-letter-spacing);
+  margin: 0 0 var(--spacing-4);
+}
+
+h2 {
+  font-size: var(--typography-headline-font-size);
+  font-weight: var(--typography-headline-font-weight);
+  line-height: var(--typography-headline-line-height);
+  margin: 0 0 var(--spacing-3);
+}
+
+h3 {
+  font-size: var(--typography-title-font-size);
+  font-weight: var(--typography-title-font-weight);
+  line-height: var(--typography-title-line-height);
+  margin: 0 0 var(--spacing-2);
+}
+
+p {
+  margin: 0 0 var(--spacing-3);
+}
+
+p:last-child {
+  margin-bottom: 0;
+}
+
+strong {
+  font-weight: var(--typography-body-strong-font-weight);
+}
+
+a {
+  color: var(--primary);
+  font-weight: var(--typography-body-strong-font-weight);
+  text-underline-offset: 3px;
+}
+
+/*
+  Mọi số biến thiên theo thời gian dùng chữ số cùng bề rộng — `DESIGN.md §
+  Typography`, "luật cứng về số". Đồng hồ đếm ngược là `role="status"`, nên luật
+  bám vào vai trò chứ không vào một class ai đó phải nhớ thêm.
+*/
+[role="status"],
+[role="alert"],
+.numeric {
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+  Tiện ích visually-hidden, port từ `demo-san-pham.html:81`.
+
+  Nội dung vẫn ở trong cây a11y — đây là cách một nút nói thêm điều gì đó với
+  trình đọc màn hình mà không đổi bố cục. Không phải `display: none`, thứ đó xoá
+  luôn khỏi cây.
+*/
+.sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* ========================= vòng focus ========================= */
+
+/*
+  `EXPERIENCE.md:218`, nguyên văn: "Vòng focus 2px `{colors.primary}`, cách viền
+  2px. Không bao giờ tắt outline."
+
+  `demo-san-pham.html:79` dùng 3px — đổi về 2px cho khớp spine, vì spine thắng khi
+  xung đột với mock. Và `demo-san-pham.html:184` (`.field:focus{…outline:none}`)
+  KHÔNG được port: độ đặc hiệu của nó đè lên luật này, nên người dùng bàn phím gõ
+  vào ô nhập sẽ không thấy focus ở đâu cả. `design-tokens.test.ts` từ chối mọi
+  `outline: none` trong hai file CSS này.
+*/
+:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+  border-radius: var(--rounded-sm);
+}
+
+/* ========================= bố cục trang ========================= */
+
+.page-shell {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: var(--spacing-6) var(--spacing-margin-mobile) var(--spacing-12);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-5);
+}
+
+@media (min-width: 720px) {
+  .page-shell {
+    padding-left: var(--spacing-margin-desktop);
+    padding-right: var(--spacing-margin-desktop);
+  }
+}
+
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-4);
+  flex-wrap: wrap;
+  padding: var(--spacing-3) var(--spacing-margin-mobile);
+  border-bottom: 2px solid var(--border-ink);
+  background: var(--surface-raised);
+}
+
+@media (min-width: 720px) {
+  .page-header {
+    padding-left: var(--spacing-margin-desktop);
+    padding-right: var(--spacing-margin-desktop);
+  }
+}
+
+.brand {
+  font-size: var(--typography-title-font-size);
+  font-weight: var(--typography-title-font-weight);
+  line-height: var(--typography-title-line-height);
+  letter-spacing: var(--typography-display-letter-spacing);
+  color: var(--ink-primary);
+  text-decoration: none;
+}
+
+.brand-accent {
+  color: var(--primary);
+}
+
+.card {
+  background: var(--surface-raised);
+  border: 2px solid var(--border-ink);
+  border-radius: var(--rounded-md);
+  padding: var(--spacing-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-3);
+  /* Bảng, khối mã và nội dung rộng cuộn trong khung của chúng, không đẩy trang. */
+  min-width: 0;
+}
+
+/*
+  Trong một khối `flex` + `gap`, lề dưới của `<p>` cộng vào khoảng cách và làm nhịp
+  dọc lệch khỏi thang 4/8/12/16. `gap` là nguồn duy nhất của khoảng cách ở đây.
+*/
+.card > p,
+.card > h2,
+.card > h3,
+.page-shell > p {
+  margin: 0;
+}
+
+/* Nút trong thẻ không kéo dài hết chiều rộng — `stretch` là mặc định của flex. */
+.card > .button-primary,
+.card > .button-secondary {
+  align-self: flex-start;
+}
+
+.meta {
+  font-size: var(--typography-meta-font-size);
+  font-weight: var(--typography-meta-font-weight);
+  line-height: var(--typography-meta-line-height);
+  color: var(--ink-secondary);
+}
+
+/* ========================= nút ========================= */
+
+/*
+  `DESIGN.md § Components`: cao tối thiểu 48px, `rounded.full`, viền ink 2px, chữ
+  `body-strong`. "Ngưỡng 48px là sàn cứng, không ngoại lệ cho nút phụ."
+*/
+.button-primary,
+.button-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-2);
+  min-height: 48px;
+  padding: 13px 22px;
+  border-radius: var(--rounded-full);
+  border: 2px solid var(--border-ink);
+  font-family: inherit;
+  font-size: var(--typography-body-strong-font-size);
+  font-weight: var(--typography-body-strong-font-weight);
+  line-height: var(--typography-body-strong-line-height);
+  text-decoration: none;
+  cursor: pointer;
+  transition: transform var(--motion-duration-base) var(--motion-easing-standard);
+}
+
+.button-primary {
+  background: var(--primary);
+  color: var(--on-primary);
+  box-shadow: var(--shadow-1);
+}
+
+.button-secondary {
+  background: var(--surface-raised);
+  color: var(--ink-primary);
+}
+
+.button-primary:hover,
+.button-secondary:hover {
+  transform: translate(-1px, -1px);
+}
+
+.button-primary:active,
+.button-secondary:active {
+  transform: translate(1px, 1px);
+}
+
+/*
+  Nút bị vô hiệu vẫn phải ĐỌC được, và `opacity` không làm được điều đó.
+
+  Bản đầu dùng `opacity: 0.6` cùng một câu bảo rằng nó "dừng ở mức còn qua ngưỡng".
+  Câu đó SAI, và sai theo hướng không ai kiểm được: `opacity` trộn chữ với nền phía
+  sau, nên `button-primary:disabled` cho khoảng **2.59:1** ở light và **3.26:1** ở
+  dark — dưới AA, trên một trạng thái hiện ra thường xuyên (nút thử lại lúc bị rate
+  limit ở `/dang-nhap`, nút gửi lúc đang gửi ở `/khai-ngay-sinh`).
+
+  Nên không còn `opacity`: trạng thái vô hiệu là một CẶP MÀU THẬT —
+  `ink-secondary` trên `surface-sunken`, đo được **5.65:1** / **8.16:1** — và
+  `contrast.test.ts` tính nó từ chính `tokens.css` như mọi cặp khác. Bề mặt phẳng
+  (mất bóng lệch), con trỏ và thuộc tính `disabled` là ba kênh còn lại, nên màu
+  không bao giờ là kênh duy nhất (WCAG 1.4.1).
+*/
+.button-primary:disabled,
+.button-secondary:disabled {
+  background: var(--surface-sunken);
+  color: var(--ink-secondary);
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+/* ========================= chip ========================= */
+
+/*
+  `chip-status` — ba biến thể `ok` / `warn` / `coin` dùng container cùng tên. Viền
+  LUÔN là `border-ink`, không đổi theo trạng thái: trạng thái nói bằng nền và chữ.
+  "Luôn có cả dấu chấm màu VÀ chữ; không bao giờ chỉ icon."
+*/
+.chip-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  padding: 8px 14px;
+  border-radius: var(--rounded-full);
+  border: 2px solid var(--border-ink);
+  background: var(--surface-raised);
+  color: var(--ink-primary);
+  font-size: var(--typography-meta-font-size);
+  font-weight: var(--typography-meta-font-weight);
+  line-height: var(--typography-meta-line-height);
+  /* Chuỗi tiếng Việt dài hơn tiếng Anh 15–25%: chip phải xuống dòng, không cắt chữ. */
+  max-width: 100%;
+}
+
+.chip-status::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: var(--rounded-full);
+  background: currentColor;
+  flex: none;
+}
+
+.chip-status.ok {
+  background: var(--ok-container);
+  color: var(--ok);
+}
+
+.chip-status.warn {
+  background: var(--warn-container);
+  color: var(--warn);
+}
+
+.chip-status.coin {
+  background: var(--coin-container);
+  color: var(--coin);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ========================= thông báo ========================= */
+
+/*
+  Cảnh báo và trạng thái phân biệt bằng NỀN, VIỀN và CHỮ — không bao giờ chỉ bằng
+  màu. `sign-in-outcome.tsx` đã chọn `role` khác nhau cho hai loại trước khi có gì
+  để tô: "huỷ" là `status` và không phải lỗi, "thất bại" là `alert`.
+*/
+.notice {
+  display: block;
+  padding: var(--spacing-3) var(--spacing-4);
+  border: 2px solid var(--border-ink);
+  border-radius: var(--rounded-md);
+  background: var(--surface-sunken);
+  color: var(--ink-primary);
+}
+
+.notice-alert {
+  background: var(--warn-container);
+  color: var(--warn);
+}
+
+/*
+  Liên kết trong một `notice` KHÔNG dùng `primary`, và con số là lý do.
+
+  `primary` trên `surface-sunken` đo được **4.21:1** — dưới AA. Không có `<a>` nào
+  nằm trong một `.notice` hôm nay, nhưng "hôm nay chưa có" không phải một hàng rào:
+  một câu thông báo kèm một liên kết là thứ tự nhiên nhất trên đời để viết thêm.
+  `ink-primary` trên `surface-sunken` cho 12.94:1 / 16.61:1, và gạch chân giữ
+  affordance — nên liên kết vẫn phân biệt được mà không cần màu làm kênh duy nhất
+  (WCAG 1.4.1). `contrast.test.ts` giữ cả hai cặp trong bảng composed pairs.
+*/
+.notice a {
+  color: var(--ink-primary);
+  text-decoration: underline;
+}
+
+.notice-countdown {
+  font-size: var(--typography-numeric-font-size);
+  font-weight: var(--typography-numeric-font-weight);
+  line-height: var(--typography-numeric-line-height);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ========================= form ========================= */
+
+.form-label {
+  font-size: var(--typography-label-font-size);
+  font-weight: var(--typography-label-font-weight);
+  line-height: var(--typography-label-line-height);
+}
+
+/*
+  Ô nhập rỗng dùng viền NÉT ĐỨT, màu `border-ink`. Hai nửa đó đến từ hai câu khác
+  nhau trong `DESIGN.md`, và tài liệu tự mâu thuẫn ở đúng chỗ này.
+
+  `:362` (`chat-panel.composer-border`) bảo ô nhập rỗng dùng `border-decor` nét đứt
+  — "nét đứt báo hiệu chỗ để điền". `:274` và `:386` bảo `border-decor` "chỉ dùng
+  cho vạch phân cách trang trí, không bao giờ là ranh giới duy nhất của một thành
+  phần bấm được". Một ô `type="date"` là thành phần bấm được, và nó không có ranh
+  giới nào khác.
+
+  Đo được, không đoán: `border-decor` trên `surface-raised` là **1.41:1** ở light và
+  **1.33:1** ở dark. Ngưỡng của WCAG 1.4.11 cho ranh giới một thành phần giao diện
+  là 3:1. Nên câu `:362` một mình sẽ ship một ô nhập mà người thị lực kém không
+  thấy mép.
+
+  Cách hoà giải duy nhất thoả CẢ HAI câu: giữ KIỂU nét đứt (đó là thứ `:362` mua —
+  tín hiệu "chỗ để điền") và đổi MÀU sang `border-ink` (đó là thứ `:274` đòi).
+  `border-ink` đạt 16.41:1 / 3.55:1. Câu nào là chuẩn trong `DESIGN.md` là quyết
+  định của con người; `deferred-work.md` ghi lại để có người chốt.
+
+  Khi có focus nó thành nét liền màu `primary`, và outline KHÔNG bị tắt: hai tín
+  hiệu chồng lên nhau, không thay thế nhau.
+*/
+.field {
+  width: 100%;
+  min-height: 48px;
+  padding: 13px 15px;
+  border: 2px dashed var(--border-ink);
+  border-radius: var(--rounded-sm);
+  background: var(--surface-raised);
+  color: var(--ink-primary);
+  font-family: inherit;
+  font-size: var(--typography-body-font-size);
+  font-weight: var(--typography-body-font-weight);
+  line-height: var(--typography-body-line-height);
+}
+
+.field:focus {
+  border-style: solid;
+  border-color: var(--primary);
+}
+
+.field[aria-invalid="true"] {
+  border-style: solid;
+  border-color: var(--danger);
+}
+
+/* ======================= danh sách provider ======================= */
+
+.provider-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-3);
+}
+
+.provider-list > li {
+  display: flex;
+}
+
+.provider-list .button-secondary {
+  width: 100%;
+}
+
+/* ======================= nút đổi giao diện ======================= */
+
+/*
+  Ba lựa chọn ngang hàng trong một viên thuốc, `aria-pressed` mang trạng thái.
+  Vùng chạm ≥ 44px kể cả trên desktop (`DESIGN.md § Do's and Don'ts`).
+
+  `flex: 1 1 auto` + `min-width: 44px` là phần chịu được 320px: ba nhãn tiếng Việt,
+  một trong đó dài ("Theo hệ điều hành"), phải co lại và XUỐNG DÒNG thay vì đẩy
+  trang sinh cuộn ngang. Sàn 44px vẫn giữ, nên co không bao giờ đi qua ngưỡng vùng
+  chạm.
+*/
+.theme-switch {
+  display: flex;
+  max-width: 100%;
+  border: 2px solid var(--border-ink);
+  border-radius: var(--rounded-full);
+  background: var(--surface-raised);
+}
+
+/*
+  KHÔNG `overflow: hidden` ở đây, và đó là một sửa lỗi chứ không phải một sở thích.
+
+  `overflow: hidden` trên một tổ tiên cắt phần vẽ tràn của con — kể cả `outline`.
+  Ba nút này lấp kín content box của viên thuốc, còn vòng focus vẽ ở
+  `outline-offset: 2px`, tức là NGOÀI nút. Nên viên thuốc bo tròn "gọn gàng" đó ăn
+  mất chính vòng focus của ba nút duy nhất mà story này thêm vào.
+
+  Điều tệ nhất: `getComputedStyle` vẫn báo `2px solid` trên một vòng đã bị cắt, nên
+  không ca đo-computed-style nào thấy được. Luật thay thế là luật CẤU TRÚC — không
+  tổ tiên nào của một thành phần focus được có `overflow` khác `visible` — và nó
+  nằm trong `he-thiet-ke.spec.ts`.
+
+  Bo góc chuyển xuống nút đầu và nút cuối, nên nhóm vẫn đọc như một viên thuốc.
+*/
+.theme-switch button:first-of-type {
+  border-top-left-radius: var(--rounded-full);
+  border-bottom-left-radius: var(--rounded-full);
+  padding-left: 16px;
+}
+
+.theme-switch button:last-of-type {
+  border-top-right-radius: var(--rounded-full);
+  border-bottom-right-radius: var(--rounded-full);
+  padding-right: 16px;
+}
+
+.theme-switch button {
+  flex: 1 1 auto;
+  border: 0;
+  background: transparent;
+  color: var(--ink-primary);
+  font-family: inherit;
+  font-size: var(--typography-meta-font-size);
+  font-weight: var(--typography-label-font-weight);
+  line-height: var(--typography-label-line-height);
+  padding: 0 12px;
+  min-height: 44px;
+  min-width: 44px;
+  cursor: pointer;
+}
+
+.theme-switch button + button {
+  border-left: 2px solid var(--border-ink);
+}
+
+.theme-switch button[aria-pressed="true"] {
+  background: var(--primary);
+  color: var(--on-primary);
+}
+
+/* ==================== dialog phiên hết hạn ==================== */
+
+/*
+  KHÔNG phải modal, và đó là tính năng.
+
+  Không backdrop, không `position: fixed`, không khoá cuộn — trang phía sau vẫn
+  nhìn thấy và vẫn cuộn được, đúng như `session-expiry-dialog.tsx:13-26` lập luận
+  và như ca e2e khẳng định. Cái duy nhất 1.6 thêm vào là hình dạng: thẻ nổi mức 3
+  của `card-ask-confirm`, và một điểm dừng focus để nó không xuất hiện trong im
+  lặng.
+*/
+.session-expiry-dialog {
+  max-width: 480px;
+  margin: var(--spacing-6) auto var(--spacing-12);
+  padding: var(--spacing-5);
+  background: var(--surface-raised);
+  border: 2px solid var(--border-ink);
+  border-radius: var(--rounded-xl);
+  box-shadow: var(--shadow-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-3);
+}
+
+.session-expiry-dialog > h2 {
+  margin: 0;
+}
+
+/* ===================== reduced motion ===================== */
+
+/*
+  Port nguyên `demo-san-pham.html:300-302`.
+
+  Nó tắt CHUYỂN ĐỘNG CỦA CSS và không chạm gì khác. Đồng hồ đếm ngược chạy bằng
+  `setTimeout` trong React (`dang-nhap/countdown.tsx`), không bằng `transition`,
+  nên nó vẫn đếm — đúng điều `DESIGN.md § motion` yêu cầu: "đồng hồ đếm ngược vẫn
+  cập nhật vì đó là thông tin, không phải hiệu ứng". Có một ca e2e chạy dưới
+  `reducedMotion: 'reduce'` chỉ để chứng minh con số vẫn giảm.
+*/
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}

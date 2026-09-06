@@ -1,5 +1,5 @@
-import { expect, test, type Page } from '@playwright/test';
-import { FAKE_API_BASE_URL } from '../../../playwright.config';
+import { expect, test } from '@playwright/test';
+import { DATE_OF_BIRTH_PATHNAME, scenario } from '../support/scenario';
 
 /**
  * Story 1.4's screen, in a browser, for the first time.
@@ -16,26 +16,6 @@ import { FAKE_API_BASE_URL } from '../../../playwright.config';
  * they prove is the wiring; what `auth.flow.test.ts` proves is the API. Neither
  * substitutes for the other.
  */
-const DATE_OF_BIRTH_PATHNAME = '/khai-ngay-sinh';
-const RESET_URL = `${FAKE_API_BASE_URL}/__e2e__/reset`;
-
-interface Scenario {
-  readonly signedIn?: boolean;
-  readonly declared?: boolean;
-  readonly refreshWorks?: boolean;
-  readonly meStatus?: number;
-}
-
-/**
- * Through `page.request`, not the bare `request` fixture: the session cookie has to
- * land in the BROWSER's jar, or the page that follows arrives signed out and every
- * assertion below tests the wrong screen.
- */
-async function scenario(page: Page, state: Scenario): Promise<void> {
-  const response = await page.request.post(RESET_URL, { data: state });
-  expect(response.status(), 'the fake API must accept the scenario').toBe(200);
-}
-
 test.describe('khai ngày sinh', () => {
   test('loads the profile on mount and offers the form to somebody who has not declared', async ({
     page,

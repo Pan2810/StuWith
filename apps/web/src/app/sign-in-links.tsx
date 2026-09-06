@@ -22,7 +22,14 @@ import { signInStartHref } from './session-expiry';
  */
 
 /**
- * Vietnamese is the default locale; full i18n arrives with Story 1.6.
+ * Vietnamese, because Vietnamese is the only locale this product has.
+ *
+ * This used to say "full i18n arrives with Story 1.6", and so did `layout.tsx`.
+ * Neither was true: `epics.md` gives Story 1.6 the design system and says nothing
+ * about internationalisation, so two files were promising work no story owned —
+ * the shape that turns into "somebody must have done it" three stories later.
+ * `EXPERIENCE.md:27` does want VI + EN eventually; that intention now sits in
+ * `deferred-work.md` with no owner, which is what an unfunded intention is.
  *
  * One table, because the two screens must not be able to say different things
  * about the same provider.
@@ -50,7 +57,13 @@ export function SignInProviderLinks({
   readonly returnPath: string | null;
 }) {
   return (
-    <ul>
+    /*
+      `provider-list` rather than a bare `<ul>`: the list markers and the default
+      padding are the browser's, not this design's, and the four links are stacked
+      full-width buttons — a shape a Vietnamese label ("Tiếp tục với Microsoft") has
+      to fit without being cut, since Vietnamese runs 15-25% longer than English.
+    */
+    <ul className="provider-list">
       {AUTH_PROVIDERS.map((provider) => (
         <li key={provider}>
           {/*
@@ -63,7 +76,10 @@ export function SignInProviderLinks({
             verdict into the OAuth state. Nothing on the way back reads a path out
             of a URL.
           */}
-          <a href={signInStartHref(apiBaseUrl, provider, returnPath)}>
+          <a
+            className="button-secondary"
+            href={signInStartHref(apiBaseUrl, provider, returnPath)}
+          >
             Tiếp tục với {PROVIDER_LABELS[provider]}
           </a>
         </li>
