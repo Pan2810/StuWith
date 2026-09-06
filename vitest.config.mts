@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 
 /**
@@ -113,6 +114,27 @@ export default defineConfig({
          * `esbuild` block entirely (with a warning that is easy to scroll past).
          */
         oxc: { jsx: { runtime: 'automatic', importSource: 'react' } },
+        /**
+         * `next/font/google` is a COMPILE-TIME api, and its runtime module is an
+         * empty file — measured, not assumed: `node_modules/next/font/google/index.js`
+         * is zero bytes, because the Next.js SWC transform is what replaces the
+         * import during a build. Outside a build the named export is `undefined`,
+         * so `layout.tsx` throws `Be_Vietnam_Pro is not a function` at module scope
+         * and `layout.test.tsx` never gets to run an example.
+         *
+         * The alias is the smallest honest answer. Dropping the font would delete
+         * the reason `DESIGN.md` picks this typeface (Vietnamese diacritics at
+         * 12.5px) to satisfy a test runner, and `tests/support/next-font-google.ts`
+         * records why it returns what it returns. `next build` and the Playwright
+         * suite are what prove the real font is loaded.
+         */
+        resolve: {
+          alias: {
+            'next/font/google': fileURLToPath(
+              new URL('./tests/support/next-font-google.ts', import.meta.url),
+            ),
+          },
+        },
         test: {
           name: 'web',
           root: './apps/web',

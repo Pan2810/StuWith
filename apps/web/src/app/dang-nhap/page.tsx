@@ -12,11 +12,15 @@ import {
 } from './sign-in-outcome';
 
 /**
- * Deliberately unstyled. The design system — tokens, light/dark, the "Cắm trại"
- * identity — is Story 1.6, and putting provisional styling here would only have to
- * be deleted. What this page proves now is the thing Story 1.2 owns: four links
- * into the real OAuth start endpoints, and a session the browser can read back
- * through `/v1/auth/me`.
+ * The design system reaches this screen through classes and nothing else.
+ *
+ * Story 1.6 landed the "Cắm trại" tokens, and the rule it brought with it is that
+ * no colour, size or spacing is written here: every visual decision is a class in
+ * `globals.css` resolving a token from `tokens.css`. What this page proves is
+ * still the thing Story 1.2 owns — four links into the real OAuth start endpoints,
+ * and a session the browser can read back through `/v1/auth/me` — and the styling
+ * changed nothing about that, which is why the ten browser cases still pass
+ * without one selector being touched.
  *
  * `apps/web` stays a pure client (AD-13 / the "web is a thin client" constraint):
  * the provider list and the response type both come from `@stuwith/contracts`, and
@@ -162,7 +166,7 @@ export default function DangNhapPage() {
   }, [authorizedFetch, apiBaseUrl, load]);
 
   return (
-    <main>
+    <main className="page-shell">
       <h1>Đăng nhập</h1>
 
       {/*

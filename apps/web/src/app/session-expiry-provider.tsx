@@ -4,10 +4,12 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useRef,
   useState,
   type ReactNode,
+  type RefObject,
 } from 'react';
 import { SessionExpiryDialog } from './session-expiry-dialog';
 import {
@@ -118,11 +120,19 @@ export function useApiBaseUrl(): string {
 export function SessionExpiryShell({
   prompt,
   apiBaseUrl,
+  dialogRef,
   onDismiss,
   children,
 }: {
   readonly prompt: SessionExpiryState;
   readonly apiBaseUrl: string;
+  /**
+   * Threaded through rather than created here, because this component has no
+   * hooks and must keep none: it is the only part of the provider a DOM-less
+   * project can render, which is what makes "the dialog is mounted at all" a
+   * testable fact. The ref belongs to whoever runs the effect that uses it.
+   */
+  readonly dialogRef: RefObject<HTMLDivElement | null>;
   readonly onDismiss: () => void;
   readonly children: ReactNode;
 }) {
@@ -135,7 +145,12 @@ export function SessionExpiryShell({
         at — that is what "the screen behind stays visible and stays scrollable"
         means in markup, before there is any styling to say it in.
       */}
-      <SessionExpiryDialog prompt={prompt} apiBaseUrl={apiBaseUrl} onDismiss={onDismiss} />
+      <SessionExpiryDialog
+        prompt={prompt}
+        apiBaseUrl={apiBaseUrl}
+        focusRef={dialogRef}
+        onDismiss={onDismiss}
+      />
     </>
   );
 }
@@ -203,6 +218,68 @@ export function SessionExpiryProvider({
 
   const dismiss = useCallback(() => setPrompt(null), []);
 
+  /**
+   * The dialog announces itself by TAKING FOCUS, which is the gap `deferred-work.md`
+   * recorded against Story 1.3c: the element is inserted into the tree rather than
+   * changed inside an existing live region, so a screen reader says nothing and a
+   * keyboard user standing at the bottom of a page never learns that four sign-in
+   * links just appeared above them.
+   *
+   * It lives HERE and not in the dialog for the reason every other decision in this
+   * app moved out of a component: `SessionExpiryShell` has no hooks so that
+   * `renderToStaticMarkup` can prove the dialog is mounted at both states, and this
+   * file already has hooks. It is also the only file that knows WHEN the prompt
+   * changed, which is the event worth reacting to — re-focusing on every render
+   * would steal focus back from somebody who had already tabbed into a link.
+   *
+   * What it deliberately does not do: trap focus, or restore focus on close. A trap
+   * is a modal wearing a different word (`session-expiry-dialog.tsx` argues that
+   * out), and restoring focus would mean holding a reference to whatever the person
+   * was on when a background request happened to 401 — an element that may no
+   * longer exist by the time they dismiss. `deferred-work.md` records the cost.
+   *
+   * It fires on the CLOSED -> OPEN transition and on nothing else. Keying it to
+   * `prompt` alone was wrong: `nextSessionExpiry` hands back a new object whenever a
+   * later 401 arrives from a different location, so a background request landing
+   * while somebody had already tabbed to a provider link would yank them back to
+   * the top of a dialog they were part-way through using.
+   */
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  const open = prompt !== null;
+  useEffect(() => {
+    if (open) {
+      dialogRef.current?.focus();
+    }
+  }, [open]);
+
+  /**
+   * Escape closes the dialog from anywhere on the page, and that is why the listener
+   * is on `document` rather than on the dialog element.
+   *
+   * The first version put an `onKeyDown` on the container and reasoned that focus
+   * starts inside it, so the event bubbles. That holds for exactly as long as the
+   * person stands still. The design deliberately does NOT trap focus — a case in
+   * `dang-nhap.spec.ts` asserts they can Tab out to the provider links — and the
+   * moment they do, the key event stops passing through the dialog and Escape is
+   * dead. The one test that pressed it did so immediately after opening, which is
+   * the only moment the broken version worked.
+   *
+   * Mounted only while the dialog is open, and removed on close, so there is no
+   * listener sitting on `document` for the lifetime of the app swallowing nothing.
+   */
+  useEffect(() => {
+    if (!open) {
+      return undefined;
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setPrompt(null);
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [open]);
+
   // A new object every render would re-run the load effect of every screen holding
   // `authorizedFetch` in a dependency list. Both halves are already stable, so
   // this memo is what makes the VALUE stable too.
@@ -213,7 +290,12 @@ export function SessionExpiryProvider({
 
   return (
     <SessionExpiryContext.Provider value={value}>
-      <SessionExpiryShell prompt={prompt} apiBaseUrl={apiBaseUrl} onDismiss={dismiss}>
+      <SessionExpiryShell
+        prompt={prompt}
+        apiBaseUrl={apiBaseUrl}
+        dialogRef={dialogRef}
+        onDismiss={dismiss}
+      >
         {children}
       </SessionExpiryShell>
     </SessionExpiryContext.Provider>

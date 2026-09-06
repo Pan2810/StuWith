@@ -1,3 +1,4 @@
+import { createRef } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -29,7 +30,12 @@ const CHILD = <p id="phong-hoc">Phòng học</p>;
 describe('the shell: the page and the dialog are siblings', () => {
   it('renders the page and nothing else while there is no prompt', () => {
     const html = renderToStaticMarkup(
-      <SessionExpiryShell prompt={null} apiBaseUrl="https://api.test" onDismiss={() => undefined}>
+      <SessionExpiryShell
+        prompt={null}
+        apiBaseUrl="https://api.test"
+        dialogRef={createRef<HTMLDivElement>()}
+        onDismiss={() => undefined}
+      >
         {CHILD}
       </SessionExpiryShell>,
     );
@@ -43,6 +49,7 @@ describe('the shell: the page and the dialog are siblings', () => {
       <SessionExpiryShell
         prompt={{ returnPath: '/phong-hoc/abc' }}
         apiBaseUrl="https://api.test"
+        dialogRef={createRef<HTMLDivElement>()}
         onDismiss={() => undefined}
       >
         {CHILD}
@@ -64,6 +71,7 @@ describe('the shell: the page and the dialog are siblings', () => {
       <SessionExpiryShell
         prompt={{ returnPath: '/phong-hoc/abc' }}
         apiBaseUrl="https://api.test"
+        dialogRef={createRef<HTMLDivElement>()}
         onDismiss={() => undefined}
       >
         {CHILD}

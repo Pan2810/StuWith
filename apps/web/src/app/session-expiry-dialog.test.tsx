@@ -1,4 +1,5 @@
 import { AUTH_PROVIDERS, SIGN_IN_RETURN_PATH_QUERY_PARAM } from '@stuwith/contracts';
+import { createRef } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import {
@@ -20,7 +21,18 @@ import type { SessionExpiryPrompt } from './session-expiry';
  */
 function render(prompt: SessionExpiryPrompt | null): string {
   return renderToStaticMarkup(
-    <SessionExpiryDialog prompt={prompt} apiBaseUrl="https://api.test" onDismiss={() => undefined} />,
+    <SessionExpiryDialog
+      prompt={prompt}
+      apiBaseUrl="https://api.test"
+      /*
+        A real ref, never populated: `renderToStaticMarkup` attaches nothing, which
+        is exactly why the focus move itself is a browser case (`he-thiet-ke.spec.ts`)
+        rather than one here. What this file still proves is the half a ref cannot
+        hide — that the element is focusABLE and closes on Escape.
+      */
+      focusRef={createRef<HTMLDivElement>()}
+      onDismiss={() => undefined}
+    />,
   );
 }
 
@@ -54,6 +66,21 @@ describe('Matrix: the screen behind stays visible and stays scrollable', () => {
   it('can be dismissed', () => {
     expect(html).toContain(SESSION_EXPIRY_DISMISS_LABEL);
     expect(html).toContain('<button type="button"');
+  });
+
+  it('is focusable without joining the tab order', () => {
+    /**
+     * Story 1.6 closed the gap `deferred-work.md` recorded: the dialog used to
+     * appear with nothing announcing it, because it is INSERTED into the tree
+     * rather than changed inside a live region. Focus moving into it is what makes
+     * a screen reader read it.
+     *
+     * `-1` and not `0`. A `0` would put the container itself in the tab order for
+     * ever, so everybody tabbing through the page would stop on an element with no
+     * action on it. `-1` is reachable by script and skipped by Tab.
+     */
+    expect(html).toContain('tabindex="-1"');
+    expect(html).not.toContain('tabindex="0"');
   });
 
   it('is announced as a dialog and names itself', () => {
