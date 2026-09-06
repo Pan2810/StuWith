@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { useT } from './i18n/use-t';
 import {
   DARK_SCHEME_QUERY,
   THEME_ATTRIBUTE,
@@ -45,6 +46,15 @@ import {
  * which of the two modes they are in.
  */
 export function ThemeSwitch() {
+  /**
+   * The request's own translator, from the provider the root layout mounts.
+   *
+   * Every label on this control is a sentence or a word somebody reads, so all of
+   * them go through it — including the `aria-label` on the group, which is the one
+   * string on this screen that is never visible and is therefore the easiest to
+   * forget.
+   */
+  const t = useT();
   /**
    * `system` on the server AND on the first client render.
    *
@@ -124,7 +134,7 @@ export function ThemeSwitch() {
   }, []);
 
   return (
-    <div className="theme-switch" role="group" aria-label={THEME_SWITCH_LEGEND}>
+    <div className="theme-switch" role="group" aria-label={t(THEME_SWITCH_LEGEND)}>
       {THEME_CHOICES.map((option) => (
         <button
           key={option}
@@ -137,7 +147,7 @@ export function ThemeSwitch() {
           aria-pressed={choice === option}
           onClick={() => select(option)}
         >
-          {THEME_LABELS[option]}
+          {t(THEME_LABELS[option])}
         </button>
       ))}
       {/*
@@ -160,7 +170,7 @@ export function ThemeSwitch() {
       */}
       {prefersDark === null ? null : (
         <p className="sr" aria-live="polite">
-          {appliedThemeNote(choice, prefersDark)}
+          {appliedThemeNote(choice, prefersDark, t)}
         </p>
       )}
     </div>

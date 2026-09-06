@@ -7,6 +7,7 @@ import {
   parseCurrentUser,
 } from '@stuwith/contracts';
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { useT } from '../i18n/use-t';
 import { useApiBaseUrl, useAuthorizedFetch } from '../session-expiry-provider';
 import {
   DateOfBirthPanel,
@@ -15,7 +16,7 @@ import {
   declarationOutcomeFor,
   profileLoadStateFor,
   screenStateFor,
-  TRY_AGAIN_MESSAGE,
+  TRY_AGAIN_KEY,
   type DateOfBirthScreenState,
   type DeclarationNotice,
 } from './date-of-birth-form';
@@ -41,6 +42,7 @@ import {
  * computed by `packages/domain`, and this screen never recomputes it.
  */
 export default function KhaiNgaySinhPage() {
+  const t = useT();
   const [state, setState] = useState<DateOfBirthScreenState>({ kind: 'loading' });
   const [notice, setNotice] = useState<DeclarationNotice | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -128,7 +130,7 @@ export default function KhaiNgaySinhPage() {
         // mistake, whether or not the network was involved. "In the future" is not
         // decided here: see `dateOfBirthSubmission` on why the browser's clock is
         // not allowed to refuse anybody.
-        setNotice({ message: submission.message, retryAfterSeconds: null });
+        setNotice({ messageKey: submission.messageKey, retryAfterSeconds: null });
         return;
       }
 
@@ -190,7 +192,7 @@ export default function KhaiNgaySinhPage() {
         // Nothing came back at all, so there is no status to interpret. Same
         // sentence as an unrecognised one: "we do not know that it worked" is the
         // only honest thing to say, and it is never "it worked".
-        setNotice({ message: TRY_AGAIN_MESSAGE, retryAfterSeconds: null });
+        setNotice({ messageKey: TRY_AGAIN_KEY, retryAfterSeconds: null });
       } finally {
         setSubmitting(false);
       }
@@ -200,7 +202,7 @@ export default function KhaiNgaySinhPage() {
 
   return (
     <main className="page-shell">
-      <h1>Khai ngày sinh</h1>
+      <h1>{t('dateOfBirth.heading')}</h1>
       {/*
         The panel owns the `<form>`, because whether there is one at all is one of
         its four decisions. Wrapping it in a second form here would nest one inside

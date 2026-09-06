@@ -5,12 +5,15 @@ import {
   THEME_CHOICES,
   THEME_LABELS,
   THEME_STORAGE_KEY,
+  THEME_SWITCH_LEGEND,
   appliedTheme,
   appliedThemeNote,
   resolveThemeChoice,
   themeAttributeFor,
   themeBootScript,
 } from './theme';
+import { LOCALES } from './i18n/locale';
+import { translatorFor } from './i18n/messages';
 
 /**
  * The middle of the seam, which is the piece nothing else can reach.
@@ -206,10 +209,37 @@ describe('the boot script agrees with the functions, for every input', () => {
 });
 
 describe('the switch has three labelled choices and one query', () => {
-  it('labels every choice', () => {
+  it('gives every choice a label that really exists in both catalogues', () => {
+    /**
+     * `THEME_LABELS` holds message KEYS now, not words, so the old assertion —
+     * `THEME_LABELS[choice].length > 0` — measured the length of `'theme.system'`
+     * and was true of any non-empty string, including a key naming nothing. The name
+     * of the example said "labels every choice" while it checked no label at all.
+     *
+     * What has to be true is that each key RESOLVES, in every locale: a typo in one
+     * of these three rows is a button whose accessible name is a dotted identifier.
+     */
     expect(THEME_CHOICES).toEqual(['system', 'light', 'dark']);
+
     for (const choice of THEME_CHOICES) {
-      expect(THEME_LABELS[choice].length).toBeGreaterThan(0);
+      for (const locale of LOCALES) {
+        const label = translatorFor(locale)(THEME_LABELS[choice]);
+        expect(label.length, `${locale}/${choice}`).toBeGreaterThan(0);
+        // A key that names nothing would come back as the key, or as empty. Neither
+        // is a label, and both are what this example exists to refuse.
+        expect(label, `${locale}/${choice} rendered the key`).not.toBe(THEME_LABELS[choice]);
+        expect(label, `${locale}/${choice} looks like a key`).not.toMatch(/^theme\./);
+      }
+    }
+  });
+
+  it('gives the switch group a legend that resolves too', () => {
+    // The one string on this control that is never visible, and therefore the
+    // easiest for a typo to survive in.
+    for (const locale of LOCALES) {
+      const legend = translatorFor(locale)(THEME_SWITCH_LEGEND);
+      expect(legend.length).toBeGreaterThan(0);
+      expect(legend).not.toBe(THEME_SWITCH_LEGEND);
     }
   });
 

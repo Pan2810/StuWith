@@ -1,9 +1,11 @@
 import { RATE_LIMITED_MESSAGE, type CurrentUser } from '@stuwith/contracts';
 import { describe, expect, it } from 'vitest';
+import { LOCALES, type Locale } from './i18n/locale';
+import { VI_TRANSLATE, translatorFor } from './i18n/messages';
 import {
-  PROFILE_UNAVAILABLE_MESSAGE,
+  PROFILE_UNAVAILABLE_KEY,
   profileLoadOutcome,
-  unavailableMessage,
+  unavailableMessageKey,
 } from './profile-load';
 
 /**
@@ -95,24 +97,40 @@ describe('profileLoadOutcome — one reading for every screen that asks', () => 
   });
 });
 
-describe('unavailableMessage — the sentence and the clock are one decision', () => {
+describe('unavailableMessageKey — the sentence and the clock are one decision', () => {
   it('says "we could not read your profile" when there is no wait', () => {
-    expect(unavailableMessage(null)).toBe(PROFILE_UNAVAILABLE_MESSAGE);
+    expect(unavailableMessageKey(null)).toBe(PROFILE_UNAVAILABLE_KEY);
   });
 
   it('says the rate-limit sentence when there is one', () => {
     // The sentence the countdown belongs beside, and the one both processes already
     // share for exactly this. Saying "thử lại sau ít phút" to somebody about to be
     // made to wait forty-five seconds is vaguer than the truth.
-    expect(unavailableMessage(45)).toBe(RATE_LIMITED_MESSAGE);
+    // The KEY whose Vietnamese value the catalogue imports from the contract, so
+    // the two processes still cannot come to say different things.
+    expect(unavailableMessageKey(45)).toBe('error.rateLimited');
+    expect(VI_TRANSLATE(unavailableMessageKey(45))).toBe(RATE_LIMITED_MESSAGE);
   });
 
-  it('says nothing technical and nothing about logging in', () => {
-    for (const message of [unavailableMessage(null), unavailableMessage(45)]) {
-      for (const leak of ['HTTP', '429', 'API', 'fetch', 'đăng nhập']) {
-        expect(message).not.toContain(leak);
+  it('says nothing technical and nothing about logging in, in EITHER locale', () => {
+    /**
+     * The rule survived being translated, which is the half a single-locale check
+     * could not ask about. "Do not tell a rate-limited visitor to go and log in" is
+     * a claim about the WORDS somebody reads, so an English catalogue that quietly
+     * said "please sign in again" would reopen the loop this reading exists to
+     * break — in English only, invisibly to every existing assertion.
+     */
+    const technical = ['http', '429', 'api', 'fetch'];
+    const signIn: Readonly<Record<Locale, string>> = { vi: 'đăng nhập', en: 'sign in' };
+
+    for (const locale of LOCALES) {
+      const t = translatorFor(locale);
+      for (const message of [t(unavailableMessageKey(null)), t(unavailableMessageKey(45))]) {
+        for (const leak of [...technical, signIn[locale]]) {
+          expect(message.toLowerCase(), `${locale}: ${message}`).not.toContain(leak);
+        }
+        expect(message.length).toBeGreaterThan(20);
       }
-      expect(message.length).toBeGreaterThan(20);
     }
   });
 });

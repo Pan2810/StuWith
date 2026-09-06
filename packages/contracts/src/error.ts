@@ -3,7 +3,26 @@ import { z } from 'zod';
 /**
  * AD-13 + spine "Hình dạng lỗi": exactly one error envelope for every boundary.
  *
- * `code` is a machine-readable constant, `message` is already i18n'd for a human.
+ * `code` is a machine-readable constant. `message` is a human sentence **in
+ * Vietnamese, and only in Vietnamese** — this line used to say it was "already
+ * i18n'd for a human", which was not true and is the kind of promise that makes the
+ * next person build on something that is not there.
+ *
+ * The accurate statement, measured rather than assumed: `/v1` answers in Vietnamese,
+ * it does not read `Accept-Language`, and there is no negotiation on this boundary.
+ * That is not a gap waiting for a story either. `apps/web` NEVER reads
+ * `error.message` from a response body — its three `response.json()` calls all
+ * parse a SUCCESS body, and every sentence a person sees is chosen client-side from
+ * the status code — so no Vietnamese message from this envelope reaches a screen.
+ * Internationalisation lives entirely in `apps/web/src/app/i18n`, where the five
+ * shared sentences below are imported (never copied) as the Vietnamese half of a
+ * two-locale catalogue.
+ *
+ * What that leaves open, stated so nobody has to rediscover it: a NON-BROWSER
+ * consumer of `/v1` — a future mobile client, a partner integration — gets
+ * Vietnamese and has no way to ask for anything else. Whether that becomes content
+ * negotiation on the envelope, or a `code`-only contract with every consumer owning
+ * its own catalogue, is a decision with no owner today.
  */
 export const ERROR_CODES = [
   'validation_failed',

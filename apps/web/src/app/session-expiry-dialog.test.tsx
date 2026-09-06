@@ -2,10 +2,11 @@ import { AUTH_PROVIDERS, SIGN_IN_RETURN_PATH_QUERY_PARAM } from '@stuwith/contra
 import { createRef } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
+import { VI_TRANSLATE } from './i18n/messages';
 import {
-  SESSION_EXPIRY_DISMISS_LABEL,
-  SESSION_EXPIRY_MESSAGE,
-  SESSION_EXPIRY_TITLE,
+  SESSION_EXPIRY_DISMISS_KEY,
+  SESSION_EXPIRY_MESSAGE_KEY,
+  SESSION_EXPIRY_TITLE_KEY,
   SessionExpiryDialog,
 } from './session-expiry-dialog';
 import type { SessionExpiryPrompt } from './session-expiry';
@@ -64,7 +65,10 @@ describe('Matrix: the screen behind stays visible and stays scrollable', () => {
   });
 
   it('can be dismissed', () => {
-    expect(html).toContain(SESSION_EXPIRY_DISMISS_LABEL);
+    // Rendered with no provider above it, so the context default applies and the
+    // markup is Vietnamese — which is what makes translating the key here the same
+    // assertion it always was, with the locale said out loud.
+    expect(html).toContain(VI_TRANSLATE(SESSION_EXPIRY_DISMISS_KEY));
     expect(html).toContain('<button type="button"');
   });
 
@@ -85,8 +89,8 @@ describe('Matrix: the screen behind stays visible and stays scrollable', () => {
 
   it('is announced as a dialog and names itself', () => {
     expect(html).toContain('role="dialog"');
-    expect(html).toContain(SESSION_EXPIRY_TITLE);
-    expect(html).toContain(SESSION_EXPIRY_MESSAGE);
+    expect(html).toContain(VI_TRANSLATE(SESSION_EXPIRY_TITLE_KEY));
+    expect(html).toContain(VI_TRANSLATE(SESSION_EXPIRY_MESSAGE_KEY));
   });
 });
 

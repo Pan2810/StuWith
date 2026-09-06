@@ -1,9 +1,12 @@
 import { readFileSync } from 'node:fs';
-import type { ReactElement } from 'react';
+import type { ReactElement, ReactNode } from 'react';
 import { Children, isValidElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import RootLayout from './layout';
+import type { Locale } from './i18n/locale';
+import { I18nProvider } from './i18n/use-t';
+import { messagesFor } from './i18n/messages';
+import { RootLayoutShell } from './layout';
 import { SessionExpiryProvider } from './session-expiry-provider';
 import { ThemeSwitch } from './theme-switch';
 import { themeBootScript } from './theme';
@@ -52,6 +55,25 @@ function descendants(node: unknown): ReactElement[] {
   ];
 }
 
+/**
+ * The layout under test is the SHELL, and that is a consequence of the story rather
+ * than a convenience.
+ *
+ * `RootLayout` is `async` now — it reads the request to decide the language — and an
+ * async Server Component cannot be rendered by `renderToStaticMarkup` in a project
+ * with `environment: 'node'`, no DOM and no React server runtime. Everything these
+ * examples were ever about is structural (the provider is mounted, the boot script
+ * is in `<head>`, the header comes before the page) and all of it lives in
+ * `RootLayoutShell`, which takes the locale as an ARGUMENT and therefore renders
+ * synchronously.
+ *
+ * What is left in `RootLayout` is one `await` and one call to the shell — and
+ * `routes.test.ts` rule C is what stops that call being dropped, because a shell no
+ * product code renders is an export nothing uses.
+ */
+const render = (locale: Locale, children: ReactNode): ReactElement =>
+  RootLayoutShell({ locale, children }) as ReactElement;
+
 describe('RootLayout', () => {
   const children = <p id="trang">Nội dung</p>;
 
@@ -66,7 +88,7 @@ describe('RootLayout', () => {
      * that is invisible in every screenshot and every page of markup a reviewer
      * scrolls past.
      */
-    const html = RootLayout({ children }) as ReactElement;
+    const html = render('vi', children);
     const props = html.props as { children?: unknown };
     const kinds = ([] as unknown[])
       .concat(props.children as never)
@@ -78,7 +100,7 @@ describe('RootLayout', () => {
   });
 
   it('wraps the page in the session-expiry provider, inside the body', () => {
-    const html = RootLayout({ children }) as ReactElement;
+    const html = render('vi', children);
 
     expect(html.type).toBe('html');
     const props = html.props as { children?: unknown };
@@ -86,13 +108,15 @@ describe('RootLayout', () => {
       (child) => isValidElement(child) && child.type === 'body',
     ) as ReactElement;
     expect(body, 'the layout must still render a <body>').toBeTruthy();
-    // The one assertion that matters: without this the seam exists and nothing
-    // mounts it, so no 401 anywhere in the app can raise a dialog.
-    onlyChild(body, SessionExpiryProvider);
+    // Two providers, in this order: the dictionary is outside the session seam
+    // because the expiry DIALOG has sentences in it too. Without either of them the
+    // feature is gone for every route in the product, and nothing else would say so.
+    const i18n = onlyChild(body, I18nProvider);
+    onlyChild(i18n, SessionExpiryProvider);
   });
 
   it('hands the provider the API origin, read once here', () => {
-    const html = RootLayout({ children }) as ReactElement;
+    const html = render('vi', children);
     const provider = descendants(html).find((element) => element.type === SessionExpiryProvider);
     expect(provider, 'the provider must be mounted').toBeTruthy();
     const props = (provider as ReactElement).props as { apiBaseUrl: string; children: unknown };
@@ -112,23 +136,42 @@ describe('RootLayout', () => {
   it('still renders the page itself', () => {
     // The provider must WRAP the children, not replace them. A layout that mounted
     // the seam and dropped its child would pass the structural check above.
-    const markup = renderToStaticMarkup(RootLayout({ children }) as ReactElement);
+    const markup = renderToStaticMarkup(render('vi', children));
 
     expect(markup).toContain('<html lang="vi"');
     expect(markup).toContain('id="trang"');
   });
 
+  it('writes the resolved locale into <html lang>, both of them', () => {
+    /**
+     * The attribute and the words come from ONE argument, which is what makes them
+     * incapable of disagreeing — a document that says `lang="en"` over Vietnamese
+     * text is the failure this shape removes rather than tests for.
+     *
+     * The browser end of the same claim is `ngon-ngu.spec.ts`, which reads
+     * `document.documentElement.lang` in a real Chromium: this example proves the
+     * markup is built from the argument, and that one proves the argument came from
+     * the request.
+     */
+    expect(renderToStaticMarkup(render('vi', children))).toContain('<html lang="vi"');
+
+    const english = renderToStaticMarkup(render('en', children));
+    expect(english).toContain('<html lang="en"');
+    expect(english).toContain(messagesFor('en')['theme.legend']);
+    expect(english).not.toContain(messagesFor('vi')['theme.legend']);
+  });
+
   it('renders no dialog on an ordinary page load', () => {
     // The seam starts closed. A dialog in the markup of every route would be the
     // opposite of the feature.
-    const markup = renderToStaticMarkup(RootLayout({ children }) as ReactElement);
+    const markup = renderToStaticMarkup(render('vi', children));
 
     expect(markup).not.toContain('role="dialog"');
   });
 });
 
 describe('the design system is mounted here or nowhere', () => {
-  const markup = renderToStaticMarkup(RootLayout({ children: <p id="trang" /> }) as ReactElement);
+  const markup = renderToStaticMarkup(render('vi', <p id="trang" />));
 
   it('imports the stylesheet, which is the app’s only route to the tokens', () => {
     /**
@@ -159,7 +202,7 @@ describe('the design system is mounted here or nowhere', () => {
   });
 
   it('mounts the theme switch, so the choice is reachable from every screen', () => {
-    const mounted = descendants(RootLayout({ children: <p /> }) as ReactElement).some(
+    const mounted = descendants(render('vi', <p />)).some(
       (element) => element.type === ThemeSwitch,
     );
     expect(mounted, 'the theme switch is mounted nowhere else').toBe(true);

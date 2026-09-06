@@ -1,8 +1,5 @@
-import {
-  RATE_LIMITED_MESSAGE,
-  parseSignInRetryAfterSeconds,
-  type CurrentUser,
-} from '@stuwith/contracts';
+import { parseSignInRetryAfterSeconds, type CurrentUser } from '@stuwith/contracts';
+import type { MessageKey } from './i18n/messages';
 // Imported, not re-declared. `429` written in a second module is a second chance to
 // write `492`, and the seam already names it for the refresh leg.
 import { RATE_LIMITED_STATUS, SESSION_EXPIRED_STATUS } from './session-expiry';
@@ -83,13 +80,20 @@ export function profileLoadOutcome(
  *
  * It does NOT say "log in": the person may well be signed in, and sending them to
  * the login page is what turns a rate limit into a longer one. When there IS a wait,
- * {@link RATE_LIMITED_MESSAGE} is shown instead — it is the sentence both processes
- * already share for exactly this, and it is the one the countdown belongs beside.
+ * `error.rateLimited` is shown instead — the sentence both processes already share
+ * for exactly this, whose Vietnamese value the catalogue imports from
+ * `packages/contracts`, and the one the countdown belongs beside.
+ *
+ * A KEY rather than the sentence itself, and the `_KEY` suffix is the convention
+ * this story fixes for every such constant. The decision below is made where the
+ * status code is read; the words are chosen where there is a request and therefore
+ * a locale. Holding a sentence here would mean deciding the language in a module
+ * that has no idea which one the visitor asked for.
  */
-export const PROFILE_UNAVAILABLE_MESSAGE = 'Chưa đọc được hồ sơ của bạn. Hãy thử lại sau ít phút.';
+export const PROFILE_UNAVAILABLE_KEY: MessageKey = 'profile.unavailable';
 
 /** The way OUT of `unavailable`: re-read `/v1/auth/me`. */
-export const PROFILE_RETRY_LABEL = 'Thử lại';
+export const PROFILE_RETRY_KEY: MessageKey = 'profile.retry';
 
 /**
  * The sentence that belongs to an `unavailable`, and the wait beside it.
@@ -99,6 +103,6 @@ export const PROFILE_RETRY_LABEL = 'Thử lại';
  * second wrong would say "hãy thử lại sau ít phút" to somebody it was about to make
  * wait forty-five seconds.
  */
-export function unavailableMessage(retryAfterSeconds: number | null): string {
-  return retryAfterSeconds === null ? PROFILE_UNAVAILABLE_MESSAGE : RATE_LIMITED_MESSAGE;
+export function unavailableMessageKey(retryAfterSeconds: number | null): MessageKey {
+  return retryAfterSeconds === null ? PROFILE_UNAVAILABLE_KEY : 'error.rateLimited';
 }

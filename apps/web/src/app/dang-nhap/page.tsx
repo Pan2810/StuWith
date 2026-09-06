@@ -2,6 +2,7 @@
 
 import { AUTH_ME_PATH, parseCurrentUser, type CurrentUser } from '@stuwith/contracts';
 import { useCallback, useEffect, useState } from 'react';
+import { useT } from '../i18n/use-t';
 import { profileLoadOutcome } from '../profile-load';
 import { useApiBaseUrl, useAuthorizedFetch } from '../session-expiry-provider';
 import {
@@ -54,6 +55,7 @@ type LoadState =
   | { status: 'unavailable'; retryAfterSeconds: number | null };
 
 export default function DangNhapPage() {
+  const t = useT();
   const [state, setState] = useState<LoadState>({ status: 'loading' });
   /**
    * The outcome AND its countdown, as ONE value.
@@ -167,7 +169,7 @@ export default function DangNhapPage() {
 
   return (
     <main className="page-shell">
-      <h1>Đăng nhập</h1>
+      <h1>{t('signIn.heading')}</h1>
 
       {/*
         The notice and the login links are ONE component, because they are one

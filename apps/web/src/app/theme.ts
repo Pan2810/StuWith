@@ -47,6 +47,8 @@
  * input. That comparison is the only reason to trust a string in a `<head>`.
  */
 
+import { VI_TRANSLATE, type MessageKey, type Translate } from './i18n/messages';
+
 /** The three states, and the order the switch offers them in. */
 export const THEME_CHOICES = ['system', 'light', 'dark'] as const;
 
@@ -63,14 +65,21 @@ export const THEME_STORAGE_KEY = 'stuwith-theme';
 /** The attribute `tokens.css` matches on. One spelling, used by both halves. */
 export const THEME_ATTRIBUTE = 'data-theme';
 
-/** Vietnamese labels, one table, so the button and its announcement agree. */
-export const THEME_LABELS: Record<ThemeChoice, string> = {
-  system: 'Theo hệ điều hành',
-  light: 'Sáng',
-  dark: 'Tối',
+/**
+ * One table from choice to LABEL KEY, so the button and its announcement agree.
+ *
+ * It used to hold the Vietnamese words themselves. They live in
+ * `i18n/messages.ts` now, and what stays here is the mapping — which is the part
+ * that is really about the theme: a fourth choice would need a fourth row, and
+ * `Record<ThemeChoice, MessageKey>` is what says so at compile time.
+ */
+export const THEME_LABELS: Record<ThemeChoice, MessageKey> = {
+  system: 'theme.system',
+  light: 'theme.light',
+  dark: 'theme.dark',
 };
 
-export const THEME_SWITCH_LEGEND = 'Giao diện';
+export const THEME_SWITCH_LEGEND: MessageKey = 'theme.legend';
 
 /**
  * What a stored value means, including every way it can be wrong.
@@ -111,9 +120,26 @@ export function appliedTheme(choice: ThemeChoice, prefersDark: boolean): 'light'
   return choice;
 }
 
-/** The sentence that says which palette is on screen right now. */
-export function appliedThemeNote(choice: ThemeChoice, prefersDark: boolean): string {
-  return `Đang dùng giao diện ${appliedTheme(choice, prefersDark) === 'dark' ? 'tối' : 'sáng'}.`;
+/**
+ * The sentence that says which palette is on screen right now.
+ *
+ * TWO whole sentences in the catalogue, not one sentence with a word slotted into
+ * it. This function used to build `Đang dùng giao diện ${'tối' | 'sáng'}.`, which
+ * works in Vietnamese and falls apart in any language that inflects the rest of the
+ * sentence around that word — a translator has to be given a sentence, never half
+ * of one.
+ *
+ * `t` defaults to Vietnamese so this stays a pure function a test can call with one
+ * argument, and so the ~40 unit assertions written against the sentences it
+ * produces keep asserting the same strings. The switch passes the request's own
+ * translator.
+ */
+export function appliedThemeNote(
+  choice: ThemeChoice,
+  prefersDark: boolean,
+  t: Translate = VI_TRANSLATE,
+): string {
+  return t(appliedTheme(choice, prefersDark) === 'dark' ? 'theme.applied.dark' : 'theme.applied.light');
 }
 
 /** The media query the OS preference is read through, in both halves of the seam. */

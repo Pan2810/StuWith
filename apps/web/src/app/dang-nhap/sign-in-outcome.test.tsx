@@ -10,22 +10,19 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { SignInCountdown } from './countdown';
 import {
-  COUNTDOWN_DONE_MESSAGE,
   countdownDeadline,
+  countdownDoneLabel,
   countdownLabel,
   countdownViewAt,
   nextCountdownInstant,
   nextTickDelayMs,
   type CountdownClock,
 } from './countdown-text';
+import { VI_TRANSLATE } from '../i18n/messages';
+import { PROFILE_RETRY_KEY, PROFILE_UNAVAILABLE_KEY, profileLoadOutcome } from '../profile-load';
 import {
-  PROFILE_RETRY_LABEL,
-  PROFILE_UNAVAILABLE_MESSAGE,
-  profileLoadOutcome,
-} from '../profile-load';
-import {
-  DECLARE_DATE_OF_BIRTH_LINK,
-  DECLARE_DATE_OF_BIRTH_PROMPT,
+  DECLARE_DATE_OF_BIRTH_LINK_KEY,
+  DECLARE_DATE_OF_BIRTH_PROMPT_KEY,
   MAX_OPTIONS_HIDDEN_SECONDS,
   OUTCOME_NOTICES,
   SignInPanel,
@@ -36,6 +33,20 @@ import {
   signInOptionsVisible,
   type SignInNotice,
 } from './sign-in-outcome';
+
+/**
+ * The Vietnamese sentences these keys name.
+ *
+ * Every render below happens with no `I18nProvider` above it, so the context falls
+ * back to Vietnamese — which is why these assertions read exactly as they did
+ * before the catalogue existed. What changed is that the expectation now says which
+ * locale it is asserting about instead of assuming there is only one.
+ */
+const COUNTDOWN_DONE_MESSAGE = countdownDoneLabel();
+const PROFILE_RETRY_LABEL = VI_TRANSLATE(PROFILE_RETRY_KEY);
+const PROFILE_UNAVAILABLE_MESSAGE = VI_TRANSLATE(PROFILE_UNAVAILABLE_KEY);
+const DECLARE_DATE_OF_BIRTH_LINK = VI_TRANSLATE(DECLARE_DATE_OF_BIRTH_LINK_KEY);
+const DECLARE_DATE_OF_BIRTH_PROMPT = VI_TRANSLATE(DECLARE_DATE_OF_BIRTH_PROMPT_KEY);
 
 /**
  * Rows 8 and 9 of the story's I/O matrix — "a made-up outcome code" and "a
@@ -356,7 +367,10 @@ describe('the locked outcome', () => {
   it('reads its sentence from the contract, so both processes say the same thing', () => {
     // `apps/api` puts this exact string in the `rate_limited` envelope. It lived
     // in two packages, each pinned by its own literal, until one was edited alone.
-    expect(OUTCOME_NOTICES['bi-khoa'].message).toBe(RATE_LIMITED_MESSAGE);
+    // The catalogue IMPORTS the contract's constant for `error.rateLimited`, so
+    // this asserts there is one string rather than two that happen to match today.
+    expect(OUTCOME_NOTICES['bi-khoa'].messageKey).toBe('error.rateLimited');
+    expect(VI_TRANSLATE('error.rateLimited')).toBe(RATE_LIMITED_MESSAGE);
   });
 
   it('renders the frozen sentence and nothing of its own', () => {
