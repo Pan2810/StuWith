@@ -17,6 +17,7 @@ A specification is "Ready for Development" when:
 - **Complete**: No placeholders or TBDs.
 - **Sufficient**: No known requirement, acceptance, dependency, or implementation gaps remain unresolved.
 - **Coherent**: No unresolved ambiguities or internal contradictions.
+- **Đo được ở ranh giới**: nếu story cắt qua hai process, hai origin, một socket, trình duyệt ↔ server, hay ta ↔ nhà cung cấp bên ngoài, thì `## Probe ranh giới` đã khai probe chạy ở ĐÚNG tầng đó và nêu được mutation làm nó đỏ. Nếu không cắt qua ranh giới nào, section đã bị xoá. Đây là tiêu chí duy nhất trong danh sách này ra đời từ số đếm chứ không từ nguyên tắc: Epic 1 có bảy lần lớp lỗi "test ở hai đầu một seam, không gì chạy khúc giữa", năm trong bảy chỉ bị bắt vì có người tự dựng probe, và lần thứ bảy sống trên sản phẩm qua cả bảy story trong lúc ba suite đều xanh.
 
 ## SCOPE STANDARD
 

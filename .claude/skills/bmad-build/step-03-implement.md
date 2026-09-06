@@ -40,6 +40,14 @@ The handoff directs the subagent to load the spec's `context:` files itself, so 
 
 Before leaving this step, verify every task in the `## Tasks & Acceptance` section of `{spec_file}` is complete and every acceptance criterion is satisfied. Mark each finished task `[x]`. If any task is not done or any acceptance criterion is not satisfied, finish the missing work before proceeding.
 
+### Boundary Probe Audit
+
+If `{spec_file}`'s `<frozen-after-approval>` block contains a `## Probe ranh giới` section, the probe it declares must EXIST, must have RUN, and must have PASSED in the verification output. Then run the mutation the section's **Sẽ đỏ khi** field names — actually run it, do not reason about it — confirm the probe fails, and restore. A probe that cannot be made to fail is not verification; it is an assertion that does not know what it guards, and this project has shipped three of those.
+
+Two ways to fail this audit that both look like passing. First, a probe that was declared for a real medium and built as an in-process function call instead: Node's `fetch` ignores CORS, so an HTTP assertion in the same process proves nothing about a browser. Second, a fake or stand-in on the far side of the seam that reproduces the same omission the real thing has — then both ends agree and both are wrong. Read what the probe actually drives before accepting it.
+
+If the probe is missing, HALT and tell the human it is an `intent_gap`: the section is inside `<frozen-after-approval>`, so the answer is a loopback, not a patch written here.
+
 ### Matrix Test Audit
 
 If `{spec_file}`'s `<frozen-after-approval>` block contains an I/O & Edge-Case Matrix, verify every matrix row is covered by at least one test that verifies its expected behavior, and that each covering test ran and passed in the verification output. A covering test that exists but did not run — unregistered, filtered out, skipped, or disabled — counts as missing. If a test disagrees with the matrix, never edit the expectation to match the code: fix the code, or if the matrix row itself is ambiguous, HALT and ask the human. Fix any other audit failure before proceeding.

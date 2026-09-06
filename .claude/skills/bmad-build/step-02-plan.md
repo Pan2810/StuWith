@@ -10,9 +10,10 @@
 1. Draft resume check. If `{spec_file}` exists with `status: draft`, read it and capture the verbatim `<frozen-after-approval>...</frozen-after-approval>` block as `preserved_intent`. Otherwise `preserved_intent` is empty.
 2. Investigate codebase. _Isolate deep exploration in synchronous subagents/tasks where available. To prevent context snowballing, instruct subagents to give you distilled summaries only._ Decide which findings actually matter for execution — the specific files, symbols/lines, reuse points, and read-only constraints — and carry those forward for the Code Map. This is where the investigation lands: the spec preserves it so it is never re-narrated to the implementer at dispatch time.
 3. Read `[[bmad-snapshot:spec-template.md]]` fully. Fill it out based on the intent and investigation, resolving the template's `date` field to the current system date. Drain the investigation into the `## Code Map` section — annotated paths, symbol/line anchors, reuse pointers, and read-only evidence — so the spec is the implementer's investigation map and the step-03 handoff need only point at it. If `preserved_intent` is non-empty, replace the `<frozen-after-approval>` block in the spec you just filled out with `preserved_intent`, before writing. Write the result to `{spec_file}`.
-4. Self-review against READY FOR DEVELOPMENT standard.
-5. If intent gaps exist, do not fantasize, do not leave open questions, HALT and ask the human.
-6. Token count check (see SCOPE STANDARD). If spec exceeds 1600 tokens:
+4. **Cổng probe ranh giới.** Quyết định story này có cắt qua ranh giới nào không: hai process · hai origin (CORS) · một socket · trình duyệt ↔ server · ta ↔ nhà cung cấp bên ngoài. Nếu CÓ, section `## Probe ranh giới` phải điền đủ cả ba ô, và ô **Sẽ đỏ khi** phải nêu một mutation cụ thể ở PHÍA BÊN KIA của seam. Nếu KHÔNG, xoá cả section. Một section còn nguyên placeholder, hoặc chỉ khai một probe gọi hàm qua hàm ở cùng một process, KHÔNG đạt — `fetch` của Node bỏ qua CORS, một unit test được truyền sẵn giá trị thì không chạy qua seam nào, và cả hai đều đã cho ra suite xanh trên một sản phẩm hỏng trong Epic 1. Chưa đạt thì sửa spec rồi kiểm lại, đừng đi tiếp.
+5. Self-review against READY FOR DEVELOPMENT standard.
+6. If intent gaps exist, do not fantasize, do not leave open questions, HALT and ask the human.
+7. Token count check (see SCOPE STANDARD). If spec exceeds 1600 tokens:
    - Show user the token count.
    - HALT and ask human: `[S] Split — carve off secondary goals` | `[K] Keep full spec — accept the risks`
    - On **S**: Propose the split — name each secondary goal. For each deferred goal, append one new entry to `{{.implementation_artifacts}}/deferred-work.md` using this format. Do not modify existing entries or look for duplicates. Rewrite the current spec to cover only the main goal — do not surgically carve sections out; regenerate the spec for the narrowed scope. Continue to checkpoint.
@@ -25,7 +26,7 @@
 
 ### CHECKPOINT 1
 
-Present summary. Display the spec file path as a CWD-relative path (no leading `/`) so it is clickable in the terminal. If token count exceeded 1600 and user chose [K], include the token count and explain why it may be a problem.
+Present summary. Display the spec file path as a CWD-relative path (no leading `/`) so it is clickable in the terminal. State the probe decision in one line — either the ranh giới and the probe that will run in its real medium, or "không cắt qua ranh giới nào" — so the human approves or rejects that judgement rather than inheriting it silently. If token count exceeded 1600 and user chose [K], include the token count and explain why it may be a problem.
 
 After presenting the summary, display this note:
 

@@ -135,6 +135,28 @@ product code.
 
 ## 4. Rules with teeth
 
+- **A story that crosses a boundary declares a probe BEFORE it starts.** Two
+  processes, two origins (CORS), a socket, browser ↔ server, us ↔ an outside
+  provider — any of those and the spec's `## Probe ranh giới` section has to name
+  the boundary, the probe that runs **in that medium**, and the mutation on the far
+  side that turns it red. It is inside `<frozen-after-approval>`, so a missing probe
+  at review time is an `intent_gap`, not a patch.
+
+  This is the only rule in this file that came from a count rather than a principle.
+  Epic 1 produced **seven** instances of one failure class — tests at both ends of a
+  seam with nothing running the middle — and **five of seven** were caught only
+  because somebody distrusted the green and built a probe by hand. The seventh
+  shipped: `Retry-After` was set on every `429` and missing from
+  `Access-Control-Expose-Headers`, so the browser withheld it, three screens read
+  `null`, and the retry button they disable on a countdown stayed live for the whole
+  lockout. Three suites straddled it and all three were green — the API's flow tests
+  use Node's `fetch`, which ignores CORS; the web unit tests are handed the header
+  string as an argument; the E2E fake API mirrored the omission.
+
+  So: **a function calling a function is not a probe.** The probe has to run where
+  the boundary is — `page.evaluate` in a real browser for CORS and DOM, `node:net`
+  for wire protocol, a real second process for a cross-process seam.
+
 - **AD-8 — one writer per entity, enforced by `GRANT`.** Two login roles,
   `stuwith_api` and `stuwith_realtime`. New tables inherit `SELECT` only via
   `ALTER DEFAULT PRIVILEGES`, so a migration that adds a table and forgets to think

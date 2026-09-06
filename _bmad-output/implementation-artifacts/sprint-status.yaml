@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 08-21-2026 21:27
-last_updated: 09-06-2026 23:30
+last_updated: 09-07-2026 00:10
 project: StuWith
 project_key: NOKEY
 tracking_system: file-system
@@ -156,12 +156,19 @@ action_items:
     ref: "_bmad-output/planning-artifacts/epics.md"
   - id: "epic-1-retro-item-8-p1-đo-là-mặc-định-không-phải-thói-quen-m"
     epic: 1
-    action: "P1 — Đo là mặc định, không phải thói quen: mỗi story cắt qua một ranh
-      giới process hoặc origin phải khai một probe tầng trình duyệt hoặc socket trong
-      spec TRƯỚC khi bắt đầu. Năm trong bảy lỗi lớp seam của Epic 1 chỉ bị bắt vì
-      có người tự nghi ngờ rồi dựng probe."
+    action: "P1 — Đo là mặc định, không phải thói quen. ĐÃ THI HÀNH 2026-09-06, con
+      người chọn cưỡng chế bằng khuôn spec. Năm chỗ nối, cùng một tên section:
+      (1) spec-template.md có section BẮT BUỘC '## Probe ranh giới' nằm TRONG
+      <frozen-after-approval>, ba ô: ranh giới / probe chạy ở đúng tầng / mutation
+      làm nó đỏ; (2) step-02 thêm cổng probe trước self-review, và CHECKPOINT 1 phải
+      nói to quyết định probe để con người duyệt chứ không thừa hưởng im lặng;
+      (3) workflow.md thêm tiêu chí 'Đo được ở ranh giới' vào READY FOR DEVELOPMENT;
+      (4) step-03 thêm Boundary Probe Audit — probe phải TỒN TẠI, ĐÃ CHẠY, ĐÃ XANH,
+      rồi CHẠY THẬT mutation đã khai để xác nhận nó đỏ được; probe thiếu là intent_gap
+      chứ không phải patch; (5) verification-gap review thêm lens 'Seam gap'.
+      AGENTS.md §4 ghi luật kèm số đếm bảy lần và ba suite xanh."
     owner: "IPan"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-09-06.md"
   - id: "epic-1-retro-item-9-p2-story-1-4-ac1a-dựng-cổng-đọc-profile_"
     epic: 1

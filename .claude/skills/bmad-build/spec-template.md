@@ -42,6 +42,21 @@ context: [] # optional: `{project-root}/`-prefixed paths to project-wide standar
 | HAPPY_PATH | INPUT | OUTCOME | N/A |
 | ERROR_CASE | INPUT | OUTCOME | ERROR_HANDLING |
 
+## Probe ranh giới
+
+<!-- BẮT BUỘC khi story chạm bất kỳ ranh giới nào dưới đây. Nếu KHÔNG chạm ranh giới nào, XOÁ CẢ SECTION. Không viết "N/A", không viết "không có". -->
+<!-- Ranh giới tính là: hai process (apps/api <-> apps/realtime-gateway) · hai origin (apps/web <-> apps/api, tức CORS) · một socket (WebSocket, TCP thô) · trình duyệt <-> server · ta <-> nhà cung cấp bên ngoài (LiveKit, provider OAuth, cổng thanh toán). -->
+<!-- Vì sao section này tồn tại: Epic 1 có BẢY lần lớp lỗi "test ở hai đầu một seam, không gì chạy khúc giữa", và NĂM trong bảy chỉ bị bắt vì có người tự nghi ngờ rồi dựng probe. Lần thứ bảy sống trên sản phẩm qua cả bảy story, trốn được ba suite xanh, và chỉ chết khi có người mở trình duyệt thật hỏi "header này có tới nơi không". Việc đo không được là thói quen của ai đó — nó phải là một ô phải điền. -->
+<!-- Điền TRƯỚC khi viết mã, không phải sau. Một probe nghĩ ra ở vòng review là một probe được thiết kế để đồng ý với mã đã viết. -->
+
+**Ranh giới:** WHICH_BOUNDARY_AND_WHY
+
+**Probe:** WHAT_RUNS_IN_THE_REAL_MEDIUM
+<!-- Phải chạy ở ĐÚNG tầng của ranh giới. Trình duyệt thật cho CORS/DOM (Playwright `page.evaluate`), socket thô cho giao thức (`node:net`), process thật cho seam hai process. Một hàm gọi một hàm KHÔNG phải probe: `fetch` của Node bỏ qua CORS hoàn toàn, và đó chính là lý do 68 ca flow test của Epic 1 xanh trong lúc trình duyệt nhận `null`. -->
+
+**Sẽ đỏ khi:** THE_MUTATION_THAT_MUST_KILL_IT
+<!-- Nêu đúng một thay đổi ở PHÍA BÊN KIA của seam làm probe đỏ, và chạy nó. Probe không mutation-test được là một assertion chưa biết mình canh gì. -->
+
 </frozen-after-approval>
 
 ## Code Map
