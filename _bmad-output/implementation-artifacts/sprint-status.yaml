@@ -46,7 +46,7 @@ development_status:
   epic-1-retrospective: done
 
   epic-2: in-progress
-  2-0-rút-chuỗi-ra-i18n-vi-mặc-định-en-song-song: review
+  2-0-rút-chuỗi-ra-i18n-vi-mặc-định-en-song-song: done
   2-1-tạo-phòng-học-với-chủ-đề-và-quyền: backlog
   2-2-cấp-token-vào-phòng-kèm-giữ-chỗ-nguyên-tử: backlog
   2-3-màn-pre-join-xem-trước-chọn-khuôn-mặt-thử-mic: backlog
@@ -256,3 +256,18 @@ action_items:
     owner: "IPan"
     status: open
     ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-09-06.md"
+  - id: "story-2-0-p2-chưa-có-nút-đổi-ngôn-ngữ-cơ-chế-đủ-control-thiếu"
+    epic: 2
+    action: "P2 — Chưa có nút đổi ngôn ngữ. Story 2.0 ship đủ cơ chế (cookie thắng
+      Accept-Language, probe tests/e2e/web/ngon-ngu.spec.ts chứng minh cả hai chiều)
+      nhưng KHÔNG file nào trong apps/web ghi cookie stuwith-locale, nên hôm nay đổi
+      ngôn ngữ chỉ bằng cách đổi cài đặt trình duyệt. Việc còn lại: một control ghi
+      document.cookie tên LOCALE_COOKIE_NAME rồi router.refresh(); LOCALE_COOKIE_NAME
+      và isLocale đã là nơi duy nhất định nghĩa tên và giá trị hợp lệ. Không phải một
+      dòng: control nằm ở header nên phải qua sàn 44/48px, vòng focus và reflow 320px
+      mà he-thiet-ke.spec.ts đang đo. Ghi ở đây thay vì chỉ ở deferred-work.md vì mục
+      đó đang mang nhãn CHƯA CÓ CHỦ, và 'hoãn tới một chỗ không ai chép vào danh sách
+      của chỗ đó' đúng là cơ chế đã làm bay ba mệnh đề NFR ở Epic 1."
+    owner: "IPan"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/deferred-work.md:369"
