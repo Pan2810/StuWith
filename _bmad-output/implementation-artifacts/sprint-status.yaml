@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 08-21-2026 21:27
-last_updated: 09-06-2026 21:00
+last_updated: 09-06-2026 22:10
 project: StuWith
 project_key: NOKEY
 tracking_system: file-system
@@ -117,7 +117,7 @@ action_items:
       lại bị vô hiệu. Đo được trong Chromium: retry-after là null cross-origin, nên
       nút thử lại đang được bật đúng lúc phải khoá."
     owner: "IPan"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-09-06.md"
   - id: "epic-1-retro-item-6-p1-đóng-lỗ-ranh-giới-apps-web-apps-api-t"
     epic: 1
@@ -126,7 +126,7 @@ action_items:
       tests/gates/ad-1-dependency-direction.test.ts. Đo được: một import tương đối
       vào apps/api cho dep-check xanh với 184 module."
     owner: "IPan"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-09-06.md"
   - id: "epic-1-retro-item-7-p1-chốt-chủ-cho-bốn-yêu-cầu-not-met-của"
     epic: 1
