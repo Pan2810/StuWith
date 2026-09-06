@@ -186,13 +186,39 @@ product code.
 
   `apps/realtime-gateway` has no equivalent gate today. That is recorded, not
   decided.
-- **AD-12 — the audit trail is append-only.** No role holds `DELETE`. Do not add one.
+- **AD-12 — the audit trail is append-only, in the database AND in the text of this
+  repository.** No role holds `UPDATE`, `DELETE` or `TRUNCATE` on `audit_events`.
+  Do not add one — and do not write the statement either:
+  `tests/gates/audit-append-only.test.ts` scans every `.ts/.tsx/.js/.cjs/.mjs/.sql/
+  .yml/.yaml/.conf/.sh` file under `apps`, `packages`, `tests`, `infra`, `.github`
+  and `scripts` (plus the repository root, non-recursively) and is red for six
+  spellings: `UPDATE`, `DELETE FROM`, `TRUNCATE`, `INSERT … ON CONFLICT … DO UPDATE`,
+  `GRANT UPDATE|DELETE|TRUNCATE … ON`, and `DROP|ALTER TABLE` — schema-qualified or
+  quoted or not. The GRANTs alone were only half the rule, because a migration or a
+  `psql` script does not run as an application role.
+
+  Exemptions are per STATEMENT, not per file: two files, three statements, each with
+  a written reason, each checked to still contain the exact text it was exempted for
+  — so a stale exemption fails and a NEW offending statement in an exempted file is
+  still reported. A correction to this table is a new row, not an edit.
 - **AD-15 — an inbound `x-request-id` is never trusted verbatim.** It is stamped on
-  every log line for the request and echoed in a response header, so a raw value
-  gives the caller log injection (newlines) and unbounded log growth (length).
+  every log line for the request, carried onto every `audit_events` row that request
+  writes, and echoed in a response header, so a raw value gives the caller log
+  injection (newlines, braces), log forging and unbounded log growth (length).
   `resolveRequestId` in `packages/config` accepts it only if it already looks like
   an id, and mints a fresh one otherwise. Both processes go through that one
   function; do not re-implement it per app.
+
+  **It belongs to Fastify's `genReqId`, in each app's `http-setup.ts`, and nowhere
+  else.** It lived in the pino options until Story 1.7 and never executed once:
+  `pino-http` writes `req.id = req.id || genReqId(req, res)`, and Fastify has
+  already assigned an id before any middleware runs. So from Story 1.1 to Story 1.7
+  an inbound header was silently ignored, nothing was ever echoed despite
+  `Access-Control-Expose-Headers` advertising it, and every line carried Fastify's
+  `req-1`, `req-2` counter — which BOTH processes mint independently, so two
+  unrelated requests collide on one id. A `genReqId` in the pino options is a
+  decision point that never runs; `loggerWiringProblems` in `packages/config` is red
+  if one reappears.
 - **AD-13 — contract types live in `packages/contracts`, never in `apps/*`.** Adding
   an optional field is compatible. Renaming, retyping, removing, or tightening a
   constraint is breaking and goes to `/v2`.
@@ -269,13 +295,65 @@ required check is a silent pass, so both the workflow and
   environment no workflow pointed at. If you rename either side, rename both.
 - **The VPS rollout step is a deliberate `exit 1`**, so a green "deploy" job can
   never be mistaken for a deploy that actually happened.
-- **`packages/config` redacts PII with a deny-list.** The spine mandates a
-  *whitelist* serializer; that is Story 1.7's job. What is here is the floor, not the
-  finished control — but the floor is now pinned: `packages/config/src/logging.test.ts`
-  asserts the required paths exist, and `apps/api/src/logging.test.ts` runs a real
-  pino logger and asserts no cookie, authorization header, email, date of birth,
-  access token or provider id reaches an output line. Deleting a path, flipping
-  `remove: true`, or dropping the serializers block now fails a test.
+- **The PII rule is now an ALLOW-LIST, and the default is reversed. A field you put
+  in a log call's payload object is NOT logged until somebody declares it.** This is
+  the opposite of what the repository did until Story 1.7, so read it before you go
+  looking for the redaction path that "should" have covered your field: there is no
+  such path, and adding one is not how you fix a missing field.
+
+  **Two routes bypass it, and both are child bindings.** The sentence above is about
+  the object a log call passes, which is what `formatters.log` receives. pino
+  stitches CHILD bindings into a line without passing them through that formatter
+  (`asChindings` replaces a child's bindings formatter with an identity function),
+  so a field arriving by either route below is written whatever it contains:
+  - `pino-http`'s `customProps` in each app's `logging.ts`. It returns
+    `{ request_id }` today, which is the one field that MUST survive. Add a second
+    key there and nothing stops it;
+  - `nestjs-pino`'s `PinoLogger.assign(...)`, which nothing in this repository
+    calls. If you reach for it, you are adding an unfiltered field.
+
+  Neither has a guard, both are recorded in `deferred-work.md`, and `redact` (below)
+  is the only thing covering them.
+
+  `packages/config/src/log-fields.ts` declares the names; `log-filter.ts` applies
+  them at pino's `formatters.log`, which is the only hook that sees the whole merged
+  object of every line. Both processes read the same declaration — two copies of a
+  PII policy drift the moment one of them gains a field.
+
+  Four consequences that surprise people:
+  - **`logger.info({ user })` writes nothing about the user, not even the id.**
+    `user` was never declared, so nothing under it can be reached at any depth. If
+    you want an id in a line, put it in the message.
+  - **`formatters.log` must not be replaced by `serializers`.** A serializer is
+    keyed by field NAME, so an undeclared field has no serializer to call and sails
+    straight through. That mistake produces a story that looks right and leaks.
+  - **`formatters` is incompatible with a pino `transport`/worker target.** Both
+    processes write straight to a stream today. Keep it that way, or the control
+    silently stops running.
+  - **`request_id` does not travel through the allow-list at all.** `pino-http`
+    merges it as a child binding, and pino replaces a child's bindings formatter
+    with an identity function — measured, not read off the README. So the allow-list
+    can neither protect it nor break it, and `serializers.req` is what governs `req`.
+
+  `LOG_REDACT_PATHS` is still wired, as a BELT rather than the control, precisely
+  because child bindings skip `formatters.log` and do go through `redact`. Removing
+  it is a human decision; `deferred-work.md` records it as open.
+
+  **`vitest run` alone tests the PREVIOUS policy after you edit it.** `apps/*` import
+  `@stuwith/config` as built `dist`, so a change to `log-fields.ts` or
+  `log-filter.ts` is invisible to the `api` and `realtime-gateway` projects until
+  `pnpm run build:packages` has run. A reviewer's first mutation of the allow-list
+  came back green for exactly that reason. CI is safe (the gate builds first) and so
+  is the root `pnpm test` script; the shorthand is not. **Rebuild before every
+  mutation test — a mutation run that skipped the build proves nothing.**
+
+  All of it is pinned. `packages/config/src/log-filter.test.ts` covers the policy as
+  a pure function; each app's `logging.test.ts` runs a real pino through the real
+  wiring and asserts an undeclared field, a field invented today, a two-level
+  payload, every log level and a custom property hung on an `Error` all stay out —
+  while `err.code`, the path and the request id stay in. Dropping `formatters`,
+  deleting the `err` serializer, flipping `remove: true` or removing a declared
+  field each turns something red.
 - **No real OAuth credential exists yet, and `AUTH_ENABLED_PROVIDERS` is how that
   is handled honestly.** Story 1.2 ships the full Google / Facebook / Apple /
   Microsoft flow, but nobody has registered an app with any of them (human

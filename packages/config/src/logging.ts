@@ -1,13 +1,27 @@
+import { LOG_ALLOWED_FIELDS } from './log-fields';
+import { filterLoggedFields, serializeLoggedError } from './log-filter';
 import type { LogLevel } from './schema';
 
 /**
  * AD-15 — PII never reaches a log line.
  *
- * The list lives here, once, because both processes log and two copies of a
- * redaction list drift the moment one of them gains a field. Story 1.7 replaces
- * this deny-list with the whitelist serializer the spine actually mandates ("only
- * ids and declared fields get written; a newly added payload field defaults to NOT
- * being logged"). Until then this is the floor, not the finished control.
+ * ## This list is no longer the control. It is the belt behind it.
+ *
+ * Story 1.7 replaced the mechanism: the allow-list in `log-fields.ts`, applied at
+ * `formatters.log` by `log-filter.ts`, is what decides whether a field is written.
+ * A field nobody declared is absent because it was never declared — which is the
+ * property the spine mandates and the property a deny-list can never have.
+ *
+ * This array stays wired anyway, for one measured reason rather than out of
+ * caution. pino stitches CHILD bindings into a line without passing them through
+ * either formatter (`asChindings` replaces a child's bindings formatter with an
+ * identity function), and `pino-http` puts `req` and its `customProps` there. Those
+ * bindings DO go through `redact`'s stringifiers. So the belt still covers ground
+ * the allow-list cannot reach, and it is not a rule nobody runs.
+ *
+ * Removing it entirely is a decision for a human, not for whoever next tidies this
+ * file: `formatters.log` runs BEFORE `redact`, so the two are ordered rather than
+ * redundant, and `logging.test.ts` pins that order rather than assuming it.
  */
 export const LOG_REDACT_PATHS: readonly string[] = [
   'req.headers.authorization',
@@ -132,6 +146,16 @@ export const LOG_REDACT_PATHS: readonly string[] = [
 export const REDACTION_NOTES = {
   bareCodeExcluded:
     'req.query.code + sanitizeLoggedUrl cover the OAuth code; a bare *.code would delete err.code',
+  /**
+   * The same decision, carried into the mechanism that replaced the deny-list.
+   *
+   * Turning the rule round could have dropped `err.code` silently — an allow-list
+   * that simply forgot to declare it would look tidy and delete the field every
+   * incident starts from. `LOG_ALLOWED_ERROR_FIELDS` names it explicitly, and both
+   * apps' tests assert it survives a real pino.
+   */
+  errorCodeDeclared:
+    'err.code is declared in LOG_ALLOWED_ERROR_FIELDS, so the diagnostic field survives the allow-list',
 } as const;
 
 /**
@@ -182,6 +206,24 @@ export const REQUEST_ID_HEADER = 'x-request-id';
  * So the id is accepted only when it already looks like an id. Anything else is
  * silently replaced with a fresh one — dropping a malformed correlation id costs
  * a trace; trusting it costs the log.
+ *
+ * ## This became TRUE in Story 1.7. It was a description of an intention before.
+ *
+ * The paragraph above says the value is stamped on every log line and echoed in a
+ * response header. Neither happened between Story 1.1 and Story 1.7, and nothing
+ * said so: the caller was `genReqId` in each app's `logging.ts`, handed to
+ * `pino-http`, which writes `req.id = req.id || genReqId(req, res)` — and Fastify
+ * had already assigned an id before any middleware ran, so the branch never
+ * executed. This function, the most heavily tested one in this package, had never
+ * run on a real request; every line carried Fastify's `req-1`, `req-2` counter,
+ * which BOTH processes mint independently and therefore collide on.
+ *
+ * The caller is now Fastify's own `genReqId`, in each app's `http-setup.ts`, which
+ * is the single place Fastify asks. Do not re-implement it per app, and do not put
+ * one back in the pino options: that would be a second decision point that never
+ * executes. `apps/api/src/logging.test.ts` drives hostile headers through a real
+ * HTTP request rather than through this function alone, because the difference
+ * between the two is exactly what went unnoticed for six stories.
  */
 export const REQUEST_ID_MAX_LENGTH = 128;
 
@@ -206,11 +248,87 @@ export function resolveRequestId(incoming: unknown, generate: () => string): str
   return isAcceptableRequestId(incoming) ? incoming : generate();
 }
 
+/**
+ * Everything both processes need to build an identical logger, declared once.
+ *
+ * The two apps' `logging.ts` files are near-identical by design; anything they
+ * would otherwise each spell out belongs here, because two copies of a PII policy
+ * drift the moment one of them gains a field. That is not a hypothetical — it is
+ * the argument that moved the redaction list here in the first place.
+ */
 export interface LoggerBaseOptions {
   readonly level: LogLevel;
+  /**
+   * The belt, not the control. See {@link LOG_REDACT_PATHS}; it is still handed
+   * out because child bindings never reach `formatters.log`.
+   */
   readonly redactPaths: readonly string[];
+  /** The declared field names, exposed so a test can assert against the policy. */
+  readonly allowedFields: readonly string[];
+  /**
+   * `formatters.log`. The allow-list itself, and the reason a field nobody
+   * declared is absent from a log line without anybody editing anything.
+   */
+  readonly logFormatter: (object: Record<string, unknown>) => Record<string, unknown>;
+  /**
+   * `serializers.err`. pino's default walks every enumerable own property of a
+   * thrown object, which is the one route this repository was measurably leaking
+   * through.
+   */
+  readonly errorSerializer: (value: unknown) => Record<string, unknown>;
   readonly requestIdHeader: string;
   readonly base: { readonly service: string; readonly version: string };
+}
+
+/**
+ * The wiring both processes must have, as an assertion both processes can run.
+ *
+ * `apps/realtime-gateway/src/logging.test.ts` had an example named "is the same
+ * wiring as apps/api, field for field" that compared the gateway to nothing at
+ * all — it asserted the gateway's own key names, so the two files could drift and
+ * both stay green while each described itself.
+ *
+ * The answer is not a third copy of the expectations: it is one function, here,
+ * beside the policy it is about. A `pinoHttp` options object either satisfies it
+ * or does not, and both apps' tests call it with their own.
+ *
+ * It returns problems rather than throwing, so a failing test names every
+ * difference at once instead of the first one.
+ */
+export function loggerWiringProblems(options: {
+  formatters?: { log?: unknown } | undefined;
+  serializers?: Record<string, unknown> | undefined;
+  redact?: unknown;
+  genReqId?: unknown;
+  customProps?: unknown;
+}): readonly string[] {
+  const problems: string[] = [];
+
+  if (typeof options.formatters?.log !== 'function') {
+    problems.push('formatters.log is missing — the allow-list is not applied at all');
+  }
+  const serializers = Object.keys(options.serializers ?? {}).sort();
+  if (serializers.join(',') !== 'err,req,res') {
+    problems.push(`serializers must be exactly err, req, res — found ${serializers.join(', ')}`);
+  }
+  const redact = options.redact as { paths?: unknown; remove?: unknown } | undefined;
+  if (!Array.isArray(redact?.paths) || redact.paths.length === 0) {
+    problems.push('the deny-list belt is not wired');
+  }
+  if (redact?.remove !== true) {
+    problems.push('redact must REMOVE rather than mask: "[Redacted]" still discloses presence');
+  }
+  if (typeof options.customProps !== 'function') {
+    problems.push('customProps is missing — request_id would never reach a line');
+  }
+  if (options.genReqId !== undefined) {
+    // The regression that hid for six stories. `pino-http` writes
+    // `req.id = req.id || genReqId(...)` and Fastify has already set `req.id`, so
+    // a `genReqId` here is a decision point that never executes. It belongs to
+    // Fastify, in each app's `http-setup.ts`.
+    problems.push('genReqId must live on the Fastify adapter, not in the pino options');
+  }
+  return problems;
 }
 
 export function loggerBaseOptions(input: {
@@ -221,6 +339,9 @@ export function loggerBaseOptions(input: {
   return {
     level: input.level,
     redactPaths: LOG_REDACT_PATHS,
+    allowedFields: LOG_ALLOWED_FIELDS,
+    logFormatter: filterLoggedFields,
+    errorSerializer: serializeLoggedError,
     requestIdHeader: REQUEST_ID_HEADER,
     base: { service: input.service, version: input.version },
   };
