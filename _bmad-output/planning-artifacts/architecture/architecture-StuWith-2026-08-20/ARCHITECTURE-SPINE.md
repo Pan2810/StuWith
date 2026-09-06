@@ -255,6 +255,15 @@ graph TD
 - **Prevents:** xác minh danh tính cần ảnh giấy tờ, nhưng stack MVP không có object store (`docs/prd.md` A-1) — một đơn vị sẽ hoặc dựng lén chỗ lưu, hoặc nhét base64 vào Postgres, và cả hai đều tạo ra một kho PII không ai định tạo
 - **Rule:** Xác minh danh tính chạy hoàn toàn qua **nhà cung cấp bên thứ ba**. Ảnh giấy tờ đi thẳng từ trình duyệt người dùng tới nhà cung cấp, **không qua server của ta**. Ta chỉ lưu: mã tham chiếu của nhà cung cấp, kết quả (đạt/không), mốc thời gian, và các trường suy ra được phép dùng (đủ 18 hay chưa, loại huy hiệu được cấp). **Không có endpoint nào nhận tệp** — cùng tinh thần với AD-11.
 
+### AD-30 — Khung hình gốc không bao giờ được publish, và bậc lùi không phụ thuộc vào thứ đang hỏng
+
+- **Binds:** S2, US-2.1 (Story 2.7, 2.3), FR17, FR18, NFR10 Riêng tư
+- **Prevents:** `docs/prd.md §6` hẹn "chọn SDK face-filter → quyết ở Architecture" và bảng Stack không có dòng nào — câu hỏi rơi giữa §6 (hoãn sang Architecture) và §7 (bảng câu hỏi còn mở), không nằm trong sổ nào. Nhưng thứ một dòng Stack không cứu được là hai cái bẫy dưới đây, và cả hai đều làm AC xanh trong lúc lời hứa riêng tư đã vỡ
+- **Rule (a) — chỉ MỘT trong ba chế độ cần ML.** `docs/prd.md §8` (glossary — dòng ghi *"thay khuôn mặt bằng avatar"*, với `"blur"` nằm ở cột **Không dùng**) và `EXPERIENCE.md` (*"Ô xem trước lập tức thành avatar chữ 'TR'"*) đều định nghĩa **Ẩn mặt là thay bằng avatar**, không phải blur: *"Ô xem trước lập tức thành avatar chữ 'TR'"*. Nên Ẩn mặt = **ngừng publish video + hiện ô avatar**, không landmark, không segmentation, không model. Điều này không phải tối ưu hoá — nó là điều kiện để `AC3` có nghĩa: thang hạ bậc kết thúc ở *"tự chuyển sang Ẩn mặt"*, và **bậc lùi cuối cùng không được phụ thuộc vào thứ đang hỏng**. Dựng Ẩn mặt bằng segmentation là làm cho lối thoát chết cùng lúc với thứ nó cứu.
+- **Rule (b) — không bao giờ publish track camera trực tiếp.** Track publish lên LiveKit **luôn** là track đã xử lý (canvas / `MediaStreamTrack` sinh ra từ pipeline), kể cả ở chế độ Để nguyên. Gắn processor **sau** khi đã publish track camera để lại một cửa sổ — dài ngắn tuỳ máy — mà khung hình gốc đã rời máy, và AC *"LiveKit không bao giờ nhận được khung hình gốc"* vỡ trong đúng cửa sổ đó. Đóng bằng **cấu trúc**, không bằng canh giờ. Ở Ẩn mặt thì không publish video track nào cả.
+- **Rule (c) — model tự host.** Tệp model đi kèm bản build và phục vụ từ origin của ta; trình duyệt người dùng **không bao giờ** gọi tới CDN của nhà cung cấp. Cùng luật `next/font` đã theo cho Be Vietnam Pro (`apps/web/src/app/layout.tsx`), và ở đây nó còn là thứ làm cho câu *"khuôn mặt không rời máy người dùng"* kiểm chứng được: một request tới máy chủ bên thứ ba trong lúc bật filter là bằng chứng ngược, dù payload có gì đi nữa.
+- **Rule (d) — probe bắt buộc.** Story nào chạm đường này cắt qua trình duyệt → LiveKit → server, nên theo `AGENTS.md §4` spec phải khai probe chạy ở **tầng trình duyệt**, và mutation làm nó đỏ phải là một mutation ở phía LiveKit/server. Một unit test trên hàm xử lý khung hình không chứng minh được điều AC này nói.
+
 ## Consistency Conventions
 
 | Concern | Convention |
@@ -286,6 +295,7 @@ graph TD
 | pgvector | 0.8.6 |
 | Valkey | 9.0.4 (BSD-3-Clause) |
 | LiveKit server | 1.13.5 (31/07/2026) |
+| `@mediapipe/tasks-vision` | **1.0.1** (Apache-2.0) — chỉ cho chế độ **Filter**. Ẩn mặt không dùng nó và không được dùng nó: xem AD-30. Model tự host, không gọi CDN của Google. Kiểm trên registry npm ngày 06/09/2026; tag `nightly` là `1.0.1-rc.20260905` |
 | coturn | upstream 4.13.1; bản distro thường trễ hơn — ghim bản cụ thể khi dựng compose |
 | Caddy | 2.11.4 (TLS ở edge) |
 

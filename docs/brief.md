@@ -33,7 +33,8 @@ Một "thư viện học tập mini" trực tuyến: bất kỳ ai cũng có th�
 - Đăng nhập qua mạng xã hội (OAuth: **Google, Facebook, Apple, Microsoft** — Microsoft để tích hợp account @fpt.com).
 - Vào/tạo/tìm lớp theo keyword; **AI match** theo nguyện vọng (embedding + similarity).
 - Phòng học **live WebRTC** (audio ưu tiên, video simulcast, degrade → avatar/icon khi mạng yếu).
-- Chế độ khuôn mặt: **để nguyên / blur-ẩn / filter biến đổi** (xử lý client-side).
+- Chế độ khuôn mặt: **để nguyên / Ẩn mặt (thay bằng avatar) / filter biến đổi** (xử lý client-side).
+  *Sửa 06/09/2026: từng viết "blur-ẩn". Đây là nguồn thượng lưu của mâu thuẫn mà `docs/prd.md` AC1 thừa hưởng — sửa ở đây để người đọc brief không suy lại ra "blur". Ẩn mặt là avatar: xem glossary của PRD và AD-30.*
 - Chat/nói với **cả phòng** (miễn phí) và **hỏi riêng trả coin theo block** (đồng hồ đếm ngược theo số coin đang có). Phiên hỏi riêng tối đa **3 người** — 1 người được hỏi + tối đa 2 người trả coin, mỗi người trả đủ đơn giá; người thứ ba phải được **cả hai** người trong phiên đồng ý mới vào được.
 - **Ví coin nội bộ**: bản thử nghiệm cấp sẵn **1.000.000 coin/user**, tiêu trong app, **chưa** convert ra tiền/chưa rút.
 - Hệ thống **hạng uy tín** (theo mùa) + **huy hiệu học vấn** đã xác minh.
