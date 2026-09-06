@@ -1,6 +1,7 @@
 import type { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
 import type { ApiEnv } from '@stuwith/config';
-import { compileTrustedProxies } from '@stuwith/config';
+import { REQUEST_ID_HEADER, compileTrustedProxies, resolveRequestId } from '@stuwith/config';
+import { randomUUID } from 'node:crypto';
 
 /**
  * The Fastify options `main.ts` and the flow-test harness must BOTH construct the
@@ -49,6 +50,38 @@ import { compileTrustedProxies } from '@stuwith/config';
  */
 type FastifyAdapterOptions = NonNullable<ConstructorParameters<typeof FastifyAdapter>[0]>;
 
+/**
+ * ## `genReqId` belongs to FASTIFY, not to pino-http, and putting it in the wrong
+ * place is a silent no-op
+ *
+ * It lived in `logging.ts` until Story 1.7 and never executed once. `pino-http`
+ * writes `req.id = req.id || genReqId(req, res)`, and Fastify has already assigned
+ * an id by the time any middleware runs — so the `||` short-circuited on every
+ * request, for every deployment, since Story 1.1. Two things followed, and both
+ * were measured rather than reasoned about:
+ *
+ *  - an inbound `x-request-id` was never honoured, so a trace could not survive a
+ *    hop. `resolveRequestId` — the most heavily tested function in
+ *    `packages/config` — had never run on a real request;
+ *  - the id on every line was Fastify's sequential counter (`req-1`, `req-2`, …).
+ *    Both processes mint that same sequence independently, so two unrelated
+ *    requests in the two processes collide on one id. That is worse than
+ *    untraceable: it joins log lines that have nothing to do with each other.
+ *
+ * Fastify asks exactly once, here, and everything downstream reads the answer:
+ * `request.id`, `request.raw.id` (which is what `pino-http` picks up, so the log
+ * line and the audit row cannot disagree) and the echoed response header.
+ *
+ * ## What this makes attacker-controlled, and what stops it
+ *
+ * The value now flows from a request header into every log line and every audit
+ * row for that request. `resolveRequestId` is the guard and has been since Story
+ * 1.1 — it accepts the caller's value only when it already looks like an id
+ * (`REQUEST_ID_PATTERN`, `REQUEST_ID_MAX_LENGTH`) and mints a fresh one otherwise.
+ * This is the first release in which that guard is load-bearing, so
+ * `logging.test.ts` exercises it end to end through a real request rather than
+ * through the function alone.
+ */
 export function fastifyAdapterOptions(config: ApiEnv): FastifyAdapterOptions {
   // Throws rather than continuing with a value the library refused: the config
   // layer already validated this, so anything unusable here is a bug, and a
@@ -60,7 +93,12 @@ export function fastifyAdapterOptions(config: ApiEnv): FastifyAdapterOptions {
         'refused to start; this is a bug in packages/config.',
     );
   }
-  return { trustProxy: compiled.forFastify };
+  return {
+    trustProxy: compiled.forFastify,
+    // The one decision point, shared with `apps/realtime-gateway` through
+    // `resolveRequestId`. Do not re-implement it per app (AD-15).
+    genReqId: (req) => resolveRequestId(req.headers[REQUEST_ID_HEADER], randomUUID),
+  };
 }
 
 /**
@@ -97,6 +135,30 @@ export function configureHttpApp(app: NestFastifyApplication, config: ApiEnv): v
     exposedHeaders: ['x-request-id'],
     maxAge: 600,
   });
+
+  /**
+   * Echo the request id, and echo only the SANITISED one.
+   *
+   * `Access-Control-Expose-Headers: x-request-id` above has advertised this header
+   * since Story 1.1 while nothing ever set it — the echo was supposed to happen in
+   * `pino-http`'s `genReqId`, which never ran. So a caller correlating a failure
+   * with a support ticket had nothing to quote.
+   *
+   * `request.id` and not `request.headers['x-request-id']`, and the difference is
+   * the whole security argument: echoing the raw header back makes this endpoint a
+   * reflection point for whatever the caller sent. `request.id` is the value
+   * `resolveRequestId` already approved or replaced.
+   *
+   * `onRequest` rather than `onSend`, so the header is present on every response
+   * including the ones an exception filter builds.
+   */
+  app
+    .getHttpAdapter()
+    .getInstance()
+    .addHook('onRequest', (request, reply, done) => {
+      void reply.header(REQUEST_ID_HEADER, request.id);
+      done();
+    });
 
   /**
    * `application/x-www-form-urlencoded` — Apple's callback transport — needs NO

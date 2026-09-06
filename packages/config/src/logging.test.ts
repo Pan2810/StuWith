@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
+  LOG_ALLOWED_ERROR_FIELDS,
+  LOG_ALLOWED_FIELDS,
+  LOG_ERROR_FIELD_CARVE_OUTS,
+  LOG_NEVER_LOGGABLE_FIELDS,
+  LOG_SERIALIZED_FIELDS,
+} from './log-fields';
+import { filterLoggedFields, serializeLoggedError } from './log-filter';
+import {
   LOG_REDACT_PATHS,
   REDACTION_NOTES,
   REQUEST_ID_HEADER,
@@ -10,16 +18,185 @@ import {
   sanitizeLoggedUrl,
 } from './logging';
 
+
 /**
- * AD-15 has no other test in the repo, which meant the redaction list was a
- * comment with a shape. Deleting `req.headers.cookie` from it, or flipping
- * `remove: true` to `false` in either app, left every gate green.
+ * AD-15's policy, in two layers, and they are asserted separately because they now
+ * mean different things.
  *
- * This file pins the FLOOR, not the finished control: the spine mandates a
- * whitelist serializer and that is Story 1.7's job. What is asserted here is only
- * what today's deny-list actually promises.
+ * The ALLOW-LIST is the control. A field is written because somebody declared it;
+ * everything else is absent by default, at every depth, in either vocabulary.
+ *
+ * The DENY-LIST is the belt. It stayed wired for one measured reason: pino stitches
+ * child bindings (`req`, and `pino-http`'s `customProps`) into a line without
+ * passing them through `formatters.log`, and those bindings do go through `redact`.
+ * Its own rules are further down and unchanged.
+ *
+ * ## The rule that is deliberately absent
+ *
+ * `LOG_REDACT_PATHS` needs a rule demanding both spellings of every path, because a
+ * deny-list naming `date_of_birth` and not `dateOfBirth` protects the wire and
+ * leaks the domain object — which is what happened, twice. The allow-list needs no
+ * such rule and does not have one. `dateOfBirth` is absent because it was never
+ * declared, not because a pairing rule caught somebody forgetting to forbid it.
+ * There is no list to keep in step, so there is nothing to check. That absence is
+ * the story's result rather than a hole in its tests, and `log-fields.ts` says so
+ * at the top of the file.
  */
-describe('LOG_REDACT_PATHS (AD-15)', () => {
+describe('the allow-list (AD-15) — the control', () => {
+  it('declares something at all, so an empty sweep cannot pass', () => {
+    // Ported from the deny-list's own guard below: every "the field is absent"
+    // assertion in this repository passes perfectly against an empty list and a
+    // filter that writes nothing. These are what make the rest mean something.
+    expect(LOG_ALLOWED_FIELDS.length).toBeGreaterThan(0);
+    expect(LOG_SERIALIZED_FIELDS.length).toBe(3);
+    expect(LOG_ALLOWED_ERROR_FIELDS.length).toBeGreaterThan(0);
+    // And the declared names really do survive the filter, so "nothing leaked" is
+    // not simply "nothing was written".
+    expect(filterLoggedFields({ request_id: 'r-1' })).toEqual({ request_id: 'r-1' });
+    expect(serializeLoggedError(new Error('boom'))['name']).toBe('Error');
+  });
+
+  /**
+   * The inheritor of `it('covers every field the spine names as never-loggable')`.
+   *
+   * The deny-list version asked whether each forbidden field was PRESENT. Its
+   * mirror image is the honest rule for an allow-list: none of them may have been
+   * quietly declared. `LOG_NEVER_LOGGABLE_FIELDS` is an assertion oracle and
+   * nothing consults it at runtime — an allow-list only has to be non-empty to
+   * work, which is exactly why it replaced a list that had to be complete.
+   */
+  it.each([...LOG_NEVER_LOGGABLE_FIELDS])('never declares %s as a loggable field', (field) => {
+    expect(LOG_ALLOWED_FIELDS).not.toContain(field);
+    expect(LOG_SERIALIZED_FIELDS).not.toContain(field);
+  });
+
+  /**
+   * The same oracle over the ERROR list, which had none — and that was the leak
+   * this story exists to close, found in its own review.
+   *
+   * Adding one word to `LOG_ALLOWED_ERROR_FIELDS` left all 1150 examples green
+   * while a `pg` unique violation then wrote `Key (email)=(someone@example.com)
+   * already exists` to disk. It survived because `detail` is a scalar and because
+   * no redaction path happened to name it: protected by accident, which is the
+   * exact property an allow-list was adopted to stop relying on.
+   *
+   * The carve-out is subtracted EXPLICITLY rather than by pointing the oracle away
+   * from the list. See `LOG_ERROR_FIELD_CARVE_OUTS`.
+   */
+  it.each(
+    LOG_NEVER_LOGGABLE_FIELDS.filter(
+      (field) => !Object.keys(LOG_ERROR_FIELD_CARVE_OUTS).includes(field),
+    ),
+  )('never declares %s as a loggable ERROR field', (field) => {
+    expect(LOG_ALLOWED_ERROR_FIELDS).not.toContain(field);
+  });
+
+  /**
+   * The exact sets. Any addition to any of the three lists is red here until
+   * somebody writes it down twice.
+   *
+   * `expect(...).toEqual([...])` rather than `toContain`, because a membership
+   * assertion is satisfied by a list that has grown. The repository already used
+   * this shape once (`LOG_SERIALIZED_FIELDS.length === 3`); the review showed the
+   * error list needed it more.
+   */
+  it('pins the exact contents of all three lists', () => {
+    expect([...LOG_ALLOWED_FIELDS]).toEqual(['request_id', 'msg', 'context', 'responseTime']);
+    expect([...LOG_SERIALIZED_FIELDS]).toEqual(['req', 'res', 'err']);
+    expect([...LOG_ALLOWED_ERROR_FIELDS]).toEqual(['name', 'message', 'stack', 'code']);
+  });
+
+  /**
+   * The carve-out, asserted from both ends so it cannot rot into an accident.
+   *
+   * `message` is in the never-loggable list AND in the error list, and that is one
+   * word with two meanings — chat content, which the spine forbids, and a failure
+   * string read off a thrown object, which a chat payload cannot reach. A
+   * carve-out that is asserted is a decision; one achieved by not looking is the
+   * kind of thing this story was written to remove.
+   */
+  it.each(Object.keys(LOG_ERROR_FIELD_CARVE_OUTS))(
+    'the %s carve-out is real on both sides and says why',
+    (field) => {
+      // It really is forbidden in general…
+      expect(LOG_NEVER_LOGGABLE_FIELDS).toContain(field);
+      // …and really is declared for errors, so a stale carve-out fails here.
+      expect(LOG_ALLOWED_ERROR_FIELDS).toContain(field);
+      expect(
+        LOG_ERROR_FIELD_CARVE_OUTS[field as keyof typeof LOG_ERROR_FIELD_CARVE_OUTS].length,
+      ).toBeGreaterThan(40);
+    },
+  );
+
+  it('carves out exactly one word, so the exception list cannot grow quietly', () => {
+    expect(Object.keys(LOG_ERROR_FIELD_CARVE_OUTS)).toEqual(['message']);
+  });
+
+  it('names the driver fields that made the error list need an oracle', () => {
+    // `detail` is the worked example from the review: one plausible addition, an
+    // email on disk, every test green. It is in the oracle now, so the same
+    // addition is red twice over.
+    for (const field of ['detail', 'where', 'query', 'body', 'params', 'headers']) {
+      expect(LOG_NEVER_LOGGABLE_FIELDS).toContain(field);
+    }
+  });
+
+  it('declares msg, so the object form of a log call keeps its sentence', () => {
+    // `logger.info({ msg: 'x' })` is legal pino and puts the message INSIDE the
+    // filtered object. Undeclared, it produced a message-less line and no error.
+    expect(LOG_ALLOWED_FIELDS).toContain('msg');
+    expect(filterLoggedFields({ msg: 'x' })).toEqual({ msg: 'x' });
+  });
+
+  it('reaches both vocabularies with that rule, so it is not checking one half', () => {
+    // The deny-list's pairing rule asserted its sweep touched snake_case AND
+    // camelCase. The oracle above has to do the same, or it would be a rule about
+    // wire spellings only — the exact shape of the hole that leaked.
+    expect(LOG_NEVER_LOGGABLE_FIELDS.some((field) => field.includes('_'))).toBe(true);
+    expect(LOG_NEVER_LOGGABLE_FIELDS.some((field) => /[a-z][A-Z]/.test(field))).toBe(true);
+  });
+
+  it('declares err.code explicitly, so the decision survived the change of mechanism', () => {
+    // A bare `*.code` was kept OUT of the deny-list on purpose: it would have
+    // deleted the SQLSTATE, the errno and the HTTP status class. Reversing the
+    // mechanism could have dropped that decision by simply not mentioning it, and a
+    // diagnostic field that disappears silently is one you discover mid-incident.
+    expect(LOG_ALLOWED_ERROR_FIELDS).toContain('code');
+    expect(REDACTION_NOTES.bareCodeExcluded).toContain('err.code');
+    expect(REDACTION_NOTES.errorCodeDeclared).toContain('LOG_ALLOWED_ERROR_FIELDS');
+    expect(
+      serializeLoggedError(Object.assign(new Error('x'), { code: 'ECONNREFUSED' }))['code'],
+    ).toBe('ECONNREFUSED');
+  });
+
+  it('keeps request_id, the only join between a log line and an audit row', () => {
+    // `auth.controller.ts` argues that an audit row with no request id is not an
+    // audit row, and `AuditPort` refuses one. Losing the field here would leave the
+    // two halves of the trail unjoinable.
+    expect(LOG_ALLOWED_FIELDS).toContain('request_id');
+  });
+
+  it('is handed to callers as the functions the apps wire in, not as a copy', () => {
+    const base = loggerBaseOptions({ level: 'info', service: 'api', version: '0.1.0' });
+
+    expect(base.allowedFields).toEqual(LOG_ALLOWED_FIELDS);
+    expect(base.logFormatter).toBe(filterLoggedFields);
+    expect(base.errorSerializer).toBe(serializeLoggedError);
+  });
+});
+
+/**
+ * The BELT, asserted as carefully as before precisely because it is no longer the
+ * control.
+ *
+ * A belt nobody checks is a belt that quietly stops fastening, and this one still
+ * covers ground the allow-list cannot: pino's `asChindings` replaces a child's
+ * bindings formatter with an identity function, so `req` and `pino-http`'s
+ * `customProps` never pass through `formatters.log` — but they do pass through
+ * `redact`. Removing it entirely is a human decision, recorded in
+ * `deferred-work.md` rather than taken here.
+ */
+describe('LOG_REDACT_PATHS (AD-15) — the belt behind the allow-list', () => {
   const required = [
     'req.headers.authorization',
     'req.headers.cookie',
