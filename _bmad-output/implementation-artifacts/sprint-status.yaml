@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 08-21-2026 21:27
-last_updated: 09-07-2026 00:10
+last_updated: 09-07-2026 01:00
 project: StuWith
 project_key: NOKEY
 tracking_system: file-system
@@ -93,11 +93,18 @@ action_items:
     owner: "IPan"
     status: done
   - epic: 2
-    action: "Chốt SDK face-filter client-side cho Story 2.7 — PRD §6 hẹn quyết ở Architecture
-      nhưng bảng Stack không có dòng nào; ràng buộc đã đủ (client-side, >=20 FPS trên
-      máy 4 nhân/8GB/không GPU rời, 3 chế độ, tự hạ bậc)"
+    action: "Chốt SDK face-filter client-side cho Story 2.7. ĐÃ CHỐT 06/09/2026:
+      @mediapipe/tasks-vision@1.0.1 (Apache-2.0, kiểm trên registry npm cùng ngày),
+      CHỈ cho chế độ Filter. Điều tra thu nhỏ quyết định này một bậc độ lớn: Ẩn mặt
+      là thay bằng avatar chứ không phải blur (glossary docs/prd.md:305 liệt kê 'blur'
+      ở cột Không dùng, và EXPERIENCE.md:321 viết 'avatar chữ TR'), nên nó không cần
+      ML — và đó là điều kiện để thang hạ bậc của AC3 có nghĩa, vì bậc lùi cuối cùng
+      không được phụ thuộc vào thứ đang hỏng. Ghi ở AD-30 kèm ba ràng buộc: không bao
+      giờ publish track camera trực tiếp (đóng cửa sổ rò khung hình gốc bằng cấu trúc,
+      không bằng canh giờ), model tự host, và probe bắt buộc ở tầng trình duyệt.
+      prd.md AC1 đã sửa 'blur-ẩn' -> avatar; §6 và bảng §7 đã đóng."
     owner: "IPan"
-    status: open
+    status: done
   - epic: 4
     action: "Chốt nhà cung cấp embedding và SỐ CHIỀU vector cho Story 4.2 — AC ghi
       nguyên văn vector(n) với n chưa có giá trị; spine cảnh báo đổi số chiều là migration

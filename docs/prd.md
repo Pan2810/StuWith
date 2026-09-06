@@ -179,8 +179,9 @@ Là nền tảng, tôi cần biết người dùng có đủ 18 tuổi hay khôn
 ### EPIC S2 — Khuôn mặt & Coin
 
 **US-2.1 — Chế độ khuôn mặt**
-- AC1: 3 chế độ: để nguyên / blur-ẩn / filter biến đổi (mèo, gấu, vui...).
-- AC2: Xử lý **client-side** (MediaPipe/SDK), không gửi mặt gốc lên server khi bật ẩn.
+- AC1: 3 chế độ: để nguyên / **Ẩn mặt (thay bằng avatar)** / filter biến đổi (mèo, gấu, vui...).
+  *Sửa 06/09/2026: AC này từng viết "blur-ẩn", mâu thuẫn với glossary §8 — bảng đó định nghĩa Ẩn mặt là "thay khuôn mặt bằng avatar" và liệt kê "blur" ở cột **Không dùng**. PRD tự tuyên bố glossary là trọng tài ("Biến thể trong bảng này là lỗi, không phải phong cách"), nên "blur-ẩn" là lỗi theo chính luật của tài liệu. `EXPERIENCE.md:321` cũng viết avatar. Khác biệt không nhỏ: blur cần segmentation, tức Ẩn mặt cũng cần ML, tức bậc lùi cuối cùng của AC3 phụ thuộc vào đúng thứ đang hỏng. Avatar thì không cần gì — xem AD-30.*
+- AC2: Xử lý **client-side**, không gửi mặt gốc lên server khi bật ẩn. SDK đã chốt 06/09/2026: `@mediapipe/tasks-vision@1.0.1` (Apache-2.0), **chỉ dùng cho chế độ Filter** — Ẩn mặt không dùng ML. Ba ràng buộc đi kèm ở AD-30.
 - AC3: Chuyển chế độ realtime. Ngưỡng hiệu năng: giữ **≥ 20 FPS** trên máy tham chiếu 4 nhân / 8 GB RAM / không GPU rời. Dưới ngưỡng thì tự hạ chất lượng filter một bậc, vẫn dưới thì **tự chuyển sang Ẩn mặt** (không tự tắt về Để nguyên — xem `EXPERIENCE.md`) và báo cho người dùng biết vì sao. `[ASSUMPTION: A-2]`
 
 **US-2.2 — Ví coin (bản thử)**
@@ -265,7 +266,7 @@ Là người trong phòng, tôi muốn xin vào một phiên hỏi riêng đang 
 ---
 
 ## 6. Phụ thuộc & rủi ro
-- Chọn SFU (LiveKit vs Mediasoup) và SDK face-filter → quyết ở Architecture.
+- ~~Chọn SFU (LiveKit vs Mediasoup) và SDK face-filter → quyết ở Architecture.~~ ✅ **Đã quyết.** SFU: LiveKit (bảng Stack). SDK face-filter: `@mediapipe/tasks-vision@1.0.1`, chốt 06/09/2026 — muộn hơn dự kiến, vì câu hỏi này rơi giữa §6 (hoãn sang Architecture) và §7 (bảng câu hỏi còn mở) nên không sổ nào theo dõi nó. §7 dòng 8 nay giữ nó.
 - Cổng thanh toán phụ thuộc pháp nhân/tài khoản merchant.
 - An toàn nội dung (che mặt + hỏi riêng): phụ thuộc chất lượng report/moderation.
 - **Phiên hỏi riêng 3 người (US-2.4) làm tăng bề mặt rủi ro, không giảm.** Kênh riêng hai người khó lạm dụng hơn kênh ba người: người thứ ba có thể là nhân chứng, cũng có thể là đồng phạm. Trần 3 người và đồng thuận hai phiếu là hai lớp chặn hiện có; cần theo dõi trong vận hành xem có đủ không.
@@ -285,6 +286,7 @@ Là người trong phòng, tôi muốn xin vào một phiên hỏi riêng đang 
 | 5 | **Tên gọi "coin" trong giao diện** khi tính năng quy đổi còn treo pháp lý — dùng thẳng "coin" hay tên trung tính hơn | S2 | 🟡 Chưa quyết |
 | 6 | ~~Bằng chứng KYC lưu ở đâu~~ | S3 | ✅ **Đã quyết 21/08** — bên thứ ba, chỉ lưu kết quả (US-3.4 AC1) |
 | 7 | ~~Tắt mic có tính coin không~~ | S2 | ✅ **Đã quyết 21/08** — người được hỏi mute thì dừng đồng hồ (US-2.3 AC7) |
+| 8 | ~~SDK face-filter client-side~~ | S2 | ✅ **Đã quyết 06/09** — `@mediapipe/tasks-vision@1.0.1`, chỉ cho Filter; ràng buộc ở AD-30. *Thêm vào bảng này muộn: §6 hoãn nó sang Architecture và không ai chép sang đây, nên nó vô sổ suốt từ 20/08.* |
 
 ---
 

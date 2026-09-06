@@ -873,6 +873,8 @@ So that tôi học cùng người lạ mà vẫn thoải mái.
 **Then** có hiệu lực **tức thì**, không cần xác nhận
 **And** có ô xem trước chính mình trong bảng chọn
 
+*SDK đã chốt 06/09/2026: `@mediapipe/tasks-vision@1.0.1` (Apache-2.0), **chỉ cho chế độ Filter**. Ẩn mặt là thay bằng avatar (`docs/prd.md §8` glossary, `EXPERIENCE.md:321`) nên không dùng ML — và điều đó là bắt buộc, không phải tối ưu: bậc lùi cuối của thang dưới đây là Ẩn mặt, nên nó không được phụ thuộc vào thứ đang hỏng. Ba ràng buộc còn lại — không bao giờ publish track camera trực tiếp, model tự host, probe tầng trình duyệt — ở **AD-30**.*
+
 **Given** người dùng bật Ẩn mặt hoặc Filter
 **When** khung hình được xử lý
 **Then** xử lý **hoàn toàn ở client** trước khi vào WebRTC track
