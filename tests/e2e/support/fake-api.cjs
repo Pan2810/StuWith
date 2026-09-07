@@ -28,6 +28,7 @@
  */
 
 const http = require('node:http');
+const { randomUUID } = require('node:crypto');
 const contracts = require('../../../packages/contracts/dist/index.js');
 
 const {
@@ -36,11 +37,16 @@ const {
   AUTH_REFRESH_PATH,
   BROWSER_READABLE_RESPONSE_HEADERS,
   DATE_OF_BIRTH_FIELD,
+  DEFAULT_USER_PLAN,
+  PLAN_PARTICIPANT_LIMITS,
   REQUEST_ID_HEADER,
+  ROOMS_PATH,
   SESSION_COOKIE_NAME,
   SESSION_REFRESHED_STATUS,
   currentUserSchema,
+  parseCreateRoomRequest,
   parseDateOfBirth,
+  roomSchema,
 } = contracts;
 
 /** Control surface. Not under `/v1` — nothing here may look like a real route. */
@@ -199,6 +205,12 @@ const server = http.createServer(async (req, res) => {
       declared: next?.declared ?? false,
       refreshWorks: next?.refreshWorks ?? false,
       meStatus: next?.meStatus ?? 200,
+      // Story 2.1. The plan is scenario state rather than a fixed value because it
+      // is the ONE input to the participant cap, and a fake that could only produce
+      // the free plan would let the Campus row of the matrix go untested in a
+      // browser. The CONTRACT's default, never a literal — three places have to
+      // agree about which plan a new person is on.
+      plan: next?.plan ?? DEFAULT_USER_PLAN,
     };
     scenarios.set(id, state);
     // The session cookie is set here rather than by a login flow, because the login
@@ -275,6 +287,57 @@ const server = http.createServer(async (req, res) => {
      * reading the handler, and that is a real limit of the technique.
      */
     send(res, 200, currentUserBody(state));
+    return;
+  }
+
+  /**
+   * Story 2.1's endpoint, and it enforces the two things the browser probe is about:
+   * a session has to have travelled cross-origin, and the participant cap comes from
+   * the caller's plan rather than from the body.
+   *
+   * The body is judged by the REAL `parseCreateRoomRequest` and the answer is built
+   * through the REAL `roomSchema`, so what this fake accepts and what it emits cannot
+   * drift from `apps/api`. What it still cannot tell you is whether `apps/api` agrees
+   * about the STATUS — that is read from the handler by eye, and `fake-api.cjs`
+   * already records the one time that went wrong (a 204 where the product answers a
+   * 200, which is exactly the class of thing a schema cannot see).
+   */
+  if (url.pathname === ROOMS_PATH) {
+    if (req.method !== 'POST') {
+      // There is no GET, no PATCH and above all no DELETE for a room. Answering 405
+      // rather than falling through to 404 is what makes that visible to a spec.
+      send(res, 405, { error: 'phuong-thuc-khong-dung' });
+      return;
+    }
+    if (!state.signedIn) {
+      send(res, 401, { error: 'chua-dang-nhap' });
+      return;
+    }
+    const request = parseCreateRoomRequest(await readBody(req));
+    if (request === null) {
+      send(res, 400, { error: 'phong-khong-hop-le' });
+      return;
+    }
+    const now = new Date().toISOString();
+    send(
+      res,
+      201,
+      roomSchema.parse({
+        id: randomUUID(),
+        owner_user_id: baseUser().id,
+        name: request.name,
+        description: request.description,
+        topic: request.topic,
+        visibility: request.visibility,
+        // The whole capacity decision, from the plan and from nowhere else. A
+        // `max_participants` in the body reached `parseCreateRoomRequest` and was
+        // stripped by it, exactly as it is in `apps/api`.
+        max_participants: PLAN_PARTICIPANT_LIMITS[state.plan],
+        status: 'open',
+        created_at: now,
+        updated_at: now,
+      }),
+    );
     return;
   }
 

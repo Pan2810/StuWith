@@ -7,6 +7,7 @@ import {
   InMemoryAuditAdapter,
   InMemoryIdentityAdapter,
   InMemoryRateLimitAdapter,
+  InMemoryRoomAdapter,
   InMemorySessionAdapter,
 } from '@stuwith/db';
 import { FixedClock, type ClockPort, type IdentityPort, type RateLimitPort } from '@stuwith/domain';
@@ -255,6 +256,12 @@ export interface AuthHarness {
   readonly config: ApiEnv;
   readonly fake: FakeAuthorizationServer;
   readonly identity: InMemoryIdentityAdapter;
+  /**
+   * Story 2.1's store, exposed for the same reason the other three are: the flow
+   * suite has to be able to say "and NOTHING was written" about a refused request,
+   * and a count is the only assertion that says it.
+   */
+  readonly rooms: InMemoryRoomAdapter;
   readonly sessions: InMemorySessionAdapter;
   readonly audit: InMemoryAuditAdapter;
   /**
@@ -377,6 +384,7 @@ export async function createAuthHarness(options: HarnessOptions = {}): Promise<A
   }
 
   const identity = new InMemoryIdentityAdapter();
+  const rooms = new InMemoryRoomAdapter();
   const sessions = new InMemorySessionAdapter();
   const audit = new InMemoryAuditAdapter();
   const clock = options.clock ?? new FixedClock(new Date('2026-09-04T09:00:00.000Z'));
@@ -401,6 +409,7 @@ export async function createAuthHarness(options: HarnessOptions = {}): Promise<A
         // The wrapper, when a test asked for one. It delegates everything it does
         // not override, so the login that has to happen first still happens.
         identity: options.wrapIdentity === undefined ? identity : options.wrapIdentity(identity),
+        rooms,
         sessions,
         audit,
         clock,
@@ -515,6 +524,7 @@ export async function createAuthHarness(options: HarnessOptions = {}): Promise<A
     config,
     fake,
     identity,
+    rooms,
     sessions,
     audit,
     clock,

@@ -15,6 +15,18 @@ import {
 } from './auth';
 import { errorEnvelopeSchema } from './error';
 import { healthResponseSchema } from './health';
+import {
+  CREATE_ROOM_PATHNAME,
+  MAX_PARTICIPANTS_CEILING,
+  MAX_ROOM_DESCRIPTION_LENGTH,
+  MAX_ROOM_NAME_LENGTH,
+  PLAN_PARTICIPANT_LIMITS,
+  ROOMS_PATH,
+  ROOM_TOPICS,
+  ROOM_VISIBILITIES,
+  createRoomRequestSchema,
+  roomSchema,
+} from './rooms';
 
 /**
  * AD-13 requires the contract package to be able to *emit* OpenAPI, so that a
@@ -39,6 +51,13 @@ const REGISTERED_SCHEMAS = {
   CurrentUser: currentUserSchema,
   ErrorEnvelope: errorEnvelopeSchema,
   HealthResponse: healthResponseSchema,
+  // Story 2.1. Both halves are published, and the pair is the point: `Room` has a
+  // `max_participants` that `CreateRoomRequest` has no field for, so a generated
+  // client can SEE that the cap is not something it sends. A document carrying
+  // only the response would leave an integrator guessing whether the omission from
+  // its own request body was an oversight.
+  CreateRoomRequest: createRoomRequestSchema,
+  Room: roomSchema,
   // Published as a component rather than only described in prose: a client
   // reading this document has to be able to DISCOVER that `that-bai` and
   // `da-huy` are the whole set. A closed enum that only exists in a sentence is
@@ -385,11 +404,92 @@ function dateOfBirthPath(): Record<string, unknown> {
   };
 }
 
+/**
+ * `POST /v1/rooms`, described here rather than in `apps/api` for the same reason
+ * every other route is: a route that exists only as a NestJS decorator is invisible
+ * to a mobile client (AD-13).
+ *
+ * Three things the document has to say that a schema cannot, and each of them is a
+ * question an integrator would otherwise answer by experiment:
+ *
+ * - the participant cap is NOT an input. It is derived from the caller's plan, and
+ *   a `max_participants` in the body is ignored rather than refused — so a client
+ *   that sends one gets a `201` with a different number in it and no explanation;
+ * - the cap is fixed at creation and does not move afterwards. A client that
+ *   re-reads a room expecting the number to follow a plan change would be building
+ *   on a behaviour this product deliberately does not have;
+ * - there is no `DELETE`. Not "not yet" — there is no hard-delete path for a room
+ *   anywhere in this system, and an integrator who assumed one exists would design
+ *   a teardown flow around a route that will never be added.
+ */
+function roomsPath(): Record<string, unknown> {
+  const capsByPlan = Object.entries(PLAN_PARTICIPANT_LIMITS)
+    .map(([plan, limit]) => `${plan}=${String(limit)}`)
+    .join(', ');
+
+  return {
+    post: {
+      summary: 'Create a study room. The participant cap comes from the plan, never from the body.',
+      description:
+        'Creates a room owned by the caller, with `status` "open". The participant ' +
+        `cap is decided here from the owner's plan (${capsByPlan}) and stored on the ` +
+        'row: it is NOT read from the request, and it does not change afterwards ' +
+        'when somebody joins or when a plan changes. A `max_participants` sent in ' +
+        'the body is ignored in silence, because the field is not part of this ' +
+        `contract at all. The ceiling the column will store is ${String(MAX_PARTICIPANTS_CEILING)}, ` +
+        'which no plan reaches. There is deliberately no endpoint that deletes a ' +
+        'room — closing one is a state change, and the protocol for it is a later ' +
+        `story. The browser-facing screen for this step lives at ${CREATE_ROOM_PATHNAME}.`,
+      requestBody: {
+        required: true,
+        content: {
+          'application/json': {
+            schema: {
+              $ref: '#/components/schemas/CreateRoomRequest',
+              // Repeated as prose because a `$ref` carries no room for the two
+              // facts an integrator needs before their first call: what the
+              // lengths are measured on, and that the enums are closed.
+            },
+            example: {
+              name: 'Ôn thi cuối kỳ',
+              description: '',
+              topic: ROOM_TOPICS[4],
+              visibility: ROOM_VISIBILITIES[0],
+            },
+          },
+        },
+      },
+      responses: {
+        '201': {
+          description:
+            'Created. The body is the stored room, including the cap the plan ' +
+            'resolved to and the initial status.',
+          content: {
+            'application/json': { schema: { $ref: '#/components/schemas/Room' } },
+          },
+        },
+        '400': {
+          description:
+            'The body is not a usable room. Nothing was written. The message names ' +
+            'no field and no valid value: the form that produced it already shows ' +
+            `every choice. Names are trimmed first, then held to ${String(MAX_ROOM_NAME_LENGTH)} ` +
+            `characters; descriptions to ${String(MAX_ROOM_DESCRIPTION_LENGTH)}.`,
+          content: {
+            'application/json': { schema: { $ref: '#/components/schemas/ErrorEnvelope' } },
+          },
+        },
+        '401': unauthenticated,
+      },
+    },
+  };
+}
+
 export function toOpenApiDocument(): Record<string, unknown> {
   return {
     openapi: '3.0.3',
     info: { title: 'StuWith API', version: CONTRACT_VERSION },
     paths: {
+      [ROOMS_PATH]: roomsPath(),
       '/healthz': {
         get: {
           summary: 'Liveness probe',

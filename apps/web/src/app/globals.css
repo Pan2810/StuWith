@@ -493,6 +493,127 @@ a {
   border-color: var(--danger);
 }
 
+/*
+  Ô nhập NHIỀU DÒNG, dùng lại `.field` chứ không phải một lớp thứ hai.
+
+  `textarea` thừa hưởng toàn bộ viền, nền, chữ và ngưỡng 48px của `.field`; ba dòng
+  dưới đây chỉ thêm những gì một ô một dòng không có. Tách hẳn một `.textarea` sẽ là
+  bản sao thứ hai của cùng một cặp màu — và `contrast.test.ts` đo theo selector, nên
+  bản sao đó phải được khai lại một lần nữa trong bảng composed pairs.
+
+  `resize: vertical` chứ không `both`: kéo ngang làm ô tràn ra khỏi thẻ và phá reflow
+  320px, mà chiều ngang vốn đã là 100%. `resize: none` thì lấy mất khả năng nhìn thấy
+  toàn bộ mô tả dài — đó là điều khiển của người dùng, không phải trang trí.
+*/
+.field-multiline {
+  min-height: 96px;
+  resize: vertical;
+}
+
+/* ===================== nhóm chọn-một ===================== */
+
+/*
+  `fieldset` + `legend`, không phải một `<h3>` với mấy nút radio bên dưới.
+
+  Legend là thứ trình đọc màn hình đọc kèm MỌI lựa chọn trong nhóm; không có nó,
+  "Ngoại ngữ" và "Khác" là sáu nút rời không ai biết thuộc về câu hỏi nào.
+  `EXPERIENCE.md` đặt đúng luật này cho nhóm ba chế độ khuôn mặt của Story 2.7 —
+  "một nhóm chọn-một có nhãn nhóm, không phải ba nút rời" — nên hình dạng ở đây là
+  hình dạng story sau sẽ dùng lại.
+
+  Viền và padding mặc định của `fieldset` bị bỏ: khung đó là của trình duyệt, không
+  của hệ "Cắm trại", và nó đặt một đường kẻ 1px không đạt 3:1 quanh một nhóm điều
+  khiển bấm được.
+*/
+.field-group {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-2);
+  /* Nhóm rộng cuộn trong khung của nó, không đẩy trang — như `.card`. */
+  min-width: 0;
+}
+
+.field-group > legend {
+  padding: 0;
+  margin-bottom: var(--spacing-2);
+}
+
+/*
+  `wrap`, không phải một hàng cuộn ngang. Sáu nhãn chủ đề tiếng Việt dài hơn tiếng
+  Anh 15–25%, và ở 320px chúng phải xuống dòng chứ không được cắt chữ.
+*/
+.choice-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-2);
+}
+
+/*
+  Mỗi lựa chọn là một viên thuốc bấm được, và vùng chạm là CẢ viên chứ không phải
+  chỉ cái chấm radio: `<label>` bọc `<input>`, nên bấm vào chữ cũng chọn.
+
+  Ngưỡng 48px là sàn cứng của `DESIGN.md § Components`, không có ngoại lệ cho điều
+  khiển phụ. `padding` dọc nhỏ hơn nút vì `min-height` mới là thứ giữ sàn.
+*/
+.choice {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  min-height: 48px;
+  padding: 8px 15px;
+  border: 2px solid var(--border-ink);
+  border-radius: var(--rounded-full);
+  background: var(--surface-raised);
+  font-size: var(--typography-body-font-size);
+  font-weight: var(--typography-body-font-weight);
+  line-height: var(--typography-body-line-height);
+  cursor: pointer;
+  min-width: 0;
+}
+
+/*
+  Nút radio THẬT, không phải một hình vẽ bằng CSS.
+
+  Trạng thái đã chọn do chính cái chấm mang — hình dạng, không phải màu — nên nền
+  đổi ở dưới là kênh THỨ HAI chứ không phải kênh duy nhất (WCAG 1.4.1). Đây cũng là
+  lý do không có `appearance: none` ở đây: giấu input đi rồi vẽ lại là cách nhanh
+  nhất để mất luôn trạng thái mà công nghệ hỗ trợ đọc được.
+
+  `accent-color` là một trong ba chỗ hiếm hoi trình duyệt cho tô một control gốc mà
+  không phải dựng lại nó.
+*/
+.choice input[type="radio"] {
+  accent-color: var(--primary);
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  flex: none;
+}
+
+/*
+  Đã chọn: nền lõm + bóng lệch. Cả hai chỉ CỘNG THÊM vào cái chấm đã đầy, và không
+  có khai báo `color` nào ở đây — chữ vẫn là `ink-primary` thừa kế từ `body`, nên
+  cặp màu đo được không đổi khi trạng thái đổi.
+*/
+.choice:has(input[type="radio"]:checked) {
+  background: var(--surface-sunken);
+  box-shadow: var(--shadow-1);
+}
+
+/*
+  Vòng focus theo CẢ viên thuốc, vì vùng bấm là cả viên.
+
+  Nó CỘNG vào vòng focus toàn cục trên chính `<input>` chứ không thay thế: `:has()`
+  không hạ được specificity của quy tắc kia, và không dòng nào ở đây tắt outline.
+*/
+.choice:has(input[type="radio"]:focus-visible) {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
 /* ======================= danh sách provider ======================= */
 
 .provider-list {

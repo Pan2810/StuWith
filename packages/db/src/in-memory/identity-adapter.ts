@@ -1,3 +1,4 @@
+import { DEFAULT_USER_PLAN } from '@stuwith/contracts';
 import type {
   IdentityPort,
   ProviderIdentity,
@@ -49,6 +50,12 @@ export class InMemoryIdentityAdapter implements IdentityPort {
       email: identity.email,
       avatarUrl: identity.avatarUrl,
       role: 'user',
+      // The plan a brand-new person starts on, and the SAME one `users.plan`'s
+      // DEFAULT gives them in Postgres (Story 2.1). Two answers to "which plan"
+      // would mean a room created through the flow suite got a different cap from
+      // one created against the real database, which is the drift the shared
+      // contract suite exists to catch — so it asserts this value against both.
+      plan: DEFAULT_USER_PLAN,
       // Not declared yet — the state Story 1.4's screen exists to move out of.
       // A brand-new user must start here in BOTH adapters, or the contract suite's
       // "a new profile is incomplete" example would only ever be true in one.

@@ -1,4 +1,5 @@
 import {
+  CREATE_ROOM_INVALID_MESSAGE,
   DATE_OF_BIRTH_ALREADY_SET_MESSAGE,
   DATE_OF_BIRTH_INVALID_MESSAGE,
   MONEY_IN_FORBIDDEN_MESSAGE,
@@ -119,6 +120,46 @@ const VI_MESSAGES = {
   'dateOfBirth.requestNotSent': 'Không gửi được yêu cầu này. Hãy tải lại trang rồi thử lại.',
 
   /**
+   * Story 2.1 — the create-room screen.
+   *
+   * The six topic labels are the WORDS for `ROOM_TOPICS`, which is a wire enum of
+   * `snake_case` codes. The codes never reach a screen and the words never reach the
+   * database: a CHECK constraint holding Vietnamese labels would be a translation
+   * stored in Postgres, and renaming one on screen would be a migration.
+   *
+   * `createRoom.capacity` is the product's SECOND plural, and the first one that was
+   * not written for a countdown. Vietnamese has one plural category so both variants
+   * are the same sentence; English needs two, and `Intl.PluralRules` chooses.
+   */
+  'createRoom.link': 'Tạo phòng học',
+  'createRoom.heading': 'Tạo phòng học',
+  'createRoom.nameLabel': 'Tên phòng',
+  'createRoom.nameHint': 'Người khác nhìn thấy tên này khi tìm phòng.',
+  'createRoom.descriptionLabel': 'Mô tả (không bắt buộc)',
+  'createRoom.descriptionHint': 'Nói ngắn gọn buổi học diễn ra thế nào.',
+  'createRoom.topicLegend': 'Chủ đề',
+  'createRoom.visibilityLegend': 'Ai vào được',
+  'createRoom.visibilityPublic': 'Ai cũng có thể tìm thấy',
+  'createRoom.visibilityPrivate': 'Chỉ người có liên kết',
+  'createRoom.submit': 'Tạo phòng',
+  'createRoom.createdHeading': 'Đã tạo phòng',
+  'createRoom.createdName': 'Phòng của bạn: {name}',
+  'createRoom.capacity.one': 'Phòng này nhận tối đa {count} người.',
+  'createRoom.capacity.other': 'Phòng này nhận tối đa {count} người.',
+  'createRoom.createAnother': 'Tạo phòng khác',
+  'createRoom.signedOut': 'Bạn cần đăng nhập trước khi tạo phòng.',
+  'createRoom.toSignIn': 'Tới trang đăng nhập',
+  'createRoom.sessionLost': 'Phiên đăng nhập đã kết thúc. Hãy đăng nhập lại rồi thử lại.',
+  'createRoom.tryAgain': 'Chưa tạo được phòng. Hãy thử lại sau ít phút.',
+  'createRoom.requestNotSent': 'Không gửi được yêu cầu này. Hãy tải lại trang rồi thử lại.',
+  'createRoom.topicNgoaiNgu': 'Ngoại ngữ',
+  'createRoom.topicKhoaHocTuNhien': 'Khoa học tự nhiên',
+  'createRoom.topicKhoaHocXaHoi': 'Khoa học xã hội',
+  'createRoom.topicLapTrinhCongNghe': 'Lập trình và công nghệ',
+  'createRoom.topicOnThi': 'Ôn thi',
+  'createRoom.topicKhac': 'Khác',
+
+  /**
    * Roles as words, which is a defect fixed rather than a feature added.
    *
    * `SignedInPanel` rendered `{user.role}` raw, so an organisation administrator
@@ -138,20 +179,21 @@ const VI_MESSAGES = {
   'role.unknown': 'Thành viên',
 
   /**
-   * The five sentences `packages/contracts` owns, IMPORTED rather than retyped.
+   * The six sentences `packages/contracts` owns, IMPORTED rather than retyped.
    *
    * One string, two consumers — `apps/api` puts it on the wire, this catalogue puts
    * it on a screen — and no copy for an edit to miss. Retyping any of them here is
    * the exact defect `tests/gates/i18n-catalogue.test.ts` refuses: it holds this
    * file's text against the contract's own constants.
    *
-   * Two of the five (`unauthenticated`, `moneyInForbidden`) are not rendered by any
+   * Two of the six (`unauthenticated`, `moneyInForbidden`) are not rendered by any
    * screen today. They are here because the rule is about the STRING having one
    * home, and because Epic 3 hides money controls behind the second of them.
    */
   'error.rateLimited': RATE_LIMITED_MESSAGE,
   'error.dateOfBirthInvalid': DATE_OF_BIRTH_INVALID_MESSAGE,
   'error.dateOfBirthAlreadySet': DATE_OF_BIRTH_ALREADY_SET_MESSAGE,
+  'error.createRoomInvalid': CREATE_ROOM_INVALID_MESSAGE,
   'error.unauthenticated': UNAUTHENTICATED_MESSAGE,
   'error.moneyInForbidden': MONEY_IN_FORBIDDEN_MESSAGE,
 };

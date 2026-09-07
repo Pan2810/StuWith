@@ -93,6 +93,43 @@ export const EN_MESSAGES = {
   'dateOfBirth.requestNotSent': 'This request could not be sent. Reload the page, then try again.',
 
   /**
+   * Story 2.1. The six topic labels are the English words for the same wire codes
+   * the Vietnamese catalogue names — the codes themselves never reach a screen in
+   * either language.
+   *
+   * `createRoom.capacity` is where the two locales genuinely differ: English needs
+   * both plural categories and Vietnamese has one, so the pair below is not a
+   * duplicated row the way its Vietnamese twin is.
+   */
+  'createRoom.link': 'Create a study room',
+  'createRoom.heading': 'Create a study room',
+  'createRoom.nameLabel': 'Room name',
+  'createRoom.nameHint': 'People see this name when they look for a room.',
+  'createRoom.descriptionLabel': 'Description (optional)',
+  'createRoom.descriptionHint': 'Say briefly how the session runs.',
+  'createRoom.topicLegend': 'Topic',
+  'createRoom.visibilityLegend': 'Who can join',
+  'createRoom.visibilityPublic': 'Anyone can find it',
+  'createRoom.visibilityPrivate': 'Only people with the link',
+  'createRoom.submit': 'Create the room',
+  'createRoom.createdHeading': 'The room is ready',
+  'createRoom.createdName': 'Your room: {name}',
+  'createRoom.capacity.one': 'This room holds {count} person.',
+  'createRoom.capacity.other': 'This room holds up to {count} people.',
+  'createRoom.createAnother': 'Create another room',
+  'createRoom.signedOut': 'You need to sign in before creating a room.',
+  'createRoom.toSignIn': 'Go to the sign-in page',
+  'createRoom.sessionLost': 'Your session has ended. Sign in again, then try once more.',
+  'createRoom.tryAgain': 'The room was not created. Please try again in a few minutes.',
+  'createRoom.requestNotSent': 'This request could not be sent. Reload the page, then try again.',
+  'createRoom.topicNgoaiNgu': 'Languages',
+  'createRoom.topicKhoaHocTuNhien': 'Natural sciences',
+  'createRoom.topicKhoaHocXaHoi': 'Social sciences',
+  'createRoom.topicLapTrinhCongNghe': 'Programming and technology',
+  'createRoom.topicOnThi': 'Exam revision',
+  'createRoom.topicKhac': 'Other',
+
+  /**
    * The role labels, which are what closes a defect this story found rather than
    * inherited: `sign-in-outcome.tsx` rendered `user.role` RAW, so a signed-in
    * organisation administrator read "(vai trò: org_admin)" on their own account
@@ -107,7 +144,7 @@ export const EN_MESSAGES = {
   'role.unknown': 'Member',
 
   /**
-   * The five sentences `packages/contracts` owns.
+   * The six sentences `packages/contracts` owns.
    *
    * Their Vietnamese values are IMPORTED there rather than retyped — one string,
    * two consumers, no copy to drift. The English side has no such source, because
@@ -121,6 +158,8 @@ export const EN_MESSAGES = {
     'That date of birth is not valid. Choose your date of birth again, then try once more.',
   'error.dateOfBirthAlreadySet':
     'The profile already has a date of birth, and a date of birth cannot be changed here.',
+  'error.createRoomInvalid':
+    'The room was not created. Check the name, the topic and who can join, then try again.',
   'error.unauthenticated': 'That sign-in session is not valid. Please try signing in again.',
   'error.moneyInForbidden':
     'Your account is not allowed to receive coins from other users yet.',

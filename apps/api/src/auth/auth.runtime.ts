@@ -2,6 +2,7 @@ import type { ApiEnv } from '@stuwith/config';
 import {
   PgAuditAdapter,
   PgIdentityAdapter,
+  PgRoomAdapter,
   PgSessionAdapter,
   ValkeyRateLimitAdapter,
   createPool,
@@ -12,6 +13,7 @@ import type {
   ClockPort,
   IdentityPort,
   RateLimitPort,
+  RoomPort,
   SessionPort,
 } from '@stuwith/domain';
 import { createProviderRegistry, type ProviderRegistry } from './providers/registry';
@@ -30,6 +32,22 @@ export const AUTH_RUNTIME = Symbol('AUTH_RUNTIME');
 export interface AuthRuntime {
   readonly identity: IdentityPort;
   readonly sessions: SessionPort;
+  /**
+   * Story 2.1's store, held here rather than in a second runtime object.
+   *
+   * `rooms` is not an auth concern, and the name of this interface is now one story
+   * behind what it holds — that is a real wart and `deferred-work.md` records it.
+   * What it buys is the thing this object exists for: ONE `pg` pool for the
+   * process. A `createRoomsRuntime(config)` beside `createProductionRuntime` would
+   * open a second pool against the same database as the same role, double the
+   * connection budget, and give a test two places to replace and one to forget.
+   *
+   * `RoomsModule` consumes it through {@link RoomsRuntime}, a narrow structural
+   * type that names only `rooms` and `clock` — the same arrangement
+   * `SessionAuthenticatorRuntime` uses, so the rooms module cannot quietly grow a
+   * reason to touch the provider registry or the rate-limit store.
+   */
+  readonly rooms: RoomPort;
   readonly audit: AuditPort;
   readonly clock: ClockPort;
   readonly registry: ProviderRegistry;
@@ -133,6 +151,7 @@ export function createProductionRuntime(
       }
     },
     identity: new PgIdentityAdapter(pool),
+    rooms: new PgRoomAdapter(pool),
     sessions: new PgSessionAdapter(pool),
     audit: new PgAuditAdapter(pool),
     rateLimit: new ValkeyRateLimitAdapter(valkey),

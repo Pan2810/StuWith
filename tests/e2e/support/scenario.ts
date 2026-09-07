@@ -25,12 +25,23 @@ const RESET_URL = `${FAKE_API_BASE_URL}/__e2e__/reset`;
 export const HOME_PATHNAME = '/';
 export const SIGN_IN_PATHNAME = '/dang-nhap';
 export const DATE_OF_BIRTH_PATHNAME = '/khai-ngay-sinh';
+export const CREATE_ROOM_PATHNAME = '/tao-phong';
 
 export interface Scenario {
   readonly signedIn?: boolean;
   readonly declared?: boolean;
   readonly refreshWorks?: boolean;
   readonly meStatus?: number;
+  /**
+   * Story 2.1. Which plan the signed-in person is on, which is the ONE input to a
+   * room's participant cap.
+   *
+   * A plain `string`, spelled by the spec, for the reason the route constants above
+   * are spelled by hand: a test that imports the constant it is checking cannot
+   * notice the constant changing under the product. Omitted means the free plan,
+   * which is what every existing case runs on.
+   */
+  readonly plan?: string;
 }
 
 export async function scenario(page: Page, state: Scenario): Promise<void> {

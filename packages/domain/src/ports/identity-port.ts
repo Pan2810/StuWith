@@ -1,4 +1,4 @@
-import type { AuthProvider, GlobalUserRole } from '@stuwith/contracts';
+import type { AuthProvider, GlobalUserRole, UserPlan } from '@stuwith/contracts';
 
 /**
  * AD-1 — "which user does this provider identity belong to" is a domain question.
@@ -38,6 +38,27 @@ export interface User {
   readonly email: string | null;
   readonly avatarUrl: string | null;
   readonly role: GlobalUserRole;
+  /**
+   * Which plan this person is on (Story 2.1).
+   *
+   * ## Not nullable, and the contrast with `dateOfBirth` below is the reason
+   *
+   * An absent date of birth MEANS something — "the declaration has not happened
+   * yet" — and the product has a screen for that state. There is no "no plan"
+   * state: everybody is on some plan, the free one is a plan, and the column is
+   * `NOT NULL DEFAULT 'study_buddy'`. A nullable field here would put a hole in
+   * `PLAN_PARTICIPANT_LIMITS[user.plan]` at the exact moment a room's capacity is
+   * being decided, and the only safe thing to do with that hole would be to invent
+   * a default in a second place.
+   *
+   * ## It does not leave `apps/api` either, and for a different reason
+   *
+   * `dateOfBirth` is withheld because it is PII. This is withheld because it is a
+   * BILLING fact: `CurrentUser` carries no plan, and `Room` carries the resolved
+   * `max_participants` instead — which is the whole of what the plan decided and
+   * the only part anybody joining a room needs.
+   */
+  readonly plan: UserPlan;
   /**
    * The declared date of birth as `YYYY-MM-DD`, or `null` for "not declared yet".
    *

@@ -9,6 +9,7 @@ import { buildLoggerParams } from './logging';
 import { HealthController } from './health/health.controller';
 import { MoneyModule } from './money/money.module';
 import { RateLimitModule } from './rate-limit/rate-limit.module';
+import { RoomsModule } from './rooms/rooms.module';
 import { RuntimeShutdown } from './runtime-shutdown';
 import { SessionAuthenticatorModule } from './auth/session-authenticator.module';
 
@@ -83,6 +84,9 @@ export class AppModule {
         SessionAuthenticatorModule.forRuntime(config, runtime),
         MoneyModule,
         AuthModule.forConfig(config, runtime),
+        // Story 2.1. It takes the SAME runtime object, so `rooms` reaches Postgres
+        // through the one pool this process opens — see `AuthRuntime.rooms`.
+        RoomsModule.forRuntime(runtime),
       ],
       controllers: [HealthController, ...(options.fixtureControllers ?? [])],
       providers: [
