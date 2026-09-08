@@ -1,0 +1,31 @@
+# Build context for infra/Dockerfile.
+#
+# `.env` is FIRST on purpose. It is git-ignored, so it never reaches the repo —
+# but `docker build` reads the working directory, not git, and a secret copied
+# into an image layer stays in that layer even if a later step deletes it.
+.env
+.env.*
+!.env.example
+
+# Reinstalled inside the image by `pnpm install --frozen-lockfile`. Copying the
+# host's tree would also copy pnpm's symlinks, which point at a store path that
+# does not exist in the image.
+node_modules
+**/node_modules
+
+# Build output. Rebuilt in the image; copying it in risks shipping a `dist` that
+# was compiled against a different `packages/*` than the one being installed.
+**/dist
+**/.next
+**/.next-e2e
+**/*.tsbuildinfo
+
+.git
+.github
+test-results
+playwright-report
+*.log
+
+# Planning and implementation artefacts. Documentation, not inputs to a build.
+_bmad
+_bmad-output

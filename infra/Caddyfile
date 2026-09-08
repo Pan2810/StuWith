@@ -1,0 +1,60 @@
+# TLS terminates here, and only here.
+#
+# `infra/docker-compose.yml` says Caddy is not part of the development stack —
+# "TLS terminates at the VPS edge, not on a developer laptop". This file is that
+# edge. It is brought in by `infra/docker-compose.prod.yml`, so `pnpm dev` is
+# unaffected.
+#
+# ## Why every hostname is a subdomain of one registrable domain
+#
+# `apps/api/src/auth/cookies.ts` sets `SameSite=Lax` on every cookie, with no way
+# to opt out. The browser decides "same site" by registrable domain, so
+# `stuwith.com` and `api.stuwith.com` are same-site and the session cookie rides
+# along on the fetches `apps/web` makes. Move the API to a different registrable
+# domain and those become cross-site: the cookie is dropped silently, and the
+# only symptom is `/v1/auth/me` answering 401 after an apparently successful
+# login.
+#
+# ## Replacing stuwith.com
+#
+# Six occurrences below. Caddy's own `{$VAR}` substitution could hold the domain
+# in one place, but a site address that is not literal makes `caddy validate`
+# unable to check it and turns a typo into a certificate request for a hostname
+# nobody owns.
+{
+	# Where Let's Encrypt sends expiry warnings. Set ACME_EMAIL in `.env`; the
+	# compose file passes it through. Deliberately not a literal: a committed
+	# personal address is the kind of thing that outlives the person's access.
+	email {$ACME_EMAIL}
+}
+
+stuwith.com {
+	encode zstd gzip
+	reverse_proxy web:3000
+}
+
+www.stuwith.com {
+	redir https://stuwith.com{uri} permanent
+}
+
+api.stuwith.com {
+	encode zstd gzip
+	# No `header_up X-Forwarded-For` line: Caddy sets it, and `apps/api` only
+	# BELIEVES it when the socket peer matches TRUSTED_PROXY_ADDRESSES — which is
+	# why the compose file pins this container to a fixed address rather than
+	# letting Docker assign one.
+	reverse_proxy api:3001
+}
+
+rt.stuwith.com {
+	reverse_proxy gateway:3002
+}
+
+livekit.stuwith.com {
+	# `reverse_proxy` upgrades WebSocket connections without extra configuration,
+	# which is all LiveKit signaling needs. The MEDIA plane does not pass through
+	# here at all: it is UDP 50000-50019 straight to the container, which is why
+	# those ports are forwarded on the router and why a tunnel that only carries
+	# HTTP cannot host this stack.
+	reverse_proxy livekit:7880
+}

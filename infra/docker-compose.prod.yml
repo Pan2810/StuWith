@@ -1,0 +1,119 @@
+# The production half of the stack: the three application processes, the TLS
+# edge, and two corrections to the base file that only matter once this machine
+# is reachable from the internet.
+#
+#   docker compose --env-file .env \
+#     -f infra/docker-compose.yml -f infra/docker-compose.prod.yml \
+#     up -d --build
+#
+# `--env-file .env` is not optional, and neither is naming BOTH files: the base
+# file carries the four backing services and this one only adds to them.
+
+services:
+  postgres:
+    # The base file publishes `${POSTGRES_PORT}:5432`, which binds every
+    # interface — correct on a laptop, wrong on a box with a public address,
+    # where it also offers the database to the whole home LAN. Loopback only:
+    # the applications reach Postgres over the compose network by service name,
+    # and the single host-side consumer is `pnpm run migrate`.
+    ports:
+      - '127.0.0.1:${POSTGRES_PORT:-5432}:5432'
+
+  valkey:
+    ports:
+      - '127.0.0.1:${VALKEY_PORT:-6379}:6379'
+
+  api:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile
+      target: api
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    healthcheck:
+      # `/healthz` answers even with the database down — see `auth.runtime.ts`
+      # on why the pool is built lazily — so this proves the process is serving,
+      # not that its dependencies are well.
+      test: ['CMD-SHELL', 'node -e "fetch(\"http://127.0.0.1:3001/healthz\").then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"']
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  gateway:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile
+      target: gateway
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  web:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile
+      target: web
+      args:
+        # Build-time, not runtime. Next inlines this into the browser bundle, so
+        # changing it in `.env` and restarting does nothing — the image has to be
+        # rebuilt. See the Dockerfile and `apps/web/next.config.ts`.
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:?NEXT_PUBLIC_API_BASE_URL is required}
+    restart: unless-stopped
+    env_file:
+      - ../.env
+
+  caddy:
+    image: caddy:2.11.4-alpine
+    restart: unless-stopped
+    environment:
+      ACME_EMAIL: ${ACME_EMAIL:?ACME_EMAIL is required — Let us Encrypt sends expiry warnings there}
+    ports:
+      - '80:80'
+      - '443:443'
+      # HTTP/3. Same port number, different protocol, and it has to be published
+      # separately or Caddy advertises h3 in Alt-Svc and then answers nothing on
+      # it — a slow first load for clients that try, with no error anywhere.
+      - '443:443/udp'
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Named volumes, not bind mounts: `/data` holds the issued certificates and
+      # the ACME account key. Losing it means re-issuing on every restart, and
+      # Let's Encrypt's rate limit is five duplicate certificates per week.
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      default:
+        # FIXED, because `TRUSTED_PROXY_ADDRESSES` in `.env` names this exact
+        # address. `apps/api` reads `X-Forwarded-For` only when the socket peer
+        # is listed there, so an address Docker reassigns after a restart would
+        # silently turn every visitor into the proxy — and the first person to
+        # trip the rate limit would lock out everybody. A whole-subnet CIDR works
+        # too, and gives every other container the ability to forge the header.
+        ipv4_address: 172.28.0.10
+    depends_on:
+      - web
+      - api
+      - gateway
+      - livekit
+
+volumes:
+  caddy-data:
+  caddy-config:
+
+networks:
+  default:
+    ipam:
+      config:
+        # Declared so the address above is stable across `docker compose down`.
+        # Change it if 172.28/16 collides with something on the host network.
+        - subnet: 172.28.0.0/16
