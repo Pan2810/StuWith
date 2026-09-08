@@ -43,3 +43,8 @@ pnpm-debug.log*
 # deliberately placed where their presence BREAKS the build, so a crashed run must
 # never be able to leave one committable.
 **/__ad1_violation__.ts
+
+# The same arrangement for tests/gates/plan-capacity-exhaustive.test.ts. A separate
+# name rather than a shared one: the two gates write into the same directory, and a
+# leftover file has to say which test left it.
+**/__plan_capacity_probe__.ts
