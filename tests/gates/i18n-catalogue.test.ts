@@ -17,6 +17,7 @@ import {
   RATE_LIMITED_MESSAGE,
   UNAUTHENTICATED_MESSAGE,
 } from '../../packages/contracts/src/auth';
+import { CREATE_ROOM_INVALID_MESSAGE } from '../../packages/contracts/src/rooms';
 
 /**
  * Two rules over `apps/web/src/app`, and both are about a class rather than an
@@ -624,13 +625,21 @@ function retypesSentence(file: string, sentence: string): boolean {
   return stripComments(readFileSync(file, 'utf8')).includes(sentence);
 }
 
-describe('rule 3 — the five shared sentences are imported, never copied', () => {
+describe('rule 3 — the shared sentences are imported, never copied', () => {
+  /**
+   * Six now, and the list GROWS with the contract rather than staying at the five
+   * Story 2.0 found. `CREATE_ROOM_INVALID_MESSAGE` crosses the boundary exactly as
+   * the others do — `apps/api` puts it in a `validation_failed` envelope and the
+   * create-room form shows it beside the field without waiting for a round trip —
+   * so it earns the same protection: named by the catalogue, retyped nowhere.
+   */
   const SHARED = [
     ['RATE_LIMITED_MESSAGE', RATE_LIMITED_MESSAGE],
     ['DATE_OF_BIRTH_INVALID_MESSAGE', DATE_OF_BIRTH_INVALID_MESSAGE],
     ['DATE_OF_BIRTH_ALREADY_SET_MESSAGE', DATE_OF_BIRTH_ALREADY_SET_MESSAGE],
     ['UNAUTHENTICATED_MESSAGE', UNAUTHENTICATED_MESSAGE],
     ['MONEY_IN_FORBIDDEN_MESSAGE', MONEY_IN_FORBIDDEN_MESSAGE],
+    ['CREATE_ROOM_INVALID_MESSAGE', CREATE_ROOM_INVALID_MESSAGE],
   ] as const;
 
   const VI_SOURCE = readFileSync(VI_CATALOGUE, 'utf8');

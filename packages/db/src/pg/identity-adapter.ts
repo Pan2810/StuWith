@@ -1,4 +1,4 @@
-import type { GlobalUserRole } from '@stuwith/contracts';
+import type { GlobalUserRole, UserPlan } from '@stuwith/contracts';
 import { isCalendarDate } from '@stuwith/contracts';
 import type {
   IdentityPort,
@@ -16,6 +16,7 @@ interface UserRow {
   email: string | null;
   avatar_url: string | null;
   role: string;
+  plan: string;
   date_of_birth: string | null;
   created_at: Date;
   updated_at: Date;
@@ -40,6 +41,7 @@ const PLAIN_USER_COLUMNS = [
   'email',
   'avatar_url',
   'role',
+  'plan',
   'created_at',
   'updated_at',
 ] as const;
@@ -78,6 +80,7 @@ function toUser(row: UserRow): User {
     email: row.email,
     avatarUrl: row.avatar_url,
     role: row.role as GlobalUserRole,
+    plan: row.plan as UserPlan,
     dateOfBirth: row.date_of_birth,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -255,6 +258,12 @@ export class PgIdentityAdapter implements IdentityPort {
         // `date_of_birth` is deliberately not in the column list. A user is
         // created at first login, before anybody has been asked; the absence IS
         // the "profile not finished" state (Story 1.4).
+        //
+        // `plan` is absent for the opposite reason: the column has a DEFAULT and
+        // the default is the answer. Naming it here would put "which plan does a
+        // new person start on" in two places — this file and the migration — with
+        // nothing keeping them in step, and the one that runs is whichever the
+        // INSERT happens to mention (Story 2.1).
         `INSERT INTO users (display_name, email, avatar_url, role, created_at, updated_at)
          VALUES ($1, $2, $3, $4, $5, $5)
          RETURNING ${selectUserColumns()}`,

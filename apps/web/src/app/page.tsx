@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { CONTRACT_VERSION, SIGN_IN_PATHNAME } from '@stuwith/contracts';
+import { CONTRACT_VERSION, CREATE_ROOM_PATHNAME, SIGN_IN_PATHNAME } from '@stuwith/contracts';
 import { translatorFor } from './i18n/messages';
 import { requestLocale } from './i18n/server-locale';
 
@@ -54,6 +54,21 @@ export default async function Page() {
         */}
         <Link className="button-primary" href={SIGN_IN_PATHNAME}>
           {t('home.signIn')}
+        </Link>
+        {/*
+          The way IN to Story 2.1's screen, and the reason it is here rather than
+          only in a menu somebody will build later: `routes.test.ts` rule B refuses a
+          `*_PATHNAME` that no product module outside its own route directory names,
+          because a page nothing links to is a page nobody can reach — the state
+          Story 1.4 nearly shipped in, where the screen existed, rendered, had its
+          own tests, and could only be visited by typing the URL.
+
+          A `secondary` button beside the primary one: signing in is still what a
+          first-time visitor needs, and the create-room screen tells a signed-out
+          person so rather than refusing them silently.
+        */}
+        <Link className="button-secondary" href={CREATE_ROOM_PATHNAME}>
+          {t('createRoom.link')}
         </Link>
       </div>
     </main>

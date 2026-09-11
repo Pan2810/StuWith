@@ -4,6 +4,7 @@ import {
   InMemoryAuditAdapter,
   InMemoryIdentityAdapter,
   InMemoryRateLimitAdapter,
+  InMemoryRoomAdapter,
   InMemorySessionAdapter,
 } from '@stuwith/db';
 import { FixedClock } from '@stuwith/domain';
@@ -35,6 +36,7 @@ function runtimeThatRecordsClose(closed: { count: number }): AuthRuntime {
     sessions: new InMemorySessionAdapter(),
     audit: new InMemoryAuditAdapter(),
     rateLimit: new InMemoryRateLimitAdapter(clock),
+    rooms: new InMemoryRoomAdapter(),
     clock,
     registry: createProviderRegistry(config, fetch),
     close: async () => {

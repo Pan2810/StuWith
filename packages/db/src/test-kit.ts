@@ -1,17 +1,28 @@
-import { AUDIT_ACTIONS, SERVICE_NAMES } from '@stuwith/contracts';
+import {
+  AUDIT_ACTIONS,
+  DEFAULT_USER_PLAN,
+  MAX_PARTICIPANTS_CEILING,
+  MAX_ROOM_DESCRIPTION_LENGTH,
+  MAX_ROOM_NAME_LENGTH,
+  PLAN_PARTICIPANT_LIMITS,
+  SERVICE_NAMES,
+} from '@stuwith/contracts';
 import {
   AuditInputError,
   HeartbeatInputError,
   IdentityInputError,
   RateLimitInputError,
+  RoomInputError,
   SessionInputError,
   type AuditEventInput,
   type AuditPort,
+  type CreateRoomInput,
   type HeartbeatPort,
   type IdentityPort,
   type ProviderIdentity,
   type RateLimitDecision,
   type RateLimitPort,
+  type RoomPort,
   type SessionGeneration,
   type SessionPort,
 } from '@stuwith/domain';
@@ -280,6 +291,22 @@ export function runIdentityPortContract(options: IdentityPortContractOptions): v
       expect(result.user.role).toBe('user');
       expect(result.user.displayName).toBe('An Nguyen');
       expect(await (await use()).countUsers()).toBe(1);
+    });
+
+    /**
+     * Story 2.1. A brand-new person is on the free plan in BOTH adapters, and the
+     * value comes from the contract rather than from either implementation.
+     *
+     * It matters here rather than in a room test because this is where a user is
+     * born: Postgres answers with the column's `DEFAULT`, the in-memory store
+     * answers with a literal it wrote itself, and nothing else compares the two.
+     * A drift would give a room created through `apps/api`'s flow suite — which
+     * runs on the in-memory adapter — a different participant cap from one created
+     * against the real database, on the same plan.
+     */
+    it('starts a brand-new profile on the default plan, the same one in both stores', async () => {
+      const created = await (await port()).findOrCreateByIdentity(googleIdentity(), t0);
+      expect(created.user.plan).toBe(DEFAULT_USER_PLAN);
     });
 
     it('maps a second login onto the SAME user and creates no second row', async () => {
@@ -1701,6 +1728,274 @@ export function runRateLimitPortContract(options: RateLimitPortContractOptions):
         await expect(faulting.lock('c:fault', LOCK_SECONDS)).rejects.toBeTruthy();
         await expect(faulting.clear('c:fault')).rejects.toBeTruthy();
       }, exampleTimeoutMs);
+    });
+  });
+}
+
+/* ------------------------------------------------------------------------- *
+ * RoomPort — Story 2.1
+ * ------------------------------------------------------------------------- */
+
+export interface RoomPortHarness {
+  readonly port: RoomPort;
+  reset(): Promise<void>;
+  teardown?(): Promise<void>;
+  /**
+   * An owner id the store will accept.
+   *
+   * For Postgres that means a real `users` row, because `rooms.owner_user_id` is a
+   * foreign key; for the in-memory store it is any UUID. The asymmetry is why this
+   * is a harness method rather than a constant in the suite: a hard-coded id would
+   * pass everywhere in memory and fail every example against a real database, and
+   * the "fix" for that would be to drop the foreign key.
+   */
+  createOwnerUserId(): Promise<string>;
+  /**
+   * Total number of rooms.
+   *
+   * The refusal examples below assert that a rejected call wrote NOTHING, and "the
+   * read came back null" is a weaker claim than counting — an adapter that stored a
+   * room under an id it then failed to return would satisfy the first.
+   */
+  countRooms(): Promise<number>;
+  /** See HeartbeatPortHarness.createFaultingPort — same reasoning, same rule. */
+  createFaultingPort?(): Promise<RoomPort>;
+}
+
+export interface RoomPortContractOptions {
+  readonly label: string;
+  readonly createHarness: () => Promise<RoomPortHarness>;
+  readonly skip?: boolean;
+  readonly hookTimeoutMs?: number;
+}
+
+/**
+ * AD-6 / TD-5 — `RoomPort`, run once per adapter.
+ *
+ * What this suite is FOR, stated because a room table looks simple enough not to
+ * need one: the properties below are what Story 2.2 builds on, and every one of
+ * them is a property an adapter can lose silently. A cap that came back as a
+ * string, a status the store invented, a description that became `null` on the way
+ * through, an id that is not a UUID — each of those passes any test written against
+ * the implementation it was developed on, and each breaks the other one.
+ */
+export function runRoomPortContract(options: RoomPortContractOptions): void {
+  const suite = options.skip === true ? describe.skip : describe;
+  const t0 = new Date('2026-09-07T09:00:00.000Z');
+  const t1 = new Date('2026-09-07T09:05:00.000Z');
+
+  /** A UUID no store will have minted, for the "unknown room" read. */
+  const ABSENT_ROOM_ID = '019200ff-0000-7000-8000-ffffffffffff';
+
+  suite(`RoomPort contract — ${options.label}`, () => {
+    let harness: RoomPortHarness | undefined;
+
+    const use = async (): Promise<RoomPortHarness> => {
+      harness ??= await options.createHarness();
+      return harness;
+    };
+    const port = async (): Promise<RoomPort> => (await use()).port;
+
+    /** A valid create input, with only the field under test overridden. */
+    const input = async (overrides: Partial<CreateRoomInput> = {}): Promise<CreateRoomInput> => ({
+      ownerUserId: await (await use()).createOwnerUserId(),
+      name: 'On thi cuoi ky',
+      description: 'Hoc nhom buoi toi.',
+      topic: 'on_thi',
+      visibility: 'public',
+      maxParticipants: PLAN_PARTICIPANT_LIMITS[DEFAULT_USER_PLAN],
+      ...overrides,
+    });
+
+    beforeEach(async () => {
+      harness ??= await options.createHarness();
+      await harness.reset();
+    }, options.hookTimeoutMs ?? 120_000);
+
+    afterAll(async () => {
+      await harness?.teardown?.();
+      harness = undefined;
+    }, options.hookTimeoutMs ?? 120_000);
+
+    it('creates a room, open, owned by the caller, with the cap it was handed', async () => {
+      const created = await (await port()).createRoom(await input(), t0);
+
+      expect(created.status).toBe('open');
+      expect(created.name).toBe('On thi cuoi ky');
+      expect(created.topic).toBe('on_thi');
+      expect(created.visibility).toBe('public');
+      expect(created.maxParticipants).toBe(PLAN_PARTICIPANT_LIMITS[DEFAULT_USER_PLAN]);
+      expect(await (await use()).countRooms()).toBe(1);
+    });
+
+    it('reads the room back by id, field for field, from the STORE', async () => {
+      // Durable, not merely returned: an adapter that answered out of the argument
+      // it was handed would satisfy the example above perfectly.
+      const p = await port();
+      const created = await p.createRoom(await input(), t0);
+
+      const read = await p.findRoomById(created.id);
+
+      expect(read).not.toBeNull();
+      expect(read?.id).toBe(created.id);
+      expect(read?.ownerUserId).toBe(created.ownerUserId);
+      expect(read?.name).toBe(created.name);
+      expect(read?.description).toBe(created.description);
+      expect(read?.topic).toBe(created.topic);
+      expect(read?.visibility).toBe(created.visibility);
+      expect(read?.maxParticipants).toBe(created.maxParticipants);
+      expect(read?.status).toBe(created.status);
+    });
+
+    it('answers null for a room nobody created, rather than throwing', async () => {
+      // `null` is "no such room", and Story 2.2 branches on it before issuing a
+      // token. A throw there would be indistinguishable from the store being down.
+      expect(await (await port()).findRoomById(ABSENT_ROOM_ID)).toBeNull();
+    });
+
+    /**
+     * The cap is stored VERBATIM, and every plan's number goes through unchanged.
+     *
+     * This is the acceptance criterion in its adapter-shaped form: the port is
+     * handed a number and stores that number. It does not know what a plan is, and
+     * an adapter that clamped, defaulted or rounded would be a second place where
+     * capacity is decided — the recomputation `max_participants` exists to prevent.
+     */
+    it.each(Object.entries(PLAN_PARTICIPANT_LIMITS))(
+      'stores the %s cap of %d exactly as given',
+      async (_plan, limit) => {
+        const p = await port();
+        const created = await p.createRoom(await input({ maxParticipants: limit }), t0);
+        expect(created.maxParticipants).toBe(limit);
+
+        // And it is a NUMBER on the way back out. `pg` parses `bigint` as a string,
+        // so a column widened later would otherwise start handing the domain a
+        // value that compares wrong against a numeric cap, silently.
+        const read = await p.findRoomById(created.id);
+        expect(typeof read?.maxParticipants).toBe('number');
+        expect(read?.maxParticipants).toBe(limit);
+      },
+    );
+
+    it('lets two people create rooms with the same name — a name is not a key', async () => {
+      const p = await port();
+      const first = await p.createRoom(await input({ name: 'Cung ten' }), t0);
+      const second = await p.createRoom(await input({ name: 'Cung ten' }), t1);
+
+      expect(second.id).not.toBe(first.id);
+      expect(await (await use()).countRooms()).toBe(2);
+    });
+
+    it('accepts an empty description and keeps it empty, never null', async () => {
+      // "No description" and "an empty description" are one fact. Two
+      // representations would be two branches every reader has to handle for ever.
+      const p = await port();
+      const created = await p.createRoom(await input({ description: '' }), t0);
+
+      expect(created.description).toBe('');
+      expect((await p.findRoomById(created.id))?.description).toBe('');
+    });
+
+    it('stamps both timestamps with the instant it was handed', async () => {
+      // One instant per request, the rule Story 1.4 paid four review rounds for: a
+      // store that read a clock of its own would stamp a row with a different
+      // millisecond from the one the request was judged at.
+      const created = await (await port()).createRoom(await input(), t0);
+
+      expect(created.createdAt.toISOString()).toBe(t0.toISOString());
+      expect(created.updatedAt.toISOString()).toBe(t0.toISOString());
+    });
+
+    it('mints an id that a UUID contract would accept', async () => {
+      // An adapter that handed back `room-1` passes every test written against
+      // itself and fails the moment a response is validated by `roomSchema`.
+      const created = await (await port()).createRoom(await input(), t0);
+      expect(created.id).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+      );
+    });
+
+    /**
+     * The refusals, and they THROW rather than return.
+     *
+     * A caller reaching this port with an unusable value has skipped
+     * `parseCreateRoomRequest`, which is a defect in the calling code rather than
+     * an outcome of a rule — the shape `IdentityInputError` and
+     * `HeartbeatInputError` already establish. Making it a return branch would put
+     * a case in front of every correct caller for a situation none of them can be in.
+     */
+    describe('refuses what the schema would refuse, in both stores identically', () => {
+      const badInputs: ReadonlyArray<readonly [string, Partial<CreateRoomInput>]> = [
+        ['a blank name', { name: '   ' }],
+        ['an empty name', { name: '' }],
+        ['a name past the ceiling', { name: 'x'.repeat(MAX_ROOM_NAME_LENGTH + 1) }],
+        [
+          'a description past the ceiling',
+          { description: 'x'.repeat(MAX_ROOM_DESCRIPTION_LENGTH + 1) },
+        ],
+        ['a topic nobody declared', { topic: 'xyz' as CreateRoomInput['topic'] }],
+        ['a visibility nobody declared', { visibility: 'secret' as CreateRoomInput['visibility'] }],
+        ['a cap of zero', { maxParticipants: 0 }],
+        ['a negative cap', { maxParticipants: -1 }],
+        ['a cap past the technical ceiling', { maxParticipants: MAX_PARTICIPANTS_CEILING + 1 }],
+        ['a fractional cap', { maxParticipants: 6.5 }],
+        ['an owner id that is not a UUID', { ownerUserId: 'nobody' }],
+      ];
+
+      it.each(badInputs)('throws RoomInputError for %s', async (_label, overrides) => {
+        await expect((await port()).createRoom(await input(overrides), t0)).rejects.toBeInstanceOf(
+          RoomInputError,
+        );
+      });
+
+      it('throws for an instant that is not a Date', async () => {
+        await expect(
+          (await port()).createRoom(await input(), new Date('not-a-date')),
+        ).rejects.toBeInstanceOf(RoomInputError);
+      });
+
+      it('throws for a room id that is not a UUID on the read path too', async () => {
+        // Postgres answers `22P02` for a non-UUID in a `uuid` column while the
+        // in-memory store would simply miss and return null, so without this the
+        // two adapters answer differently for the same call.
+        await expect((await port()).findRoomById('nope')).rejects.toBeInstanceOf(RoomInputError);
+      });
+
+      it('stores nothing at all when the input was rejected', async () => {
+        const p = await port();
+        await expect(p.createRoom(await input({ name: '  ' }), t0)).rejects.toThrow();
+        expect(await (await use()).countRooms()).toBe(0);
+      });
+    });
+
+    /**
+     * A fault is not a refusal, and here it is not a room either.
+     *
+     * An adapter that swallowed an outage and returned something room-shaped would
+     * hand `apps/api` a `201` carrying an id that names nothing — and the person
+     * would be sent to a room that does not exist, by a screen with no way to find
+     * out.
+     */
+    describe('lets an infrastructure fault propagate', () => {
+      it('throws instead of inventing a room when the store is unreachable', async () => {
+        const create = harness?.createFaultingPort;
+        if (create === undefined) {
+          throw new Error(
+            `harness "${options.label}" must provide createFaultingPort(): an adapter that ` +
+              'turns an outage into a created room hands somebody an id that names nothing.',
+          );
+        }
+        const faulting = await create.call(harness);
+        const outcome = await faulting.createRoom(await input(), t0).then(
+          (value) => ({ kind: 'resolved' as const, value }),
+          (error: unknown) => ({ kind: 'rejected' as const, error }),
+        );
+
+        expect(outcome.kind).toBe('rejected');
+        // And specifically NOT the input-validation error, which would mean the
+        // fault path was never actually exercised.
+        expect(outcome.kind === 'rejected' && outcome.error).not.toBeInstanceOf(RoomInputError);
+      });
     });
   });
 }
