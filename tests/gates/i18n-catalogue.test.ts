@@ -685,3 +685,102 @@ describe('rule 3 — the shared sentences are imported, never copied', () => {
     );
   });
 });
+
+/* -------------------------------------------------------------------------- *
+ * Rule 5 — the measurement the catalogue decision rests on is still true
+ * -------------------------------------------------------------------------- */
+
+/**
+ * `messages.ts` opens by justifying "a catalogue, not an i18n library" with a COUNT:
+ * how many strings need a plural, and how many interpolate. That is the whole
+ * argument — a library's runtime and ICU parser are refused because so little needs
+ * them — and for two stories it was quietly false. The sentence said "exactly ONE
+ * string that needs a plural" after `createRoom.capacity` had become the second, and
+ * nothing could see it: a number in prose is invisible to `tsc`, to rule 2's key
+ * comparison, and to every test in the repository.
+ *
+ * So the numbers are read back out of the sentence and compared with the catalogue.
+ * The rule is over the CLASS rather than over the two values that were wrong: a
+ * seventh interpolation added next story fails here, naming both counts, whoever
+ * adds it.
+ */
+const COUNT_CLAIM =
+  /this catalogue holds (\d+) plural strings and (\d+)\s*\n?\s*\*?\s*interpolation templates/;
+
+/** One entry of a catalogue, as the text gives it: the key and its value. */
+function catalogueEntries(file: string): ReadonlyArray<readonly [string, string]> {
+  const source = stripComments(readFileSync(file, 'utf8'));
+  return [...source.matchAll(/^\s{2}'([A-Za-z][A-Za-z0-9.]*)':\s*(.+?),?\s*$/gm)].map(
+    (match) => [match[1] ?? '', match[2] ?? ''] as const,
+  );
+}
+
+/** `a.b.one` and `a.b.other` are ONE string that needs a plural, named `a.b`. */
+function pluralBases(file: string): ReadonlySet<string> {
+  const bases = new Set<string>();
+  for (const [key] of catalogueEntries(file)) {
+    const match = /^(.+)\.(one|other)$/.exec(key);
+    if (match?.[1] !== undefined) bases.add(match[1]);
+  }
+  return bases;
+}
+
+/**
+ * Distinct strings carrying a `{placeholder}`, with a plural pair counted ONCE.
+ *
+ * Counting the pair twice would make the second number a function of the first, so
+ * the two claims could no longer disagree independently — and it is the shape a
+ * reader would check by hand, which is the number the sentence has to mean.
+ */
+function interpolationTemplates(file: string): ReadonlySet<string> {
+  const templates = new Set<string>();
+  for (const [key, value] of catalogueEntries(file)) {
+    if (!/\{[A-Za-z][A-Za-z0-9]*\}/.test(value)) continue;
+    templates.add(/^(.+)\.(one|other)$/.exec(key)?.[1] ?? key);
+  }
+  return templates;
+}
+
+describe('rule 5 — the counts in the catalogue docblock are counted, not remembered', () => {
+  const claimed = COUNT_CLAIM.exec(readFileSync(VI_CATALOGUE, 'utf8'));
+
+  it('finds the claim at all, so a reworded docblock cannot silently disable this', () => {
+    // The way this rule dies quietly: somebody rewrites the sentence, the regex
+    // stops matching, and every assertion below is skipped against `null`.
+    expect(claimed, 'the count sentence in messages.ts no longer matches COUNT_CLAIM').not.toBeNull();
+  });
+
+  it('agrees with the catalogue about how many strings need a plural', () => {
+    const actual = pluralBases(VI_CATALOGUE);
+    expect([...actual].sort()).toEqual(['countdown.retryIn', 'createRoom.capacity'].sort());
+    expect(Number(claimed?.[1]), `the docblock says ${claimed?.[1]}, the catalogue has ${actual.size}`).toBe(
+      actual.size,
+    );
+  });
+
+  it('agrees with the catalogue about how many strings interpolate', () => {
+    const actual = interpolationTemplates(VI_CATALOGUE);
+    expect(
+      Number(claimed?.[2]),
+      `the docblock says ${claimed?.[2]}, the catalogue has ${actual.size}: ${[...actual].join(', ')}`,
+    ).toBe(actual.size);
+  });
+
+  it('counts the same way in both catalogues, so a count is a fact about the product', () => {
+    // English is the locale with two plural CATEGORIES, so a pair missing there is a
+    // `Retry in 1 seconds.` waiting to ship. Rule 2 catches a missing key; this
+    // catches the two files disagreeing about which strings are plural at all.
+    expect([...pluralBases(EN_CATALOGUE)].sort()).toEqual([...pluralBases(VI_CATALOGUE)].sort());
+    expect([...interpolationTemplates(EN_CATALOGUE)].sort()).toEqual(
+      [...interpolationTemplates(VI_CATALOGUE)].sort(),
+    );
+  });
+
+  it('the readers are not vacuous — they find the entries they are counting', () => {
+    // Two empty sets agree with a docblock that claims zero of each, which is how a
+    // regex that stopped matching entries would leave this whole rule green.
+    expect(catalogueEntries(VI_CATALOGUE).length).toBeGreaterThanOrEqual(40);
+    expect(pluralBases(VI_CATALOGUE).size).toBeGreaterThan(0);
+    expect(interpolationTemplates(VI_CATALOGUE)).toContain('signIn.signedInAs');
+  });
+});

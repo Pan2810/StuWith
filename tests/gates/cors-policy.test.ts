@@ -21,9 +21,16 @@ import {
  *
  * Story 2.1's `## Probe ranh giới` named a mutation and promised a colour:
  * "bỏ `credentials: true` (`http-setup.ts:131`) → probe đỏ". Review round 1 ran it.
- * The browser probe stayed GREEN. Two assertions in `http-setup.test.ts` went red —
- * both of them reading back the options object that had just been configured, no
- * browser involved — while every Playwright test passed.
+ * The browser probe stayed GREEN. Two assertions went red — `allows the configured
+ * web origin, with credentials` and `answers the preflight a credentialed POST
+ * triggers`, both in `apps/api/src/auth/auth.flow.test.ts`, neither a browser —
+ * while every Playwright test passed.
+ *
+ * Round 1 recorded those two as living in `apps/api/src/http-setup.test.ts`, here
+ * and in three other places. They do not: that file tests `fastifyAdapterOptions`
+ * and `trustProxy`, and a case-insensitive search for `cors` in it returns nothing.
+ * The measurement was real and the citation was wrong, which is the worse of the
+ * two failures — a reader checking this gate's premise finds an empty file.
  *
  * The reason is that the E2E suite talks to `tests/e2e/support/fake-api.cjs`, and
  * that file answered `'access-control-allow-credentials': 'true'` from a literal of
@@ -46,6 +53,23 @@ import {
  * response half — one contract both ends spread — and this gate is what keeps them
  * spreading it. It is STRUCTURAL on purpose: it matches the identifier, not the
  * value. A literal that happens to agree today is precisely what drifted.
+ *
+ * ## What this gate CANNOT do, measured in review round 2
+ *
+ * Every assertion below is an unanchored substring match over source text, so it
+ * holds the identifier APPEARING and nothing about what the server answers.
+ * `methods: [...CORS_ALLOWED_METHODS].filter((m) => m !== 'POST')` satisfies the
+ * `methods` regex exactly — measured: with that edit in place this file stays 9/9
+ * green, and so do `test:unit`, `test:contract` and Playwright, while the deployed
+ * API stops advertising `POST` cross-origin and every room creation from a browser
+ * dies at the preflight.
+ *
+ * What closes it is an execution, and it is in the file this gate's own evidence
+ * points at: `advertises exactly the methods and request headers the contract
+ * declares` in `apps/api/src/auth/auth.flow.test.ts` reads both header values off a
+ * real preflight response. That case goes red on the mutation above. This gate is
+ * the cheap layer that catches a literal reappearing; that one is the layer that
+ * catches the value being wrong.
  *
  * Mutation-checked before being trusted, as `AGENTS.md` requires. Each of these was
  * run and produced the named failure, then reverted:

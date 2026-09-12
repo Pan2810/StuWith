@@ -97,8 +97,11 @@ export const SERVER_ONLY_RESPONSE_HEADERS = [
  * RED" as its mutation, and the mutation did not. The browser probe talks to
  * `tests/e2e/support/fake-api.cjs`, which carried its own hand-written copy of the
  * CORS answer — so deleting the real server's `credentials` turned exactly two
- * `http-setup.test.ts` assertions red (options in, options out) and left every
- * browser test green. `AGENTS.md` §4 names this shape: "the E2E fake API mirrored
+ * assertions red, in `apps/api/src/auth/auth.flow.test.ts`, and left every browser
+ * test green. (Round 1 recorded those two as living in `http-setup.test.ts`, in this
+ * docblock and three others. They do not: that file tests `fastifyAdapterOptions`
+ * and `trustProxy`. Corrected in round 2 — the measurement was right, the address
+ * was not.) `AGENTS.md` §4 names this shape: "the E2E fake API mirrored
  * the omission".
  *
  * A third assertion would have covered `credentials` and nothing else. The failure

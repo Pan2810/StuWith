@@ -1,4 +1,5 @@
-import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -47,7 +48,29 @@ import { afterEach, describe, expect, it } from 'vitest';
 const REPO_ROOT = path.resolve(fileURLToPath(new URL('.', import.meta.url)), '..', '..');
 
 const SCAN_ROOTS = ['apps', 'packages', 'tests', 'infra', 'scripts', '.github'];
-const SCANNED_EXTENSIONS = ['.ts', '.tsx', '.js', '.cjs', '.mjs', '.sql', '.yml', '.yaml'];
+/**
+ * `.sh` and `.psql` were missing, and `scripts/` and `infra/` are scanned roots.
+ *
+ * A `psql -c "DELETE FROM rooms"` in a shell script is a hard-delete path that
+ * ships, runs as whatever role the operator holds — which for a maintenance script
+ * is usually the OWNER, the one posture no GRANT can refuse — and was invisible to
+ * every rule in this file because the walker never opened the file. The anti-vacuity
+ * example below checks that each ROOT yields files; nothing checked that each root's
+ * own file types are in this list.
+ */
+const SCANNED_EXTENSIONS = [
+  '.ts',
+  '.tsx',
+  '.js',
+  '.cjs',
+  '.mjs',
+  '.sql',
+  '.yml',
+  '.yaml',
+  '.sh',
+  '.bash',
+  '.psql',
+];
 const SKIP_DIRS = new Set(['node_modules', 'dist', '.next', '.next-e2e', 'coverage', '.git']);
 
 /**
@@ -58,6 +81,17 @@ const SKIP_DIRS = new Set(['node_modules', 'dist', '.next', '.next-e2e', 'covera
  * sees the bare form is a rule with a one-character bypass.
  */
 const ROOMS_OPERAND = String.raw`(?:ONLY\s+)?(?:[A-Za-z_][\w$]*\s*\.\s*)?"?rooms"?\b`;
+
+/**
+ * Any one table name, used ONLY to step over the tables that precede `rooms`.
+ *
+ * `TRUNCATE` takes a LIST, and a rule that could see `rooms` only immediately after
+ * the keyword was satisfied by `TRUNCATE TABLE users, rooms` — one comma and one
+ * unrelated table, and the table is emptied with this gate green. The prefix is
+ * matched as repeated OPERANDS rather than as `[^;]*` so the span cannot wander out
+ * of the table list and swallow whatever follows it.
+ */
+const ANY_TABLE_OPERAND = String.raw`(?:ONLY\s+)?(?:[A-Za-z_][\w$]*\s*\.\s*)?"?[A-Za-z_][\w$]*"?`;
 
 interface BannedStatement {
   readonly name: string;
@@ -81,7 +115,10 @@ const BANNED: readonly BannedStatement[] = [
   },
   {
     name: 'TRUNCATE of the rooms table',
-    pattern: new RegExp(String.raw`\bTRUNCATE\s+(?:TABLE\s+)?${ROOMS_OPERAND}`, 'i'),
+    pattern: new RegExp(
+      String.raw`\bTRUNCATE\s+(?:TABLE\s+)?(?:${ANY_TABLE_OPERAND}\s*,\s*)*${ROOMS_OPERAND}`,
+      'i',
+    ),
   },
   {
     name: 'DROP of the rooms table',
@@ -96,6 +133,79 @@ const BANNED: readonly BannedStatement[] = [
     name: 'GRANT of a privilege that could remove a room',
     pattern: new RegExp(
       String.raw`\bGRANT\b[^;]{0,200}?\b(?:DELETE|TRUNCATE)\b[^;]{0,200}?\bON\s+(?:TABLE\s+)?${ROOMS_OPERAND}`,
+      'i',
+    ),
+  },
+  {
+    /**
+     * The grant that names no table and reaches `rooms` anyway.
+     *
+     * `GRANT DELETE ON ALL TABLES IN SCHEMA public TO stuwith_api` hands the
+     * privilege over every table the schema holds, `rooms` among them, and the rule
+     * above cannot see it because there is no operand to anchor on. It is the same
+     * statement shape the migration that establishes AD-8 already uses in its
+     * harmless direction (`GRANT SELECT ON ALL TABLES IN SCHEMA public`), which is
+     * exactly why it would not look out of place to the next reader.
+     *
+     * Repo-wide rather than {@link BannedStatement.roomsOnly}, unlike `@Delete`: a
+     * schema-wide grant of `DELETE` covers `rooms` whether or not the file
+     * mentions it, so scoping it by a second mention would be a one-word bypass.
+     */
+    name: 'a schema-wide GRANT of a privilege that could remove a room',
+    pattern: new RegExp(
+      String.raw`\bGRANT\b[^;]{0,200}?\b(?:DELETE|TRUNCATE)\b[^;]{0,200}?\bON\s+ALL\s+TABLES\s+IN\s+SCHEMA\b`,
+      'i',
+    ),
+  },
+  {
+    /**
+     * The cascade that empties `rooms` while naming only another table.
+     *
+     * `TRUNCATE TABLE users CASCADE` truncates every table with a foreign key into
+     * `users`, and `rooms.owner_user_id` is one. `ON DELETE RESTRICT` does NOT save
+     * it: a referential action governs `DELETE`, and `TRUNCATE ... CASCADE` is a
+     * separate mechanism that cascades regardless. So the statement that empties
+     * every room in the product does not contain the word `rooms` anywhere, and the
+     * operand-anchored rule above — correctly, on its own terms — sees nothing.
+     *
+     * Repo-wide, and the trade is stated rather than assumed: this bans
+     * `TRUNCATE ... CASCADE` on ANY table, because a rule that tried to decide which
+     * tables reference `rooms` would have to read the schema, and a rule that read
+     * the schema would go quiet the day somebody adds a foreign key. Nothing in this
+     * repository truncates anything outside a test file, which the sweep excludes.
+     */
+    name: 'a TRUNCATE ... CASCADE, which empties rooms through a foreign key',
+    pattern: new RegExp(String.raw`\bTRUNCATE\b[^;]{0,200}?\bCASCADE\b`, 'i'),
+  },
+  {
+    /**
+     * Taking the whole schema out, which takes `rooms` with it.
+     *
+     * `DROP SCHEMA public CASCADE` is one statement, names no table, and leaves
+     * nothing for any other rule here to anchor on. It belongs with the `DROP TABLE`
+     * rule for the same reason that one exists: a migration runs as the OWNER, so no
+     * privilege refuses it.
+     */
+    name: 'a DROP SCHEMA, which removes the rooms table with everything else',
+    pattern: new RegExp(
+      String.raw`\bDROP\s+SCHEMA\b|\bpgm\s*\.\s*dropSchema\s*\(`,
+      'i',
+    ),
+  },
+  {
+    /**
+     * `node-pg-migrate`'s JavaScript API, which writes none of the words above.
+     *
+     * Every migration in this repository today calls `pgm.sql(...)` with real SQL,
+     * so every rule above can read it. `pgm.dropTable('rooms')` is the same DDL
+     * expressed as a method call — the library builds `DROP TABLE` at run time — and
+     * it contains neither `DROP` nor `TABLE` for a text scan to find. It needs no
+     * grant either: a migration runs as the OWNER, which is the second of the two
+     * holes this gate's own docblock says a privilege cannot cover.
+     */
+    name: 'a dropTable of rooms through the migration builder',
+    pattern: new RegExp(
+      String.raw`\bpgm\s*\.\s*dropTable\s*\(\s*[^)]{0,200}?\brooms\b`,
       'i',
     ),
   },
@@ -331,6 +441,36 @@ describe('every banned spelling is really reported, by the function the sweep ru
       `import { Controller, Delete } from '@nestjs/common';\n` +
         `@Controller('v1/rooms')\nexport class X { @Delete(':id') remove() { return 1; } }`,
     ],
+    // The four spellings review round 1 found this gate blind to. Each was green
+    // against the rules as they stood, and each empties or drops the table.
+    [
+      'a TRUNCATE that lists another table first',
+      `export const sql = "TRUNCATE TABLE users, rooms";`,
+    ],
+    [
+      'a TRUNCATE list with a schema qualifier on the decoy',
+      `export const sql = "TRUNCATE public.users, public.rooms RESTART IDENTITY";`,
+    ],
+    [
+      'a schema-wide GRANT of DELETE',
+      `export const sql = "GRANT DELETE ON ALL TABLES IN SCHEMA public TO stuwith_api";`,
+    ],
+    [
+      'a schema-wide GRANT of TRUNCATE among others',
+      `export const sql = "GRANT SELECT, TRUNCATE ON ALL TABLES IN SCHEMA public TO stuwith_realtime";`,
+    ],
+    ['a dropTable through the builder', `exports.up = (pgm) => { pgm.dropTable('rooms'); };`],
+    [
+      'a dropTable through the builder, in its object form',
+      `exports.up = (pgm) => { pgm.dropTable({ schema: 'public', name: 'rooms' }, { ifExists: true }); };`,
+    ],
+    // Round 2: three more spellings that empty or remove the table without naming it.
+    [
+      'a TRUNCATE CASCADE on the table rooms points at',
+      `export const sql = "TRUNCATE TABLE users CASCADE";`,
+    ],
+    ['a DROP SCHEMA', `export const sql = "DROP SCHEMA public CASCADE";`],
+    ['a dropSchema through the builder', `exports.down = (pgm) => { pgm.dropSchema('public'); };`],
   ];
 
   it.each(OFFENDING)('reports %s when it is really in a file', (_label, source) => {
@@ -373,6 +513,39 @@ describe('every banned spelling is really reported, by the function the sweep ru
       'prose about the rule, in a comment',
       `/* There is no DELETE FROM rooms anywhere, and no DROP TABLE rooms either. */\nexport const x = 1;`,
     ],
+    // The other side of the three rules widened above. Each is real text from the
+    // roles migration or a shape it would be reasonable to write, and a rule that
+    // flagged one of them is a rule the next person weakens instead of arguing with.
+    [
+      'the schema-wide REVOKE that establishes the posture',
+      `export const sql = "REVOKE ALL ON ALL TABLES IN SCHEMA public FROM PUBLIC";`,
+    ],
+    [
+      'the schema-wide GRANT that IS issued, which grants only SELECT',
+      `export const sql = "GRANT SELECT ON ALL TABLES IN SCHEMA public TO stuwith_api";`,
+    ],
+    [
+      'a TRUNCATE of other tables that never reaches rooms',
+      `export const sql = "TRUNCATE TABLE users, sessions";`,
+    ],
+    [
+      'a dropTable of a DIFFERENT table through the builder',
+      `exports.up = (pgm) => { pgm.dropTable('room_reservations'); };`,
+    ],
+    [
+      'a builder call on rooms that is not a drop',
+      `exports.up = (pgm) => { pgm.addIndex('rooms', ['topic']); };`,
+    ],
+    // A TRUNCATE with no CASCADE reaches nothing through a foreign key, and a
+    // CASCADE that is a referential action is the CORRECT spelling on other tables.
+    [
+      'a plain TRUNCATE of an unrelated table',
+      `export const sql = "TRUNCATE TABLE audit_scratch";`,
+    ],
+    [
+      'the CASCADE that user_identities is right to use',
+      `export const sql = "user_id uuid NOT NULL REFERENCES users (id) ON DELETE CASCADE";`,
+    ],
   ];
 
   it.each(LEGITIMATE)('leaves %s alone', (_label, source) => {
@@ -414,22 +587,99 @@ describe('every banned spelling is really reported, by the function the sweep ru
  */
 const MIGRATIONS_DIR = path.join(REPO_ROOT, 'packages', 'db', 'migrations');
 
-const roomsMigrations = readdirSync(MIGRATIONS_DIR)
-  .filter((file) => file.endsWith('.js'))
-  .filter((file) => {
-    const source = stripComments(readFileSync(path.join(MIGRATIONS_DIR, file), 'utf8'));
-    return /CREATE\s+TABLE[^;]{0,80}\brooms\b|ALTER\s+TABLE\s+rooms\b/i.test(source);
-  });
+/**
+ * Whether a migration touches the rooms table, in any spelling it can be touched in.
+ *
+ * The discovery is what decides which files the cascade rule below runs over, so a
+ * spelling missing HERE is not a rule that fails — it is a file that is never
+ * examined, and a describe block that stays green by looking at nothing. Two
+ * spellings were missing and both are ordinary:
+ *
+ *  - `ALTER TABLE public.rooms`, because the branch was written as literal
+ *    `ALTER\s+TABLE\s+rooms` while {@link ROOMS_OPERAND} — which allows the schema
+ *    qualifier and the quotes — already existed two hundred lines above it;
+ *  - `pgm.createTable('rooms', …)`, the builder form. Every migration here writes
+ *    raw SQL today, so it costs nothing to add and it is the form somebody reaching
+ *    for the library's documentation writes first.
+ *
+ * The builder methods are ENUMERATED rather than matched as `pgm.<anything>`. The
+ * loose version was written first and was wrong in the expensive direction: it
+ * matched `pgm.sql(...)` and therefore pulled in the roles migration, whose
+ * `COMMENT ON ROLE` prose names `rooms` while touching no table at all — and that
+ * file legitimately contains `ON DELETE CASCADE` for `user_identities`, so the rule
+ * went red on a migration it has no business judging. Raw SQL is already covered by
+ * the two branches above it; this branch is only about the method calls they cannot
+ * see.
+ */
+const TABLE_BUILDER_METHODS = [
+  'createTable',
+  'dropTable',
+  'renameTable',
+  'addColumns',
+  'addColumn',
+  'dropColumns',
+  'dropColumn',
+  'alterColumn',
+  'renameColumn',
+  'addConstraint',
+  'dropConstraint',
+  'createIndex',
+  'addIndex',
+  'dropIndex',
+].join('|');
+
+const TOUCHES_ROOMS_TABLE = new RegExp(
+  [
+    String.raw`CREATE\s+TABLE[^;]{0,80}\brooms\b`,
+    String.raw`ALTER\s+TABLE\s+${ROOMS_OPERAND}`,
+    String.raw`\bpgm\s*\.\s*(?:${TABLE_BUILDER_METHODS})\s*\(\s*[^)]{0,200}?\brooms\b`,
+  ].join('|'),
+  'i',
+);
+
+/**
+ * The discovery, as a function over a directory rather than over one constant path.
+ *
+ * Taking the directory as an argument is what lets the last example below run the
+ * REAL discovery over a planted file without writing into `packages/db/migrations` —
+ * a stray `.js` left behind there is not an untidy file, it is a migration
+ * `pnpm test:migrations` would try to run.
+ */
+export function roomsMigrationsIn(dir: string): readonly string[] {
+  return readdirSync(dir)
+    .filter((file) => file.endsWith('.js'))
+    .filter((file) => TOUCHES_ROOMS_TABLE.test(stripComments(readFileSync(path.join(dir, file), 'utf8'))));
+}
+
+const roomsMigrations = roomsMigrationsIn(MIGRATIONS_DIR);
+
+/**
+ * A cascade, in both spellings the migration runner understands.
+ *
+ * `ON DELETE CASCADE` is the SQL. `onDelete: 'CASCADE'` is the same referential
+ * action written as a `node-pg-migrate` column option — the library emits the former
+ * from the latter, so a rule that reads only the SQL is green on a schema that
+ * cascades. The quotes are optional and either kind is allowed, because the value
+ * travels through a JavaScript object literal rather than through a SQL string.
+ */
+const CASCADE_SPELLINGS = /ON\s+DELETE\s+CASCADE|onDelete\s*:\s*['"`]?\s*CASCADE/i;
 
 describe('the rooms table is never reachable by a cascading delete', () => {
   it('finds a migration that creates or alters it, so the rule is over something', () => {
     expect(roomsMigrations.length).toBeGreaterThanOrEqual(1);
   });
 
-  it.each(roomsMigrations)('%s declares no ON DELETE CASCADE', (file) => {
+  it('names the migration this story added, so the discovery is not matching by luck', () => {
+    // The count above is satisfied by any one migration. This is what says the
+    // discovery reaches the file the rule is actually about — a widened pattern that
+    // silently stopped matching it would otherwise leave the block green.
+    expect(roomsMigrations).toContain('1788480200000_rooms-and-plans.js');
+  });
+
+  it.each(roomsMigrations)('%s declares no cascade, in either spelling', (file) => {
     const source = stripComments(readFileSync(path.join(MIGRATIONS_DIR, file), 'utf8'));
     expect(source, 'a cascade here is a hard-delete path in the schema').not.toMatch(
-      /ON\s+DELETE\s+CASCADE/i,
+      CASCADE_SPELLINGS,
     );
   });
 
@@ -443,13 +693,64 @@ describe('the rooms table is never reachable by a cascading delete', () => {
     expect(sources).toMatch(/REFERENCES\s+users\s*\(\s*id\s*\)\s*ON\s+DELETE\s+RESTRICT/i);
   });
 
-  it('recognises a cascade when there really is one', () => {
-    // The rule checking itself, over the same regex the examples above run.
-    expect(/ON\s+DELETE\s+CASCADE/i.test('user_id uuid REFERENCES users (id) ON DELETE CASCADE')).toBe(
-      true,
-    );
-    expect(/ON\s+DELETE\s+CASCADE/i.test('owner_user_id uuid REFERENCES users (id) ON DELETE RESTRICT')).toBe(
-      false,
-    );
+  it.each([
+    ['the SQL spelling', 'user_id uuid REFERENCES users (id) ON DELETE CASCADE', true],
+    ["the builder's option", `{ references: 'users', onDelete: 'CASCADE' }`, true],
+    ["the builder's option, unquoted", '{ onDelete: CASCADE }', true],
+    ['the correct referential action', 'owner_user_id uuid REFERENCES users (id) ON DELETE RESTRICT', false],
+    ["the builder's RESTRICT", `{ references: 'users', onDelete: 'RESTRICT' }`, false],
+  ] as const)('recognises %s', (_label, source, expected) => {
+    // The rule checking itself, over the same regex the examples above run. The
+    // RESTRICT rows are what keep it from being a rule that simply says yes.
+    expect(CASCADE_SPELLINGS.test(source)).toBe(expected);
+  });
+
+  it.each([
+    [
+      'the builder form',
+      `exports.up = (pgm) => { pgm.createTable('rooms', { owner_user_id: { references: 'users', onDelete: 'CASCADE' } }); };\n`,
+    ],
+    [
+      'a schema-qualified ALTER',
+      `exports.up = (pgm) => { pgm.sql(\`ALTER TABLE public.rooms ADD CONSTRAINT fk FOREIGN KEY (owner_user_id) REFERENCES users (id) ON DELETE CASCADE\`); };\n`,
+    ],
+  ])('discovers a migration written as %s, and judges it', (_label, source) => {
+    /**
+     * The half the rows above cannot show: that the DISCOVERY and the rule meet on
+     * the same file. Both spellings here were INVISIBLE to the discovery before
+     * review round 1 — `it.each(roomsMigrations)` simply never saw the file, so the
+     * block reported success while examining nothing.
+     *
+     * A temporary directory, not `packages/db/migrations`: a stray `.js` left behind
+     * there is a migration `pnpm test:migrations` would try to run.
+     */
+    const dir = mkdtempSync(path.join(tmpdir(), 'rooms-gate-'));
+    try {
+      const name = '9999999999999_planted.js';
+      writeFileSync(path.join(dir, name), source, 'utf8');
+
+      expect(roomsMigrationsIn(dir)).toContain(name);
+      expect(CASCADE_SPELLINGS.test(stripComments(readFileSync(path.join(dir, name), 'utf8')))).toBe(
+        true,
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('leaves a migration that touches no rooms table undiscovered', () => {
+    // The other direction: a discovery that said yes to everything would make the
+    // example above pass and the rule meaningless.
+    const dir = mkdtempSync(path.join(tmpdir(), 'rooms-gate-'));
+    try {
+      writeFileSync(
+        path.join(dir, '9999999999998_other.js'),
+        `exports.up = (pgm) => { pgm.createTable('room_reservations', {}); };\n`,
+        'utf8',
+      );
+      expect(roomsMigrationsIn(dir)).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

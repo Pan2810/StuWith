@@ -90,8 +90,11 @@ function toRoom(row: RoomRow): Room {
  *
  * ## There is no delete method, and that is load-bearing
  *
- * `stuwith_api` holds `INSERT, UPDATE` on `rooms` and nothing else, so a delete
- * written here would fail at the database with `42501` rather than work. The port
+ * `stuwith_api` holds `INSERT, UPDATE` on `rooms` and no `DELETE` or `TRUNCATE`, so
+ * a delete written here would fail at the database with `42501` rather than work.
+ * (It holds `SELECT` too, inherited through `ALTER DEFAULT PRIVILEGES` — this
+ * adapter's own `findRoomById` runs on it. An earlier version of this sentence said
+ * "and nothing else", which would have made the class's other method impossible.) The port
  * does not offer one either. Both halves are deliberate: Epic 2 forbids a hard
  * delete path for a room, and "the grant is missing" alone would leave the method
  * sitting there waiting for somebody to add the grant to make it work.

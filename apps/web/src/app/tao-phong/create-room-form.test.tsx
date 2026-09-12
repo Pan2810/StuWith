@@ -40,7 +40,7 @@ import {
   createRoomStateFor,
   createRoomSubmission,
   createRoomSubmissionFrom,
-  createRoomWaitLabel,
+  createRoomIsWaiting,
   screenStateFromOutcome,
   type CreateRoomScreenState,
 } from './create-room-form';
@@ -90,6 +90,7 @@ function render(state: CreateRoomScreenState, messageKey: MessageKey | null = nu
       submitting={false}
       onRetry={() => undefined}
       onWaitFinished={() => undefined}
+      onSubmitWaitFinished={() => undefined}
       onSubmit={() => undefined}
       onCreateAnother={() => undefined}
     />,
@@ -106,6 +107,7 @@ function renderIn(locale: Locale, state: CreateRoomScreenState): string {
         submitting={false}
         onRetry={() => undefined}
         onWaitFinished={() => undefined}
+        onSubmitWaitFinished={() => undefined}
         onSubmit={() => undefined}
         onCreateAnother={() => undefined}
       />
@@ -339,12 +341,78 @@ describe('createRoomOutcomeFor — what a status means to this screen', () => {
     }
   });
 
-  it('puts the countdown sentence beside a notice that has one, and not otherwise', () => {
-    expect(createRoomWaitLabel(null)).toBeNull();
-    expect(createRoomWaitLabel({ messageKey: TRY_AGAIN_KEY, retryAfterSeconds: null })).toBeNull();
-    expect(createRoomWaitLabel({ messageKey: 'error.rateLimited', retryAfterSeconds: 30 })).toBe(
-      countdownLabel(30, VI_TRANSLATE),
+  it('is waiting only when the last attempt left a clock', () => {
+    expect(createRoomIsWaiting(null)).toBe(false);
+    expect(createRoomIsWaiting({ messageKey: TRY_AGAIN_KEY, retryAfterSeconds: null })).toBe(false);
+    // Zero is a clock, not the absence of one: `null` means "no wait" and `0` means
+    // "a wait that is over", and collapsing them here would leave the button
+    // disabled for ever on the second reading.
+    expect(createRoomIsWaiting({ messageKey: 'error.rateLimited', retryAfterSeconds: 0 })).toBe(true);
+    expect(createRoomIsWaiting({ messageKey: 'error.rateLimited', retryAfterSeconds: 30 })).toBe(
+      true,
     );
+  });
+});
+
+describe('a wait that arrives with the form on screen stops the form', () => {
+  /**
+   * The defect this covers shipped and survived a review round: a `429` on submit
+   * drew the remaining seconds as a static sentence beside a send button that stayed
+   * live, so the number never moved and every press during the lockout spent another
+   * attempt. Three assertions, because the three halves fail independently — the
+   * clock can be live while the button is live, and the button can be disabled with
+   * no clock beside it to say why.
+   */
+  const rateLimited = (retryAfterSeconds: number | null) =>
+    renderToStaticMarkup(
+      <CreateRoomPanel
+        state={{ kind: 'ready' }}
+        notice={{ messageKey: 'error.rateLimited', retryAfterSeconds }}
+        submitting={false}
+        onRetry={() => undefined}
+        onWaitFinished={() => undefined}
+        onSubmitWaitFinished={() => undefined}
+        onSubmit={() => undefined}
+        onCreateAnother={() => undefined}
+      />,
+    );
+
+  it('disables the send button while the clock runs', () => {
+    expect(rateLimited(30)).toContain('disabled=""');
+  });
+
+  it('renders a RUNNING countdown, not a sentence with a number in it', () => {
+    // `notice-countdown` is `SignInCountdown`'s own element — the one with the
+    // `useEffect` that re-renders every second. The old arrangement appended
+    // `countdownLabel(...)` to the message and produced identical text inside the
+    // `notice-alert` paragraph, which is why nothing could see the difference.
+    const html = rateLimited(30);
+
+    expect(html).toContain('notice-countdown');
+    expect(html).toContain(countdownLabel(30, VI_TRANSLATE));
+    expect(
+      html.slice(html.indexOf('notice-alert'), html.indexOf('notice-countdown')),
+    ).not.toContain(countdownLabel(30, VI_TRANSLATE));
+  });
+
+  it('leaves the button live for a message that carries no wait', () => {
+    // The other direction. A button disabled by every notice would satisfy the first
+    // example perfectly and lock somebody out of their own form after one typo.
+    const html = renderToStaticMarkup(
+      <CreateRoomPanel
+        state={{ kind: 'ready' }}
+        notice={{ messageKey: TRY_AGAIN_KEY, retryAfterSeconds: null }}
+        submitting={false}
+        onRetry={() => undefined}
+        onWaitFinished={() => undefined}
+        onSubmitWaitFinished={() => undefined}
+        onSubmit={() => undefined}
+        onCreateAnother={() => undefined}
+      />,
+    );
+
+    expect(html).not.toContain('disabled=""');
+    expect(html).not.toContain('notice-countdown');
   });
 });
 
@@ -509,6 +577,7 @@ describe('CreateRoomPanel — what each state actually renders', () => {
         submitting
         onRetry={() => undefined}
         onWaitFinished={() => undefined}
+        onSubmitWaitFinished={() => undefined}
         onSubmit={() => undefined}
         onCreateAnother={() => undefined}
       />,

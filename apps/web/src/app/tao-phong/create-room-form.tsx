@@ -15,8 +15,7 @@ import {
 } from '@stuwith/contracts';
 import type { FormEvent } from 'react';
 import { SignInCountdown } from '../dang-nhap/countdown';
-import { countdownLabel } from '../dang-nhap/countdown-text';
-import { VI_TRANSLATE, type MessageKey, type Translate } from '../i18n/messages';
+import { type MessageKey } from '../i18n/messages';
 import { useT } from '../i18n/use-t';
 import {
   PROFILE_RETRY_KEY,
@@ -272,19 +271,21 @@ export function createRoomOutcomeFor(
 }
 
 /**
- * The countdown sentence beside a notice, or `null` when there is no clock.
+ * Whether the last attempt left a wait that has to run down before another one.
  *
- * `t` defaults to Vietnamese so this is still a one-argument pure function for the
- * tests that assert the sentence; the panel passes the request's translator, which
- * is what makes the plural come out right in English.
+ * It is the ONE reading of that fact, and both things that depend on it — the clock
+ * and the submit button's `disabled` — are derived from this call rather than from
+ * two separate comparisons. That is not tidiness: the screen shipped with the two
+ * halves disagreeing. A `429` drew the remaining seconds as a STATIC sentence
+ * appended to the message (`createRoomWaitLabel`, deleted with this change) beside a
+ * button that stayed live, so the number never moved and the person could keep
+ * pressing send throughout the lockout — each press spending another attempt and, on
+ * a limiter that counts refusals, lengthening the wait they were being shown. The
+ * `unavailable` branch had already got this right with a real {@link SignInCountdown}
+ * and a disabled button; this is the same arrangement, on the branch that has a form.
  */
-export function createRoomWaitLabel(
-  current: CreateRoomNotice | null,
-  t: Translate = VI_TRANSLATE,
-): string | null {
-  return current === null || current.retryAfterSeconds === null
-    ? null
-    : countdownLabel(current.retryAfterSeconds, t);
+export function createRoomIsWaiting(current: CreateRoomNotice | null): boolean {
+  return current !== null && current.retryAfterSeconds !== null;
 }
 
 /**
@@ -372,6 +373,7 @@ export function CreateRoomPanel({
   submitting,
   onRetry,
   onWaitFinished,
+  onSubmitWaitFinished,
   onSubmit,
   onCreateAnother,
 }: {
@@ -393,6 +395,17 @@ export function CreateRoomPanel({
    */
   readonly onWaitFinished: () => void;
   /**
+   * Told when a wait that arrived WITH THE FORM ON SCREEN ends, so the send button
+   * becomes usable again.
+   *
+   * A second callback rather than {@link onWaitFinished}, and the two are not
+   * interchangeable: `onWaitFinished` moves the screen state, which is the right
+   * move on the `unavailable` branch and the wrong one here — the form would vanish
+   * mid-typing and take whatever had been entered with it. This one clears the
+   * notice's clock and leaves everything else alone.
+   */
+  readonly onSubmitWaitFinished: () => void;
+  /**
    * REQUIRED, even though `renderToStaticMarkup` never calls it. The `<form>` is
    * rendered HERE rather than in `page.tsx`, because whether there is a form at all
    * is one of this component's five decisions — and a page that wrapped the panel in
@@ -404,7 +417,7 @@ export function CreateRoomPanel({
   readonly onCreateAnother: () => void;
 }) {
   const t = useT();
-  const waitLabel = createRoomWaitLabel(current, t);
+  const waiting = createRoomIsWaiting(current);
 
   switch (state.kind) {
     case 'loading':
@@ -576,11 +589,30 @@ export function CreateRoomPanel({
           {current === null ? null : (
             <p className="notice notice-alert" id={CREATE_ROOM_ERROR_ID} role="alert">
               {t(current.messageKey)}
-              {waitLabel === null ? null : ` ${waitLabel}`}
             </p>
           )}
+          {/*
+            The clock is a RUNNING one, in its own element, exactly as on the
+            `unavailable` branch. Appending `countdownLabel(...)` to the sentence
+            above — which is what this used to do — produces a number that is correct
+            for one instant and then sits there: `renderToStaticMarkup` cannot tell
+            the difference, and neither can a reader, which is how it survived a
+            round of review.
+          */}
+          {current === null || current.retryAfterSeconds === null ? null : (
+            <SignInCountdown
+              seconds={current.retryAfterSeconds}
+              onFinished={onSubmitWaitFinished}
+            />
+          )}
 
-          <button type="submit" className="button-primary" disabled={submitting}>
+          {/*
+            `waiting` as well as `submitting`. A live send button under a countdown
+            is an invitation to spend attempts during a lockout, and on a limiter
+            that counts refusals each one makes the wait on screen longer — the
+            `Retry-After` defect of Epic 1, arriving through a different screen.
+          */}
+          <button type="submit" className="button-primary" disabled={submitting || waiting}>
             {t(CREATE_ROOM_SUBMIT_KEY)}
           </button>
         </form>

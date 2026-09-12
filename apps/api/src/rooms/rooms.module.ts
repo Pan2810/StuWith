@@ -46,14 +46,36 @@ export class RoomsModule {
      * types, which is precisely the confidence that turned out to be unfounded.
      */
     const port: unknown = (runtime as Partial<RoomsRuntime> | null | undefined)?.rooms;
-    if (
-      port === null ||
-      typeof (port as Partial<RoomPort> | undefined)?.createRoom !== 'function'
-    ) {
+    /**
+     * BOTH methods, not only the one this story calls.
+     *
+     * `RoomPort` declares `createRoom` and `findRoomById`. Checking one of them is
+     * the same hole one level in: a runtime literal carrying only `createRoom`
+     * builds, boots, serves the create, and throws at request time on the first read
+     * — which is exactly the "green until a request arrives" failure this whole
+     * check exists to make impossible. The list is derived from the port so a third
+     * method cannot be added without being checked.
+     */
+    const REQUIRED_METHODS: readonly (keyof RoomPort)[] = ['createRoom', 'findRoomById'];
+    const missing = REQUIRED_METHODS.filter(
+      (method) =>
+        typeof (port as Partial<Record<keyof RoomPort, unknown>> | null | undefined)?.[method] !==
+        'function',
+    );
+    /**
+     * ONE condition per method, and no `port === null` beside it. An earlier version
+     * wrote that disjunct and it could never decide anything: `null?.createRoom` is
+     * `undefined` through the optional chain above, so the `typeof` test already
+     * answers for `null`. A dead disjunct in a fail-closed check is worse than noise
+     * — it reads like a case somebody thought about, so the next person trusts the
+     * pair instead of the one test that covers it.
+     */
+    if (missing.length > 0) {
       throw new Error(
         'RoomsModule.forRuntime was given no usable RoomPort. The runtime handed to ' +
-          'AppModule.forConfig is missing its `rooms` member — every AuthRuntime literal, ' +
-          'including the ones in test files that nothing typechecks, has to carry one.',
+          'AppModule.forConfig is missing its `rooms` member, or that member is missing ' +
+          `${missing.join(' and ')} — every AuthRuntime literal, including the ones in ` +
+          'test files that nothing typechecks, has to carry a complete one.',
       );
     }
 

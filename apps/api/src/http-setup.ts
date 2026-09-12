@@ -140,9 +140,22 @@ export function configureHttpApp(app: NestFastifyApplication, config: ApiEnv): v
      * Story 2.1's probe declared that deleting this line would turn a BROWSER test
      * red. It did not: the E2E fake API carried its own copy of the CORS answer, so
      * the browser kept getting a working `Access-Control-Allow-Credentials` from
-     * the fake while the real server had stopped sending one. Two `http-setup.test.ts`
-     * assertions went red, neither of them a browser.
-     * `tests/gates/cors-policy.test.ts` is what makes the declared mutation true.
+     * the fake while the real server had stopped sending one. Two assertions went
+     * red, neither of them a browser, and they are in
+     * `apps/api/src/auth/auth.flow.test.ts` — at `allows the configured web origin,
+     * with credentials` and `answers the preflight a credentialed POST triggers`.
+     *
+     * Round 1 of the review wrote `http-setup.test.ts` there, in this docblock and
+     * in three other places, and that was wrong: that file tests
+     * `fastifyAdapterOptions` and `trustProxy` and contains the word `cors` nowhere.
+     * The measurement was real; the address was not — which is worse than no
+     * citation, because somebody checking the premise finds an empty file and
+     * concludes the gate rests on nothing.
+     *
+     * `tests/gates/cors-policy.test.ts` is what makes the declared mutation true for
+     * `credentials`. It is a TEXT gate and therefore the weaker half: the
+     * `advertises exactly the methods and request headers the contract declares`
+     * case in `auth.flow.test.ts` is what reads the values off a real preflight.
      */
     credentials: CORS_ALLOW_CREDENTIALS,
     methods: [...CORS_ALLOWED_METHODS],

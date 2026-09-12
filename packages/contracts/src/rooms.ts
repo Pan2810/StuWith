@@ -77,7 +77,7 @@ export const PLAN_PARTICIPANT_LIMITS: Readonly<Record<UserPlan, number>> = {
 /**
  * The largest cap the schema will store, whatever a plan says.
  *
- * It is a FLOOR under the storage rather than a default anybody gets: no value in
+ * It is a CEILING over the storage rather than a default anybody gets: no value in
  * {@link PLAN_PARTICIPANT_LIMITS} reaches it today, and the reason to write it down
  * is that a plan table edited later must not be able to put an unbounded number in
  * a column that Story 2.2 will count reservations against.
