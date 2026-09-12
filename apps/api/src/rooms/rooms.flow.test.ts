@@ -10,6 +10,8 @@ import {
   MAX_ROOM_NAME_LENGTH,
   PLAN_PARTICIPANT_LIMITS,
   ROOMS_PATH,
+  ROOM_TOPICS,
+  ROOM_VISIBILITIES,
   UNAUTHENTICATED_MESSAGE,
   USER_PLANS,
   errorEnvelopeSchema,
@@ -395,8 +397,18 @@ describe('Matrix: the body', () => {
     // would satisfy all of them perfectly.
     const jar = await signedIn();
 
-    for (const topic of ['ngoai_ngu', 'khoa_hoc_tu_nhien', 'khoa_hoc_xa_hoi', 'lap_trinh_cong_nghe', 'on_thi', 'khac']) {
-      for (const visibility of ['public', 'private']) {
+    // `ROOM_TOPICS` and `ROOM_VISIBILITIES` themselves, not a copy of what they hold
+    // today. A hand-written list is a list of EXAMPLES: add a seventh topic to the
+    // contract and this case keeps testing the six it was born with, reporting full
+    // coverage of an enum it no longer matches — which is the shape of the assertion
+    // this very case exists to be the other direction of.
+    // An empty enum would make the loop below assert nothing at all and report
+    // success — the vacuity guard the gates put in front of their own sweeps.
+    expect(ROOM_TOPICS.length).toBeGreaterThan(0);
+    expect(ROOM_VISIBILITIES.length).toBeGreaterThan(0);
+
+    for (const topic of ROOM_TOPICS) {
+      for (const visibility of ROOM_VISIBILITIES) {
         const response = await createRoom(jar, validBody({ topic, visibility }));
         expect(response.status, `${topic} / ${visibility} must be accepted`).toBe(201);
       }

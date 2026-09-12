@@ -423,8 +423,8 @@ Mỗi mục có ba khoá bắt buộc và một khoá tuỳ chọn:
 
 - source_spec: `_bmad-output/implementation-artifacts/spec-2-1-tao-phong-hoc.md`
   summary: Cấu hình CORS của `apps/api` và của `tests/e2e/support/fake-api.cjs` chỉ khớp nhau bằng cách ĐỌC, không test nào so hai bên.
-  evidence: Probe ranh giới 1 của story chạy trong Chromium thật nhưng nói chuyện với fake, vì `apps/api` trong bộ e2e không có database phía sau. ĐÃ ĐO cả hai chiều - bỏ dòng `access-control-allow-credentials` khỏi `corsHeaders()` của fake làm ĐỎ 8/9 ca trong `tao-phong.spec.ts`; bỏ `credentials: true` khỏi `apps/api/src/http-setup.ts:131` làm ĐỎ 2 ca trong `apps/api/src/http-setup.test.ts`. Nên mỗi bên đều có người canh; cái KHÔNG có người canh là hai bên nói cùng một điều. Tiền lệ đã có và đã tốn: `exposedHeaders` từng khớp nhau bằng cách đọc cho tới khi `BROWSER_READABLE_RESPONSE_HEADERS` được đưa vào `packages/contracts` và cả hai cùng spread từ đó — `Retry-After` đã ship hỏng suốt Epic 1 vì hai bản sao lệch nhau trong im lặng. Cách đóng cùng khuôn: một hằng số chung cho phần cấu hình CORS mà cả hai cùng đọc, hoặc một gate so options của `configureHttpApp` với `corsHeaders()`. Chưa làm vì nó chạm hình dạng của `enableCors` và đáng quyết một lần cho cả `allow-methods` lẫn `allow-headers`.
-  status: CHƯA CÓ CHỦ (2026-09-07).
+  evidence: Probe ranh giới 1 của story chạy trong Chromium thật nhưng nói chuyện với fake, vì `apps/api` trong bộ e2e không có database phía sau. ĐÃ ĐO cả hai chiều - bỏ dòng `access-control-allow-credentials` khỏi `corsHeaders()` của fake làm ĐỎ 8/9 ca trong `tao-phong.spec.ts`; bỏ `credentials: true` khỏi `apps/api/src/http-setup.ts:131` làm ĐỎ 2 ca trong `apps/api/src/auth/auth.flow.test.ts` (vòng 2 sửa địa chỉ: trước ghi nhầm là `http-setup.test.ts`, file đó không kiểm CORS). Nên mỗi bên đều có người canh; cái KHÔNG có người canh là hai bên nói cùng một điều. Tiền lệ đã có và đã tốn: `exposedHeaders` từng khớp nhau bằng cách đọc cho tới khi `BROWSER_READABLE_RESPONSE_HEADERS` được đưa vào `packages/contracts` và cả hai cùng spread từ đó — `Retry-After` đã ship hỏng suốt Epic 1 vì hai bản sao lệch nhau trong im lặng. Cách đóng cùng khuôn: một hằng số chung cho phần cấu hình CORS mà cả hai cùng đọc, hoặc một gate so options của `configureHttpApp` với `corsHeaders()`. Chưa làm vì nó chạm hình dạng của `enableCors` và đáng quyết một lần cho cả `allow-methods` lẫn `allow-headers`. ĐÃ LÀM ĐÚNG NHƯ VẬY: `CORS_ALLOW_CREDENTIALS`, `CORS_ALLOWED_METHODS`, `CORS_ALLOWED_REQUEST_HEADERS` nằm trong `packages/contracts/src/http.ts`; `http-setup.ts` và `fake-api.cjs` cùng trải từ đó; gate `tests/gates/cors-policy.test.ts` đọc cả hai file. Mục này giữ lại vì phần ĐO ở trên là bằng chứng của lỗ, không phải lời hứa.
+  status: ĐÃ ĐÓNG 2026-09-12 bởi chính spec 2.1 (review vòng 1, hướng c; vòng 2 bổ sung nửa còn thiếu). Ba hằng vào `packages/contracts/src/http.ts`, hai đầu cùng trải từ đó, gate `tests/gates/cors-policy.test.ts` đọc cả hai file. Vòng 2 đo được rằng gate đó MỘT MÌNH chưa đủ — nó so khớp chuỗi con, nên `methods: [...CORS_ALLOWED_METHODS].filter((m) => m !== 'POST')` vẫn qua và cả bộ vẫn xanh trong khi API thôi quảng cáo `POST` cross-origin; ca `advertises exactly the methods and request headers the contract declares` trong `auth.flow.test.ts` là thứ đọc giá trị thật trên một preflight thật, và nó đỏ trên đúng mutation đó.
 
 - source_spec: `_bmad-output/implementation-artifacts/spec-2-1-tao-phong-hoc.md`
   summary: `AuthRuntime` giờ mang cả `rooms`, tức cái tên đã đi sau nội dung một story.
@@ -440,3 +440,79 @@ Mỗi mục có ba khoá bắt buộc và một khoá tuỳ chọn:
   summary: Gate AC5 không quét file `.test.ts`, nên một đường xoá cứng phòng viết trong test là vô hình với nó.
   evidence: `tests/gates/no-hard-delete-rooms.test.ts` loại mọi file test, và loại trừ đó là BẮT BUỘC chứ không tiện tay: `packages/db/src/rooms-migration.test.ts` chạy `DELETE FROM rooms` dưới `stuwith_api` và kỳ vọng `42501`, còn `room-contract.pg.test.ts` `TRUNCATE` bảng giữa các ca với vai OWNER của container. Hai câu lệnh đó CHÍNH LÀ bằng chứng luật đang có hiệu lực — xoá chúng để làm hài lòng luật quét sẽ xoá luôn thứ duy nhất chứng minh database từ chối. Lỗ hổng còn lại được thu hẹp bởi hai điều: file test không phải đường mà production đi được, và mô hình quyền từ chối câu lệnh đó cho cả hai role ứng dụng dù ai viết. Cách đóng nếu ai đó muốn: một danh sách miễn trừ THEO CÂU LỆNH thay vì theo loại file, đúng khuôn `EXEMPT_STATEMENTS` của `audit-append-only.test.ts` — nơi docblock giải thích vì sao miễn trừ cả file là "một cái lỗ có tên file trên đó".
   status: CHƯA CÓ CHỦ (2026-09-07). Đã cân nhắc và chọn có ý thức trong Story 2.1; ghi lại để vòng sau không phải điều tra lại.
+
+## Deferred from: code review of spec-2-1-tao-phong-hoc (2026-09-12)
+
+Mười mục dưới đây do vòng review 1 của `bmad-code-review` phát hiện trên phạm vi
+`309a2c9..a9d2d6d`. Tất cả đều là "thật nhưng không chặn story", và đều đã được
+đọc tận nơi trước khi chấm mức độ.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-1-tao-phong-hoc.md`
+  summary: `stuwith_api` giữ `UPDATE` trên `rooms` mà không gì ghim được phép sửa cột nào.
+  evidence: `packages/db/migrations/1788480200000_rooms-and-plans.js:177` cấp `INSERT, UPDATE`, nhưng `RoomPort` không có phương thức cập nhật và `PgRoomAdapter` không phát câu `UPDATE` nào — quyền này dành cho Story 4.8 chuyển `status`. `rooms-migration.test.ts` chỉ chứng minh `stuwith_realtime` KHÔNG `UPDATE` được; không gì chặn hay phát hiện `stuwith_api` ghi đè `max_participants` hay `owner_user_id` — đúng cột mà toàn bộ lập luận về trần người dựa vào việc nó không bao giờ đổi. Hoãn được vì hướng đóng còn mơ hồ (GRANT theo cột, trigger, hay không làm gì) và Story 4.8 mới là nơi câu `UPDATE` đầu tiên xuất hiện.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-1-tao-phong-hoc.md`
+  summary: `PgIdentityAdapter` ép kiểu `plan` không kiểm, trong khi `isUserPlan` đã có sẵn và không ai gọi.
+  evidence: `packages/db/src/pg/identity-adapter.ts:83` viết `plan: row.plan as UserPlan`, khác hẳn `date_of_birth` vốn được `isCalendarDate` canh. Một hàng có `plan` ngoài `USER_PLANS` sẽ làm `PLAN_PARTICIPANT_LIMITS[user.plan]` thành `undefined` ở `rooms.service.ts:111`, chạm `assertValidMaxParticipants` và ném — tức 500 trên một request hợp lệ. Hoãn được vì CHECK constraint `users_plan_check` chặn giá trị đó từ phía DB ngay hôm nay; kịch bản chỉ mở ra khi Epic 5 nới CHECK. Đáng chú ý: `packages/contracts/src/rooms.ts:31` đã export sẵn `isUserPlan` và không file nào gọi — nó chính là cái chốt còn thiếu ở đây.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-1-tao-phong-hoc.md`
+  summary: `RoomsController` không có `try/catch`, một throw bất ngờ trả 500 không đúng phong bì lỗi.
+  evidence: `apps/api/src/rooms/rooms.controller.ts:43` gọi thẳng service rồi `reply.status(...).send(...)`. Không có `APP_FILTER` hay `useGlobalFilters` nào trong `apps/api` (đã grep `main.ts`, `http-setup.ts`, `app.module.ts`), nên một throw cho ra body mặc định của Nest `{statusCode, message}`, không khớp `errorEnvelopeSchema` mà mọi route `/v1` khác publish. Hoãn được vì đây là tư thế CÓ SẴN chứ không do story này tạo: `AuthController` cũng không `try/catch`. Đóng đúng cách là một exception filter toàn cục cho cả process, không phải một `try` trong controller mới.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-1-tao-phong-hoc.md`
+  summary: Một phòng ĐÃ ghi vẫn có thể trả 500, và không ai xoá được hàng đó.
+  evidence: `apps/api/src/rooms/rooms.service.ts:136` dựng body bằng `roomSchema.parse(...)` SAU khi `INSERT` đã commit; bất kỳ drift nào cũng ném sau khi hàng đã tồn tại. `apps/web/src/app/tao-phong/page.tsx:135` làm bản đối xứng — một `201` mà body hỏng `safeParse` hiện `createRoom.tryAgain`. Cả hai đường đều nói với người dùng là thất bại, họ tạo phòng nữa, và không role nào có `DELETE`. Không test nào chạy hai nhánh này. Hoãn được vì nó cần schema drift mới với tới, mà chính bộ contract test sẽ bắt drift đó trước.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-1-tao-phong-hoc.md`
+  summary: Migration trộn `IF NOT EXISTS` với `ADD COLUMN` / `ADD CONSTRAINT` không idempotent.
+  evidence: `1788480200000_rooms-and-plans.js:140` và `:164` dùng `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS`, còn `:114` là `ALTER TABLE users ADD COLUMN plan` trần. Trên một database đã có `rooms` lệch hình dạng, câu CREATE im lặng thành công và mọi CHECK, GRANT lẫn `RESTRICT` sau đó được khẳng định trên một bảng file này không hề tạo. Hoãn được vì `node-pg-migrate` ghi sổ migration đã chạy nên chạy lại không phải trạng thái bình thường; nhưng file đang tự mâu thuẫn về việc nó có hỗ trợ chạy lại hay không.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-1-tao-phong-hoc.md`
+  summary: Độ dài tên phòng đo bằng đơn vị UTF-16 ở tầng ứng dụng, bằng ký tự ở tầng cột.
+  evidence: `packages/contracts/src/rooms.ts:193` dùng `z.string().max(120)`, đếm mã đơn vị UTF-16; `rooms_name_length CHECK (char_length(name) <= 120)` đếm KÝ TỰ. Một tên gồm 115 emoji là 230 đơn vị → bị từ chối `400` dù cột sẵn sàng nhận. Hoãn được vì đây là nới lỏng một ràng buộc đã publish (AD-13: nới là tương thích) và đáng quyết một lần cho cả `name` lẫn `description`.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-1-tao-phong-hoc.md`
+  summary: `EXPERIENCE.md` đòi `role="radiogroup"` cho nhóm tương tự, còn CSS story này gọi `fieldset` là khuôn sẽ dùng lại.
+  evidence: `apps/web/src/app/globals.css:513` nói hình dạng fieldset "is the shape the later story will reuse", dẫn chiếu nhóm ba chế độ khuôn mặt của Story 2.7; nhưng `EXPERIENCE.md:176` và `:276` yêu cầu `role="radiogroup"` với `role="radio"` + `aria-checked` cho đúng nhóm đó, trong khi `create-room-form.tsx` vẽ `<fieldset>` (role ngầm định `group`, và đó cũng là thứ `tao-phong.spec.ts` khẳng định). Như đang viết, Story 2.7 không thể thoả cả hai. Hoãn vì phải sửa MỘT trong hai tài liệu, và chủ của quyết định là story dựng nhóm đó.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-1-tao-phong-hoc.md`
+  summary: `.choice` vô hình với vòng quét hoàn chỉnh của gate tương phản.
+  evidence: `apps/web/src/app/globals.css:561` cho `.choice` nền `var(--surface-raised)` và luật `:checked` đổi sang `--surface-sunken`, cố ý không khai `color`. `tests/gates/contrast.test.ts:487-490` khoá vòng quét COMPOSED trên các luật CÓ khai `color:`, nên control đầu tiên của sản phẩm có bề mặt đổi theo trạng thái không đóng góp hàng nào và không bao giờ được đo — đúng hình dạng hồi quy nút disabled mà mục đó được viết ra để chặn. Hoãn vì đổi cách khoá của gate là việc cắt ngang toàn hệ thiết kế.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-1-tao-phong-hoc.md`
+  summary: AC1 "không tính lại" được khẳng định trên một store vốn không có cơ chế tính lại.
+  evidence: `apps/api/src/rooms/rooms.flow.test.ts:260` lật `planOverride` sau khi tạo rồi đọc lại `harness.rooms.findRoomById(...)` từ store in-memory — một `Map`, nơi mệnh đề đúng hiển nhiên. Không có endpoint đọc (`GET /v1/rooms/:id` chưa tồn tại), nên ở story này tính chất đó không có môi trường HTTP nào để đo; nó được bảo đảm bằng sự VẮNG MẶT của mã chứ không bằng test. Hoãn vì Story 2.2 là nơi đầu tiên có đường đọc thật để khẳng định nó.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-1-tao-phong-hoc.md`
+  summary: `fake-api.cjs` trả 405 ở chỗ `apps/api` trả 404.
+  evidence: `tests/e2e/support/fake-api.cjs:314` trả `405` cho method khác POST trên `ROOMS_PATH` kèm bình luận rằng như vậy "makes it visible to a spec"; nhưng `RoomsController` chỉ khai `@Post()` và process không đặt global prefix, nên `apps/api` trả `404`. Không spec nào khẳng định bên nào. Fake tồn tại để phản chiếu sản phẩm, và chính docblock của nó đã ghi một lần lệch cùng loại bị bắt trước đây (một 204 ở chỗ sản phẩm trả 200). Hoãn vì nó là hạ tầng test và chưa ai dựa vào hành vi này.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-1-tao-phong-hoc.md`
+  summary: `apps/api/tsconfig.json` loại `src/**/*.test.ts` khỏi chương trình, nên MỌI object literal dựng trong test đều không được typecheck — không riêng gì runtime.
+  evidence: Đây là nguyên nhân GỐC của `RoomsModule.forRuntime`'s fail-closed check, và vòng review 2 chỉ ra rằng cái check đó là giải pháp vá cho MỘT module trong khi lỗ nằm ở phạm vi toàn repo. ĐÃ ĐO ở vòng 1: `app.shutdown.test.ts:30` khai `: AuthRuntime` trên một literal thiếu `rooms`, và không gì báo — `useValue: undefined` là provider hợp lệ của Nest, ứng dụng boot, mọi ví dụ xanh, triệu chứng duy nhất là 500 ở request đầu tiên chạm `RoomsService`. Mỗi module sau này nhận một phần của runtime sẽ gặp lại đúng chuyện đó, và cách duy nhất được biết tới hiện nay là mỗi module tự dựng một guard. Cách đóng thật: đưa test file vào một `tsconfig` có typecheck (một project references riêng cho test), hoặc ít nhất cho `pnpm typecheck` chạy thêm một pass trên chúng. Hoãn được vì guard hiện tại fail-closed và có 13 ca chạy nó; nhưng nó không mở rộng.
+  status: CHƯA CÓ CHỦ (2026-09-12, review vòng 2 của spec 2.1).
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-1-tao-phong-hoc.md`
+  summary: Gate AC5 kiểm `ON DELETE CASCADE` trên TOÀN BỘ văn bản một migration đã lọt vào diện xét, nên một migration chạm `rooms` mà khai CASCADE hợp lệ cho bảng KHÁC sẽ đỏ, và không có cơ chế miễn trừ.
+  evidence: Không phải giả định — đã xảy ra trong lúc làm vòng 2: nhánh builder viết `pgm.<bất kỳ>` kéo migration roles vào diện xét, file đó chứa `ON DELETE CASCADE` đúng đắn cho `user_identities`, và gate đỏ trên một file nó không có thẩm quyền phán. Lần đó sửa được bằng cách thu hẹp discovery, nhưng cái lớp thì còn: migration tiếp theo vừa chạm `rooms` vừa khai CASCADE cho một bảng khác sẽ gặp lại, và người gặp sẽ nới luật chứ không tranh luận với nó. `tests/gates/audit-append-only.test.ts` đã có khuôn miễn trừ THEO CÂU LỆNH kèm lý do viết tay và kiểm rằng câu lệnh được miễn vẫn còn nguyên văn — đó là hình dạng cần chép sang. Hoãn vì dựng cơ chế miễn trừ là việc cắt ngang, đáng làm một lần cho cả hai gate.
+  status: CHƯA CÓ CHỦ (2026-09-12, review vòng 2 của spec 2.1).
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-1-tao-phong-hoc.md`
+  summary: `rooms.updated_at` có `DEFAULT now()` và không gì duy trì nó — không trigger, không phương thức cập nhật trên port.
+  evidence: Cột tồn tại và sẽ sai ngay lần đổi trạng thái đầu tiên. `RoomPort` không có phương thức nào cập nhật phòng (có chủ đích — Epic 2 cấm đường xoá cứng và giao thức đóng phòng thuộc Story 4.8), còn quyền `UPDATE` cấp cho `stuwith_api` tồn tại chính là để dành cho story đó. Nên tới 4.8 sẽ có người viết `UPDATE rooms SET status = ...` và `updated_at` sẽ đứng yên ở thời điểm tạo, trừ khi có trigger hoặc câu lệnh tự set. Hoãn được vì hôm nay chưa có đường nào cập nhật một phòng, nên chưa có cách nào làm nó sai. Người nhận Story 4.8: đây là việc của bạn.
+  status: CHƯA CÓ CHỦ (2026-09-12, review vòng 2 của spec 2.1).
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-1-tao-phong-hoc.md`
+  summary: Tên phòng gồm toàn ký tự zero-width (U+200B, U+FEFF) qua được cả `trim()` lẫn CHECK `rooms_name_not_blank`.
+  evidence: `parseCreateRoomRequest` cắt khoảng trắng bằng `String.prototype.trim`, và `btrim` phía Postgres cũng vậy — cả hai đều không coi zero-width là khoảng trắng. Kết quả là một phòng lưu được với cái tên hiển thị ra là trống rỗng, trên một bảng không role nào xoá được. Chưa cấp bách: phải cố tình mới làm được, và hậu quả là một phòng xấu chứ không phải một lỗ bảo mật. Hoãn vì nó là một quyết định hợp đồng (chuẩn hoá Unicode tới đâu là đủ — NFKC? chỉ lọc zero-width?) chứ không phải một dòng sửa, và nó nên được quyết cùng lúc với mục UTF-16 vs `char_length` đã hoãn ở trên: cả hai đều là "chuỗi người dùng nhập nghĩa là gì" và cả hai đều chạm cùng hai chỗ đo độ dài.
+  status: CHƯA CÓ CHỦ (2026-09-12, review vòng 2 của spec 2.1).
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-1-tao-phong-hoc.md`
+  summary: Màn tạo phòng trả lời 403/404/409 và 503-kèm-`Retry-After` bằng nhánh mặc định "thử lại sau ít phút".
+  evidence: `createRoomOutcomeFor` phân nhánh tường minh cho 400, 401, 413, 415, 429 và gộp phần còn lại vào `default`. Với 403/404/409 câu đó nói sai theo hướng mời người ta bấm lại một nút không bao giờ chạy được; với 503 thì máy chủ CÓ nói bao lâu và màn hình vứt con số đi, để nút gửi sống và mọi lần thử đều rơi vào trong cửa sổ đã được báo trước — đúng lớp lỗi `Retry-After` của Epic 1, chỉ khác status. Hoãn vì `apps/api` hôm nay không phát sinh status nào trong số đó cho route này (`RoomsController` chỉ có `@Post`, không rate limit, không kiểm quyền theo phòng), nên đây là chuẩn bị cho tương lai chứ chưa phải lỗi đang chạy; và 409 sẽ có nghĩa thật ở Story 2.2, nơi giữ chỗ nguyên tử mới sinh ra xung đột. Sửa cùng lúc với 2.2 thì rẻ hơn và có cách kiểm chứng thật.
+  status: CHƯA CÓ CHỦ (2026-09-12, review vòng 2 của spec 2.1).
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-1-tao-phong-hoc.md`
+  summary: `stripComments` trong hai gate xoá MỌI dòng mở đầu bằng `#`, kể cả khi đó không phải comment.
+  evidence: Luật `^[ \t]*#.*$` có mặt để bỏ comment của shell và YAML, nhưng nó không biết ngữ cảnh: một dòng YAML bắt đầu bằng `#` sau khi thụt lề vẫn là comment, còn một trường private của TypeScript (`#name`) hoặc một dòng trong block scalar của YAML thì không. Vòng 2 vừa mở rộng `SCANNED_EXTENSIONS` sang `.sh`/`.psql`, nên số dòng đi qua luật này tăng lên. Rủi ro thật nhưng hẹp: một câu lệnh xoá phòng phải nằm đúng ở một dòng mở đầu bằng `#` mới thoát được, mà một câu lệnh như vậy thì gần như chắc chắn đang bị comment thật. Hoãn vì sửa đúng cần một trình phân tích theo từng loại file, và cùng hàm này đang được ba gate dùng chung.
+  status: CHƯA CÓ CHỦ (2026-09-12, review vòng 2 của spec 2.1).

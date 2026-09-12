@@ -1,4 +1,5 @@
 import { expect, type Page } from '@playwright/test';
+import type { UserPlan } from '@stuwith/contracts';
 import { FAKE_API_BASE_URL } from '../../../playwright.config';
 
 /**
@@ -36,12 +37,32 @@ export interface Scenario {
    * Story 2.1. Which plan the signed-in person is on, which is the ONE input to a
    * room's participant cap.
    *
-   * A plain `string`, spelled by the spec, for the reason the route constants above
-   * are spelled by hand: a test that imports the constant it is checking cannot
-   * notice the constant changing under the product. Omitted means the free plan,
-   * which is what every existing case runs on.
+   * `UserPlan`, from the contract — NOT the plain `string` this was first written
+   * as. The reason the route constants above are spelled by hand does not transfer:
+   * a route is a constant this suite is CHECKING, so importing it would make the
+   * check circular, while a plan is an argument this suite SENDS. Typed as `string`
+   * it took `'campus_plus'` silently, and the first thing that noticed was
+   * `roomSchema.parse` throwing inside an async handler two hops away. Omitted means
+   * the free plan, which is what every existing case runs on.
    */
-  readonly plan?: string;
+  readonly plan?: UserPlan;
+  /**
+   * Story 2.1. What `POST /v1/rooms` answers, so a spec can drive the screen's
+   * REFUSALS and not only its happy path.
+   *
+   * Every non-201 branch of the submit handler was unreachable in a browser while
+   * this did not exist: the fake could only answer 201, 400 (a body the real parser
+   * rejects) or 401 (signed out), so `createRoomOutcomeFor`'s 413, 415, 429 and
+   * `default` arms — five of its six outcomes — were pinned by
+   * `renderToStaticMarkup` alone, which cannot press a button. Deleting
+   * `setNotice(outcome.notice)` from `page.tsx` left every suite green.
+   *
+   * `retryAfterSeconds` rides along because a 429 without `Retry-After` is a
+   * different screen from a 429 with one, and the difference is the whole point of
+   * the countdown.
+   */
+  readonly roomsStatus?: number;
+  readonly roomsRetryAfterSeconds?: number;
 }
 
 export async function scenario(page: Page, state: Scenario): Promise<void> {

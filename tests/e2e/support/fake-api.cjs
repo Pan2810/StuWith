@@ -36,9 +36,14 @@ const {
   AUTH_DATE_OF_BIRTH_PATH,
   AUTH_REFRESH_PATH,
   BROWSER_READABLE_RESPONSE_HEADERS,
+  CORS_ALLOWED_METHODS,
+  CORS_ALLOWED_REQUEST_HEADERS,
+  CORS_ALLOW_CREDENTIALS,
   DATE_OF_BIRTH_FIELD,
   DEFAULT_USER_PLAN,
   PLAN_PARTICIPANT_LIMITS,
+  USER_PLANS,
+  isUserPlan,
   REQUEST_ID_HEADER,
   ROOMS_PATH,
   SESSION_COOKIE_NAME,
@@ -130,9 +135,18 @@ function corsHeaders() {
     // Named, never `*`: the fetch spec rejects a wildcard whenever credentials are
     // included, so a wildcard here would fail closed and look like a mystery.
     'access-control-allow-origin': WEB_ORIGIN,
-    'access-control-allow-credentials': 'true',
-    'access-control-allow-methods': 'GET, POST, OPTIONS',
-    'access-control-allow-headers': `content-type, ${REQUEST_ID_HEADER}`,
+    /**
+     * All three from the contract, for the reason the expose line below records —
+     * this file had already learned it once and these three had not been converted.
+     *
+     * Story 2.1 declared a browser probe that would go red if `apps/api` dropped
+     * `credentials: true`. It could not: this literal `'true'` kept answering the
+     * browser correctly no matter what the real server did. A fake that is allowed
+     * to be right on its own is a fake that makes a green run mean nothing.
+     */
+    'access-control-allow-credentials': String(CORS_ALLOW_CREDENTIALS),
+    'access-control-allow-methods': CORS_ALLOWED_METHODS.join(', '),
+    'access-control-allow-headers': CORS_ALLOWED_REQUEST_HEADERS.join(', '),
     /**
      * The line this file was MISSING, and the reason the E2E suite could not see
      * the bug it was best placed to catch.
@@ -179,7 +193,42 @@ function readBody(req) {
   });
 }
 
-const server = http.createServer(async (req, res) => {
+/**
+ * Every request goes through here, so a throw inside the dispatch becomes a READABLE
+ * failure instead of a hung socket.
+ *
+ * `http.createServer(async …)` returns a promise nothing awaits: a throw inside it is
+ * an unhandled rejection, no response is ever written, and the browser sits on an
+ * open connection until Playwright's timeout fires. What the report then says is
+ * "waiting for locator to be visible" on whichever assertion came next — a sentence
+ * that points at the screen and not at this file.
+ *
+ * It is reachable with one typo. `scenario(page, { plan: 'campus_plus' })` puts an
+ * unknown plan into the state, `PLAN_PARTICIPANT_LIMITS[state.plan]` is `undefined`,
+ * and `roomSchema.parse` throws on `max_participants` — the schema doing exactly its
+ * job, at a point where nothing can tell anybody about it. A 500 whose body names the
+ * error is not a nicety here: this process is a TEST fixture, and the failure it
+ * hides is a failure in the test that called it.
+ *
+ * The status is 500 and the body is the error, deliberately: no fixture answer is
+ * ever the right one, so a spec that accidentally depends on this branch fails on the
+ * status as well as on the message.
+ */
+const server = http.createServer((req, res) => {
+  void dispatch(req, res).catch((error) => {
+    const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+    process.stderr.write(`fake-api: unhandled ${req.method} ${req.url} — ${detail}\n`);
+    if (res.headersSent) {
+      // A handler that threw AFTER writing a head cannot be given a status any more.
+      // Ending the response is still what keeps the browser from waiting for ever.
+      res.end();
+      return;
+    }
+    send(res, 500, { error: 'fake-api-loi', detail });
+  });
+});
+
+async function dispatch(req, res) {
   const url = new URL(req.url ?? '/', `http://127.0.0.1:${PORT}`);
 
   if (req.method === 'OPTIONS') {
@@ -211,7 +260,36 @@ const server = http.createServer(async (req, res) => {
       // browser. The CONTRACT's default, never a literal — three places have to
       // agree about which plan a new person is on.
       plan: next?.plan ?? DEFAULT_USER_PLAN,
+      /**
+       * Story 2.1, review round 2. What `POST /v1/rooms` answers.
+       *
+       * `201` is the default, so every existing spec is unchanged. A spec that sets
+       * something else drives the screen's REFUSAL branches, which were unreachable
+       * in a browser until this existed — `createRoomOutcomeFor` has six outcomes
+       * and five of them were pinned by `renderToStaticMarkup` alone.
+       */
+      roomsStatus: next?.roomsStatus ?? 201,
+      roomsRetryAfterSeconds: next?.roomsRetryAfterSeconds ?? null,
     };
+    /**
+     * Refused HERE, where the mistake is, rather than three hops later.
+     *
+     * An unknown plan is not a wrong answer from this fixture — it is a spec that
+     * asked for a plan the contract does not have. Left to travel, it reaches
+     * `PLAN_PARTICIPANT_LIMITS[plan]` as `undefined` and `roomSchema.parse` throws in
+     * a request handler; the wrapper around the dispatch turns that into a readable
+     * 500 rather than a hang, but the 500 arrives on `POST /v1/rooms` and names
+     * `max_participants`, which is two rooms away from the `scenario(...)` call that
+     * caused it. `isUserPlan` is the contract's own predicate — the one the review
+     * found nobody calling.
+     */
+    if (!isUserPlan(state.plan)) {
+      send(res, 400, {
+        error: 'goi-khong-hop-le',
+        detail: `unknown plan ${JSON.stringify(state.plan)} — expected one of ${USER_PLANS.join(', ')}`,
+      });
+      return;
+    }
     scenarios.set(id, state);
     // The session cookie is set here rather than by a login flow, because the login
     // flow belongs to `apps/api` and is tested there. What matters for the browser
@@ -318,6 +396,31 @@ const server = http.createServer(async (req, res) => {
       send(res, 400, { error: 'phong-khong-hop-le' });
       return;
     }
+    /**
+     * The scenario's refusal, AFTER the body has been judged by the real parser.
+     *
+     * Order matters and is not a detail: putting it first would let a spec asking
+     * for a 429 also pass a body the product would have refused, so the case would
+     * be green against a screen that never sent anything valid. A refusal here is
+     * the server declining a request it understood — which is the only shape the
+     * screen's `createRoomOutcomeFor` branches are about.
+     *
+     * `Retry-After` travels as a real header, so what the browser can READ of it is
+     * exercised too: the header is only visible to script because
+     * `BROWSER_READABLE_RESPONSE_HEADERS` puts it in `Access-Control-Expose-Headers`,
+     * and that is the exact seam `Retry-After` shipped broken through in Epic 1.
+     */
+    if (state.roomsStatus !== 201) {
+      send(
+        res,
+        state.roomsStatus,
+        { error: 'khong-tao-duoc-phong' },
+        state.roomsRetryAfterSeconds === null
+          ? {}
+          : { 'retry-after': String(state.roomsRetryAfterSeconds) },
+      );
+      return;
+    }
     const now = new Date().toISOString();
     send(
       res,
@@ -326,7 +429,10 @@ const server = http.createServer(async (req, res) => {
         id: randomUUID(),
         owner_user_id: baseUser().id,
         name: request.name,
-        description: request.description,
+        // The same `?? ''` bridge `rooms.service.ts` applies, for the same reason:
+        // optional on the wire, `NOT NULL` in the column. A fake that defaulted
+        // differently would let a body with no description pass here and fail there.
+        description: request.description ?? '',
         topic: request.topic,
         visibility: request.visibility,
         // The whole capacity decision, from the plan and from nowhere else. A
@@ -342,7 +448,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   send(res, 404, { error: 'khong-tim-thay' });
-});
+}
 
 server.listen(PORT, '127.0.0.1', () => {
   process.stdout.write(`fake-api listening on http://127.0.0.1:${PORT}\n`);

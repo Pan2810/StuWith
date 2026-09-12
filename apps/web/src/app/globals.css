@@ -557,13 +557,20 @@ a {
 
   Ngưỡng 48px là sàn cứng của `DESIGN.md § Components`, không có ngoại lệ cho điều
   khiển phụ. `padding` dọc nhỏ hơn nút vì `min-height` mới là thứ giữ sàn.
+
+  `padding` đi qua token, không viết số. Bản đầu viết `8px 15px`: `8px` đúng bằng
+  `--spacing-2` nên chỉ là cách viết vòng, còn `15px` KHÔNG nằm trên thang giãn cách
+  nào — nó là một con số không ai chọn, và không gate nào trong repo đọc được thang
+  này để nói ra điều đó. Nay là `--spacing-2 --spacing-4`; chiều ngang rộng thêm
+  đúng 1px, và ca 320px trong `tests/e2e/web/tao-phong.spec.ts` là thứ đo lại xem
+  1px đó có làm nhãn nào bị cắt không.
 */
 .choice {
   display: inline-flex;
   align-items: center;
   gap: var(--spacing-2);
   min-height: 48px;
-  padding: 8px 15px;
+  padding: var(--spacing-2) var(--spacing-4);
   border: 2px solid var(--border-ink);
   border-radius: var(--rounded-full);
   background: var(--surface-raised);

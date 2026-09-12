@@ -18,12 +18,19 @@ import { EN_MESSAGES } from './messages.en';
  *
  * Decided by a human on 2026-09-07 (ISO, because `07/09` is two dates in two
  * countries and this file is written in English), and decided on a MEASUREMENT
- * rather than a preference: the whole product contains exactly ONE string that needs a plural
- * (`countdown.retryIn`), five interpolation templates, and no locale-based routing.
- * A library brings a runtime, an ICU parser and a loading model to serve those
- * three facts, and it brings its own answer to the one question that matters here —
+ * rather than a preference: this catalogue holds 2 plural strings and 6
+ * interpolation templates, and the product does no locale-based routing. A library
+ * brings a runtime, an ICU parser and a loading model to serve those three facts,
+ * and it brings its own answer to the one question that matters here —
  * what happens when a translation is missing. Its answer is a fallback at runtime.
  * This file's answer is a type error:
+ *
+ * Those two counts are COUNTED, not remembered: rule 5 of
+ * `tests/gates/i18n-catalogue.test.ts` reads them out of this sentence and compares
+ * them with the catalogue below. The sentence said "exactly ONE string that needs a
+ * plural" for two stories after `createRoom.capacity` became the second one, which
+ * is what a measurement nothing measures turns into — the argument for this whole
+ * decision, quietly false.
  *
  * `MessageKey` is derived from the Vietnamese catalogue below, `Dictionary` is
  * `Record<MessageKey, string>`, and `DICTIONARIES` assigns the English catalogue to
@@ -77,9 +84,9 @@ const VI_MESSAGES = {
   'theme.applied.dark': 'Đang dùng giao diện tối.',
 
   /**
-   * The one plural in the product. Vietnamese has a single plural category, so both
-   * variants are the same sentence here; English needs the two, and
-   * `Intl.PluralRules` is what chooses between them.
+   * The FIRST of the product's two plurals — `createRoom.capacity` is the other.
+   * Vietnamese has a single plural category, so both variants are the same sentence
+   * here; English needs the two, and `Intl.PluralRules` is what chooses between them.
    */
   'countdown.retryIn.one': 'Thử lại sau {seconds} giây.',
   'countdown.retryIn.other': 'Thử lại sau {seconds} giây.',
@@ -237,7 +244,7 @@ export type NodeValues = Readonly<Record<string, ReactNode>>;
  * - `locale`, so a caller that needs `Intl` (a plural, a number, a date) asks the
  *   translator rather than re-deriving the answer;
  * - `plural`, which is `Intl.PluralRules` plus the `.one` / `.other` key
- *   convention, so the one plural in the product is not open-coded at its call site;
+ *   convention, so a plural is never open-coded at its call site;
  * - `nodes`, for the sentences that contain MARKUP — a name in `<strong>`, a
  *   provider name that has to carry `lang="en"` inside a Vietnamese sentence. The
  *   alternative is splitting a sentence into fragments around the markup, which

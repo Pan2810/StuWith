@@ -15,6 +15,8 @@ import {
   currentUserSchema,
   type SignInOutcome,
   SESSION_REFRESHED_STATUS,
+  CORS_ALLOWED_METHODS,
+  CORS_ALLOWED_REQUEST_HEADERS,
 } from '@stuwith/contracts';
 import { RequestMethod } from '@nestjs/common';
 // The metadata KEYS Nest itself writes with. They happen to be `'path'` and
@@ -866,6 +868,55 @@ describe('CORS — the web client is on another origin', () => {
     expect(response.status).toBeLessThan(300);
     expect(response.headers.get('access-control-allow-origin')).toBe(harness.webBaseUrl);
     expect(response.headers.get('access-control-allow-credentials')).toBe('true');
+  });
+
+  it('advertises exactly the methods and request headers the contract declares', async () => {
+    /**
+     * The other two thirds of the preflight, EXECUTED.
+     *
+     * `tests/gates/cors-policy.test.ts` holds `methods` and `allowedHeaders` by
+     * matching the text of `http-setup.ts`, and a substring match is not a lock:
+     * `methods: [...CORS_ALLOWED_METHODS].filter((m) => m !== 'POST')` satisfies that
+     * regex exactly, and the deployed API then stops advertising `POST` cross-origin
+     * while `typecheck`, `test:unit`, `test:gates`, `test:contract` and Playwright
+     * all stay green — the browser suite talks to `tests/e2e/support/fake-api.cjs`,
+     * whose own list is unchanged. Every room creation from the browser would die at
+     * the preflight with nothing red anywhere.
+     *
+     * So this reads what the server actually answered. The header is a
+     * comma-separated list whose ORDER and spacing are the framework's business, not
+     * ours, so it is compared as a set of upper-cased tokens.
+     */
+    const response = await harness.request('/v1/auth/logout', {
+      method: 'OPTIONS',
+      headers: {
+        origin: harness.webBaseUrl,
+        'access-control-request-method': 'POST',
+        'access-control-request-headers': 'content-type',
+      },
+    });
+
+    const tokens = (header: string | null): readonly string[] =>
+      (header ?? '')
+        .split(',')
+        .map((value) => value.trim().toUpperCase())
+        .filter((value) => value.length > 0)
+        .sort();
+
+    expect(tokens(response.headers.get('access-control-allow-methods'))).toEqual(
+      [...CORS_ALLOWED_METHODS].map((method) => method.toUpperCase()).sort(),
+    );
+    expect(tokens(response.headers.get('access-control-allow-headers'))).toEqual(
+      [...CORS_ALLOWED_REQUEST_HEADERS].map((header) => header.toUpperCase()).sort(),
+    );
+  });
+
+  it('never advertises a method that could remove something, on a real response', () => {
+    // AC5 from the browser's side: `no-hard-delete-rooms.test.ts` reads source text
+    // and `cors-policy.test.ts` reads the constant, but what a browser is TOLD it may
+    // do is this header. A `DELETE` added to the contract would pass both of those
+    // and arrive here.
+    expect([...CORS_ALLOWED_METHODS].map((method) => method.toUpperCase())).not.toContain('DELETE');
   });
 
   it('does NOT reflect a foreign origin, and never answers with a wildcard', async () => {

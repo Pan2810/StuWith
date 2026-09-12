@@ -168,8 +168,23 @@ export default function TaoPhongPage() {
         notice={notice}
         submitting={submitting}
         onRetry={() => void load()}
-        // The rate-limit wait is over: drop it so the retry button works again.
+        // The rate-limit wait on the PROFILE read is over: drop it so the retry
+        // button works again.
         onWaitFinished={() => setState({ kind: 'unavailable', retryAfterSeconds: null })}
+        /*
+          The wait on a SUBMIT is over. The NOTICE goes, not just its clock: leaving
+          "bạn đã thử quá nhiều lần, hãy chờ một lát" on screen beside a button that
+          now works says the opposite of what the button does, and there is no clock
+          left to explain the sentence. Dropping only `retryAfterSeconds` was the
+          first version and review round 2 caught it.
+
+          The screen STATE is untouched, which is the whole reason this is not
+          `onWaitFinished`: that one moves the state, correct on the `unavailable`
+          branch and wrong here — the form would vanish mid-typing and take whatever
+          had been entered with it. `tao-phong.spec.ts` holds the difference in a
+          browser, because the two produce identical markup.
+        */
+        onSubmitWaitFinished={() => setNotice(null)}
         onSubmit={(event) => void submit(event)}
         // Back to an empty form. The state goes to `ready` directly rather than
         // through `load()`: the session was live one round trip ago, and re-reading

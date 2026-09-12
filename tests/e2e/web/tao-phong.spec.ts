@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { FAKE_API_BASE_URL } from '../../../playwright.config';
 import { CREATE_ROOM_PATHNAME, HOME_PATHNAME, scenario } from '../support/scenario';
 
@@ -50,9 +50,31 @@ import { CREATE_ROOM_PATHNAME, HOME_PATHNAME, scenario } from '../support/scenar
  *    `http-setup.test.ts` red — so the real server's CORS posture is already pinned,
  *    by a suite that reads the configured options rather than by anything here.
  *
- * What NEITHER covers is the two configurations agreeing with each other; they are
- * kept in step by reading. `deferred-work.md` records that with the measurement.
+ * What neither covered, until review round 1 closed it, was the two configurations
+ * AGREEING with each other — each end had a test and nothing compared them, which is
+ * the same posture `Retry-After` shipped broken in. They now read the CORS answer out
+ * of one place: `CORS_ALLOW_CREDENTIALS`, `CORS_ALLOWED_METHODS` and
+ * `CORS_ALLOWED_REQUEST_HEADERS` in `packages/contracts/src/http.ts`, spread by both
+ * `apps/api/src/http-setup.ts` and the fake, with `tests/gates/cors-policy.test.ts`
+ * reading both files. So the product-half mutation named above is now one level down
+ * — deleting `credentials` from `http-setup.ts` turns that gate red, not only the two
+ * examples in `http-setup.test.ts`.
  */
+/**
+ * A complete, VALID form — so a case about what the server answers is not also a
+ * case about the pre-flight refusing to send anything.
+ *
+ * Only the refusal cases added in review round 2 use it; the older cases spell the
+ * four fields out where the reader can see them, because what they are about IS the
+ * body that leaves the browser.
+ */
+async function fillValidForm(page: Page): Promise<void> {
+  await page.getByLabel('Tên phòng').fill('Ôn thi cuối kỳ');
+  await page.getByLabel('Mô tả (không bắt buộc)').fill('Học nhóm buổi tối.');
+  await page.getByRole('radio', { name: 'Ôn thi' }).check();
+  await page.getByRole('radio', { name: 'Ai cũng có thể tìm thấy' }).check();
+}
+
 test.describe('tạo phòng', () => {
   test('the home page leads here, so the screen is reachable without typing a URL', async ({
     page,
@@ -278,6 +300,85 @@ test.describe('tạo phòng', () => {
     expect(new URL(page.url()).pathname).toBe(CREATE_ROOM_PATHNAME);
   });
 
+  /**
+   * The screen's REFUSAL surface, in a browser.
+   *
+   * Review round 2 measured what these close: `fake-api.cjs` could only answer 201,
+   * 400 or 401 for `POST /v1/rooms`, so five of `createRoomOutcomeFor`'s six
+   * outcomes were pinned by `renderToStaticMarkup` alone — which runs the component
+   * body and no effect, and therefore cannot press a button. Deleting
+   * `setNotice(outcome.notice)` from `page.tsx` left `typecheck`, `test:unit`,
+   * `test:gates` and all nine cases in this file green, while in production a
+   * refusal would leave a button press with no visible effect at all.
+   */
+  test('a refusal from the server reaches the screen as a sentence', async ({ page }) => {
+    await scenario(page, { signedIn: true, roomsStatus: 500 });
+    await page.goto(CREATE_ROOM_PATHNAME);
+
+    await fillValidForm(page);
+    await page.getByRole('button', { name: 'Tạo phòng' }).click();
+
+    await expect(page.getByText('Chưa tạo được phòng. Hãy thử lại sau ít phút.')).toBeVisible();
+    // Still a form, not a confirmation: an unrecognised status is "we do not know
+    // that it worked", never "it worked".
+    await expect(page.getByLabel('Tên phòng')).toBeVisible();
+    await expect(page.getByText('Đã tạo phòng')).toHaveCount(0);
+  });
+
+  test('a 429 on submit runs a real clock and takes the send button away', async ({ page }) => {
+    /**
+     * The defect that shipped and survived a review round: the remaining seconds
+     * were drawn as a STATIC sentence beside a live button, so the number never
+     * moved and every press during the lockout spent another attempt. The unit test
+     * added with the fix can only see the first frame; this watches the number
+     * actually change, which is the half `renderToStaticMarkup` can never show.
+     */
+    await scenario(page, { signedIn: true, roomsStatus: 429, roomsRetryAfterSeconds: 4 });
+    await page.goto(CREATE_ROOM_PATHNAME);
+
+    await fillValidForm(page);
+    await page.getByRole('button', { name: 'Tạo phòng' }).click();
+
+    await expect(page.getByText('Bạn đã thử quá nhiều lần. Hãy chờ một lát rồi thử lại.')).toBeVisible();
+    const submit = page.getByRole('button', { name: 'Tạo phòng' });
+    await expect(submit).toBeDisabled();
+
+    // The clock MOVES. Two readings of the same live region, and the second is a
+    // smaller number than the first — a frozen clock passes neither.
+    const clock = page.locator('.notice-countdown');
+    await expect(clock).toHaveText(/Thử lại sau 4 giây\./);
+    await expect(clock).toHaveText(/Thử lại sau [123] giây\./, { timeout: 3_000 });
+  });
+
+  test('when the wait ends the form is still there, with everything typed still in it', async ({
+    page,
+  }) => {
+    /**
+     * Which callback the submit-side countdown was given, observed rather than
+     * documented. `onSubmitWaitFinished` clears the notice's clock and nothing else;
+     * `onWaitFinished` — the one the `unavailable` branch uses — moves the screen
+     * state. Swapping them is a one-token edit that produces byte-identical markup,
+     * so every `renderToStaticMarkup` example stays green while a `429` arriving
+     * mid-typing would, at zero, replace the form and discard what was entered.
+     */
+    await scenario(page, { signedIn: true, roomsStatus: 429, roomsRetryAfterSeconds: 2 });
+    await page.goto(CREATE_ROOM_PATHNAME);
+
+    await fillValidForm(page);
+    await page.getByRole('button', { name: 'Tạo phòng' }).click();
+    await expect(page.getByRole('button', { name: 'Tạo phòng' })).toBeDisabled();
+
+    // The wait runs out. The button comes back, the form is still a form, and the
+    // name is still the one that was typed.
+    await expect(page.getByRole('button', { name: 'Tạo phòng' })).toBeEnabled({ timeout: 6_000 });
+    await expect(page.getByLabel('Tên phòng')).toHaveValue('Ôn thi cuối kỳ');
+    // And the lockout sentence is gone — leaving "you have tried too many times"
+    // beside a live button says the opposite of what the button now does.
+    await expect(
+      page.getByText('Bạn đã thử quá nhiều lần. Hãy chờ một lát rồi thử lại.'),
+    ).toHaveCount(0);
+  });
+
   test('every label is readable at 320px, in both locales, with nothing cut off', async ({
     browser,
   }) => {
@@ -290,6 +391,11 @@ test.describe('tạo phòng', () => {
      * in both. `scrollWidth > clientWidth` is what "cut off" actually means for a
      * text node; and the page itself must not scroll sideways either.
      */
+    const HEADING_AT: Readonly<Record<string, string>> = {
+      'vi-VN': 'Tạo phòng học',
+      'en-GB': 'Create a study room',
+    };
+
     for (const locale of ['vi-VN', 'en-GB'] as const) {
       const context = await browser.newContext({ locale, viewport: { width: 320, height: 720 } });
       const page = await context.newPage();
@@ -297,6 +403,19 @@ test.describe('tạo phòng', () => {
         await scenario(page, { signedIn: true });
         await page.goto(CREATE_ROOM_PATHNAME);
         await expect(page.locator('form')).toBeVisible();
+
+        /**
+         * The screen really IS in this language before a single width is measured.
+         *
+         * `newContext({ locale })` sets `Accept-Language`; it does not make the
+         * product honour it. Without this line the English pass rendered whatever
+         * `resolveLocale` happened to answer, and a regression that pinned every
+         * request to Vietnamese would leave the loop measuring the same screen twice
+         * while the test name promised both — the reflow risk it exists to catch
+         * sits in the LONGER language, so the failure would be silent in exactly the
+         * direction that matters.
+         */
+        await expect(page.getByRole('heading', { name: HEADING_AT[locale] })).toBeVisible();
 
         const overflow = await page.evaluate(() => {
           const cut: string[] = [];

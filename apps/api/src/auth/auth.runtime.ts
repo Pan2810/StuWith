@@ -43,9 +43,16 @@ export interface AuthRuntime {
    * connection budget, and give a test two places to replace and one to forget.
    *
    * `RoomsModule` consumes it through {@link RoomsRuntime}, a narrow structural
-   * type that names only `rooms` and `clock` — the same arrangement
+   * type that names `rooms` and NOTHING else — the same arrangement
    * `SessionAuthenticatorRuntime` uses, so the rooms module cannot quietly grow a
    * reason to touch the provider registry or the rate-limit store.
+   *
+   * Not `clock` either, and that absence is load-bearing rather than an oversight:
+   * a room is stamped with the instant the caller's SESSION was resolved at, so a
+   * `ClockPort` in that object would be a second reading of the wall clock inside a
+   * request that has already decided what "now" is. `rooms.runtime.ts` carries the
+   * argument; an earlier version of this sentence said the type names `clock` too,
+   * which was the opposite of what the file it points at says.
    */
   readonly rooms: RoomPort;
   readonly audit: AuditPort;
