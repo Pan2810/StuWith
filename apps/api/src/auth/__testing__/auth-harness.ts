@@ -8,9 +8,16 @@ import {
   InMemoryIdentityAdapter,
   InMemoryRateLimitAdapter,
   InMemoryRoomAdapter,
+  InMemoryRoomReservationAdapter,
   InMemorySessionAdapter,
 } from '@stuwith/db';
-import { FixedClock, type ClockPort, type IdentityPort, type RateLimitPort } from '@stuwith/domain';
+import {
+  FixedClock,
+  type ClockPort,
+  type IdentityPort,
+  type RateLimitPort,
+  type RoomReservationPort,
+} from '@stuwith/domain';
 import { generateKeyPairSync } from 'node:crypto';
 import { Logger as PinoLogger } from 'nestjs-pino';
 import net from 'node:net';
@@ -225,6 +232,17 @@ export interface HarnessOptions {
   readonly wrapIdentity?: (base: IdentityPort) => IdentityPort;
 
   /**
+   * Wrap the in-memory reservation adapter, the way `wrapIdentity` wraps identity.
+   *
+   * Story 2.2's matrix has a "store lỗi giữa chừng" row — the pool dies inside the
+   * reservation — and the only honest way to reach it over real HTTP is a port
+   * that throws on the one call under test while the login that had to happen
+   * first still happened for real. `harness.reservations` still points at the
+   * wrapped adapter, so the assertion "nothing was written" reads the same store.
+   */
+  readonly wrapReservations?: (base: RoomReservationPort) => RoomReservationPort;
+
+  /**
    * Extra controllers to mount on the real application.
    *
    * Story 1.5 needs it: no route in this product takes money IN yet (Epic 3 owns
@@ -262,6 +280,11 @@ export interface AuthHarness {
    * and a count is the only assertion that says it.
    */
   readonly rooms: InMemoryRoomAdapter;
+  /**
+   * Story 2.2's store. Exposed so the flow suite can count rows for a room —
+   * "the seat count did not move" is the assertion behind three matrix rows.
+   */
+  readonly reservations: InMemoryRoomReservationAdapter;
   readonly sessions: InMemorySessionAdapter;
   readonly audit: InMemoryAuditAdapter;
   /**
@@ -385,6 +408,9 @@ export async function createAuthHarness(options: HarnessOptions = {}): Promise<A
 
   const identity = new InMemoryIdentityAdapter();
   const rooms = new InMemoryRoomAdapter();
+  // Reads rooms from the SAME in-memory store the create endpoint writes, so a
+  // room created over HTTP in one example is the room a token is asked for next.
+  const reservations = new InMemoryRoomReservationAdapter(rooms);
   const sessions = new InMemorySessionAdapter();
   const audit = new InMemoryAuditAdapter();
   const clock = options.clock ?? new FixedClock(new Date('2026-09-04T09:00:00.000Z'));
@@ -410,6 +436,10 @@ export async function createAuthHarness(options: HarnessOptions = {}): Promise<A
         // not override, so the login that has to happen first still happens.
         identity: options.wrapIdentity === undefined ? identity : options.wrapIdentity(identity),
         rooms,
+        reservations:
+          options.wrapReservations === undefined
+            ? reservations
+            : options.wrapReservations(reservations),
         sessions,
         audit,
         clock,
@@ -525,6 +555,7 @@ export async function createAuthHarness(options: HarnessOptions = {}): Promise<A
     fake,
     identity,
     rooms,
+    reservations,
     sessions,
     audit,
     clock,

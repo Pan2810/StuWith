@@ -60,6 +60,10 @@ export class InMemoryIdentityAdapter implements IdentityPort {
       // A brand-new user must start here in BOTH adapters, or the contract suite's
       // "a new profile is incomplete" example would only ever be true in one.
       dateOfBirth: null,
+      // Not banned. Nobody in the product writes a ban until Story 4.7, so this
+      // store has no method that sets one either; a flow test that needs a banned
+      // person wraps the port (`wrapIdentity`), exactly as it overrides a plan.
+      bannedAt: null,
       createdAt: new Date(now.getTime()),
       updatedAt: new Date(now.getTime()),
     };

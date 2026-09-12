@@ -71,6 +71,28 @@ export class InMemoryRoomAdapter implements RoomPort {
     return this.rooms.size;
   }
 
+  /**
+   * Test affordance: plant a status the product cannot write yet.
+   *
+   * `RoomPort` has no method that moves a room's status — Story 4.8 owns the close
+   * protocol — and this adapter must not grow one for the flow suite's convenience.
+   * But Story 2.2's matrix has a "phòng đang/đã đóng" row, and a row nothing can
+   * reach is a row nothing tests. This is the in-memory counterpart of the PG
+   * harness inserting a `closed` room as the OWNER: a fixture standing in for a
+   * write the product does not have, not a port method. `apps/api` never sees it,
+   * because `RoomsRuntime` names `RoomPort` and this is not on it.
+   *
+   * @throws when the room does not exist — a fixture that silently planted nothing
+   *   would leave the example testing an open room.
+   */
+  plantStatus(roomId: string, status: Room['status']): void {
+    const room = this.rooms.get(roomId);
+    if (room === undefined) {
+      throw new Error(`plantStatus: no room ${roomId} to plant a status on`);
+    }
+    this.rooms.set(roomId, { ...room, status });
+  }
+
   clear(): void {
     this.rooms.clear();
     this.counter = 0;

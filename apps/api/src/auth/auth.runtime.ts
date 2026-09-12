@@ -3,6 +3,7 @@ import {
   PgAuditAdapter,
   PgIdentityAdapter,
   PgRoomAdapter,
+  PgRoomReservationAdapter,
   PgSessionAdapter,
   ValkeyRateLimitAdapter,
   createPool,
@@ -14,6 +15,7 @@ import type {
   IdentityPort,
   RateLimitPort,
   RoomPort,
+  RoomReservationPort,
   SessionPort,
 } from '@stuwith/domain';
 import { createProviderRegistry, type ProviderRegistry } from './providers/registry';
@@ -55,6 +57,14 @@ export interface AuthRuntime {
    * which was the opposite of what the file it points at says.
    */
   readonly rooms: RoomPort;
+  /**
+   * Story 2.2's store, beside `rooms` for the same reason `rooms` is here: ONE
+   * `pg` pool for the process. The name of this interface is now TWO stories
+   * behind what it holds; the rename is a pure-diff change and `deferred-work.md`
+   * still owns it — this story does not do it, on purpose, because a rename in the
+   * same diff as a new table is a diff nobody can review for either.
+   */
+  readonly reservations: RoomReservationPort;
   readonly audit: AuditPort;
   readonly clock: ClockPort;
   readonly registry: ProviderRegistry;
@@ -159,6 +169,7 @@ export function createProductionRuntime(
     },
     identity: new PgIdentityAdapter(pool),
     rooms: new PgRoomAdapter(pool),
+    reservations: new PgRoomReservationAdapter(pool),
     sessions: new PgSessionAdapter(pool),
     audit: new PgAuditAdapter(pool),
     rateLimit: new ValkeyRateLimitAdapter(valkey),

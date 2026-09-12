@@ -2,27 +2,37 @@ import { Inject, Injectable } from '@nestjs/common';
 import {
   CREATE_ROOM_INVALID_MESSAGE,
   PLAN_PARTICIPANT_LIMITS,
+  ROOM_ADMISSION_FORBIDDEN_MESSAGE,
+  ROOM_CLOSED_MESSAGE,
+  ROOM_FULL_MESSAGE,
+  ROOM_NOT_FOUND_MESSAGE,
+  ROOM_TOKEN_TTL_SECONDS,
   UNAUTHENTICATED_MESSAGE,
+  isRoomId,
   makeError,
   parseCreateRoomRequest,
   roomSchema,
+  roomTokenResponseSchema,
 } from '@stuwith/contracts';
-import type { Room } from '@stuwith/domain';
+import { fixedAt, roomAdmission, type Room } from '@stuwith/domain';
 import { SESSION_AUTHENTICATOR, SessionAuthenticator } from '../auth/session-authenticator';
+import { APP_CONFIG, type AppConfig } from '../config.token';
+import { recordRoomTokenIssued } from './audit';
+import { mintRoomToken } from './room-token';
 import { ROOMS_RUNTIME, type RoomsRuntime } from './rooms.runtime';
 
 /**
- * Creating a room, with no Fastify in it.
+ * Creating a room and issuing a token for one, with no Fastify in it.
  *
  * Same arrangement as `AuthService`: every method returns a DESCRIPTION of a
  * response and the controller turns it into a reply. That is what lets the flow
- * test drive every row of the story's I/O matrix through real HTTP without a
+ * tests drive every row of both stories' I/O matrices through real HTTP without a
  * browser, and it keeps this file readable as a sequence of decisions.
  *
- * The outcome type is smaller than `AuthOutcome` because this endpoint answers
+ * The outcome type is smaller than `AuthOutcome` because these endpoints answer
  * only JSON — no redirect, no `Set-Cookie`, no empty body. Reusing the auth one
- * would give three branches to a route that has one, and every reader would have to
- * work out which two never happen.
+ * would give three branches to routes that have one, and every reader would have
+ * to work out which two never happen.
  */
 export interface RoomOutcome {
   readonly status: number;
@@ -32,6 +42,8 @@ export interface RoomOutcome {
 @Injectable()
 export class RoomsService {
   private readonly rooms: RoomsRuntime['rooms'];
+  private readonly reservations: RoomsRuntime['reservations'];
+  private readonly audit: RoomsRuntime['audit'];
 
   constructor(
     @Inject(ROOMS_RUNTIME) runtime: RoomsRuntime,
@@ -42,11 +54,21 @@ export class RoomsService {
      * A second way of answering "who is calling" is the defect
      * `SessionAuthenticator` was extracted to prevent. Here it would mean the
      * participant cap could come from one person's plan while the room came out
-     * owned by another.
+     * owned by another — or a token could be issued to one person against
+     * another's ban.
      */
     @Inject(SESSION_AUTHENTICATOR) private readonly authenticator: SessionAuthenticator,
+    /**
+     * The already-validated environment (Story 2.2). Three values are read from
+     * it, all LiveKit's: the key that becomes `iss`, the secret that signs, and the
+     * URL the client is told to present the token to. The secret is read HERE and
+     * handed to `mintRoomToken`; it is never put on an outcome.
+     */
+    @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {
     this.rooms = runtime.rooms;
+    this.reservations = runtime.reservations;
+    this.audit = runtime.audit;
   }
 
   /**
@@ -81,6 +103,8 @@ export class RoomsService {
    * No audit row and no rate limit. Both are outside this story's ACs and both are
    * recorded in `deferred-work.md` with the evidence; neither is promised here,
    * because a docblock that says "audit arrives later" is a promise nothing keeps.
+   * The audit port this service now holds is for `issueRoomToken` and does not
+   * change that.
    */
   async createRoom(cookieHeader: unknown, body: unknown): Promise<RoomOutcome> {
     const caller = await this.authenticator.authenticate(cookieHeader);
@@ -120,6 +144,138 @@ export class RoomsService {
 
     return { status: 201, body: toRoomBody(room) };
   }
+
+  /**
+   * `POST /v1/rooms/{roomId}/token` — Story 2.2, the one admission decision (AD-9).
+   *
+   * ## Four conditions, one method, in this order
+   *
+   * 1. **Who is calling.** No session is `401`, before anything else is looked at:
+   *    the room store is not touched, the path parameter is not even read. A
+   *    signed-out caller learns nothing about which rooms exist.
+   * 2. **May this person enter rooms at all.** `roomAdmission` in
+   *    `packages/domain` — the ONE reading of `bannedAt`, and the one place a
+   *    future age rule goes. `banned` is `403`, and it is answered BEFORE the room
+   *    is looked at, so a banned person cannot use this endpoint to probe which
+   *    room ids exist. `underage` is declared and unreachable today (PRD US-0.5
+   *    AC3: no floor on entering a room); it maps to `403` too, so the day a rule
+   *    arrives the mapping is already here.
+   * 3. **Is this a room, and is there a seat.** ONE call, `reserveSeat`, answers
+   *    both inside one transaction with the room's row locked — `no_room` and
+   *    `closed` come from the locked row, `full` from a count made under the lock,
+   *    and `reserved` means a row exists. There is deliberately no `findRoomById`
+   *    before it: a read outside the transaction is a hint, not a gate (AD-22),
+   *    and everything it could say the transaction says better. A path parameter
+   *    that is not a room id at all is `404` with the SAME body as "no such room",
+   *    decided by the contract's own `isRoomId`, so the error does not publish the
+   *    id format.
+   * 4. **Mint, then record.** The token's `exp` is the RESERVATION's `expiresAt`,
+   *    not `now + TTL` computed again here: one arithmetic, done once, in the
+   *    adapter, so the seat and the token cannot disagree by a millisecond. The
+   *    audit row is written after the token is minted and before the outcome is
+   *    returned — an issuance that failed to record is a `500` without a token
+   *    reaching anybody, which is the fail-closed direction.
+   *
+   * ## Refusals return, faults throw
+   *
+   * Every branch above that says no is a RETURN. A store that cannot answer — the
+   * pool is gone, the transaction deadlocked — throws out of here, becomes the
+   * `500` it is, and reserves nothing and records nothing. The matrix row "Store
+   * lỗi giữa chừng" is that path, and there is no `try/catch` that could turn it
+   * into a `409` telling somebody the room is full when we are broken.
+   *
+   * ## The same person asking twice
+   *
+   * `reserveSeat` renews rather than doubles, so a pre-join screen may call this
+   * on every device change and a double-clicked "Vào phòng" eats one seat. The
+   * response is a fresh token either way; the audit row carries the same
+   * `reservation_id` both times, which is how a renewal reads in the trail.
+   */
+  async issueRoomToken(
+    cookieHeader: unknown,
+    params: unknown,
+    requestId: string,
+  ): Promise<RoomOutcome> {
+    const caller = await this.authenticator.authenticate(cookieHeader);
+    if (caller === null) {
+      return { status: 401, body: makeError('unauthenticated', UNAUTHENTICATED_MESSAGE) };
+    }
+    const { user, at: now } = caller;
+
+    // The person half of the decision, through the domain. `fixedAt(now)` hands
+    // the rule the request's ONE instant, exactly as `MoneyGateGuard` does.
+    if (roomAdmission(user, fixedAt(now)) !== 'admitted') {
+      return { status: 403, body: makeError('forbidden', ROOM_ADMISSION_FORBIDDEN_MESSAGE) };
+    }
+
+    const roomId = readRoomIdParam(params);
+    if (roomId === null) {
+      return { status: 404, body: makeError('not_found', ROOM_NOT_FOUND_MESSAGE) };
+    }
+
+    const seat = await this.reservations.reserveSeat(
+      { roomId, userId: user.id, holdForSeconds: ROOM_TOKEN_TTL_SECONDS },
+      now,
+    );
+    switch (seat.kind) {
+      case 'no_room':
+        // Byte-identical to the not-a-room-id body above, on purpose.
+        return { status: 404, body: makeError('not_found', ROOM_NOT_FOUND_MESSAGE) };
+      case 'closed':
+        return { status: 409, body: makeError('conflict', ROOM_CLOSED_MESSAGE) };
+      case 'full':
+        return { status: 409, body: makeError('conflict', ROOM_FULL_MESSAGE) };
+      case 'reserved':
+        break;
+    }
+
+    const { reservation } = seat;
+    const token = await mintRoomToken({
+      apiKey: this.config.LIVEKIT_API_KEY,
+      apiSecret: this.config.LIVEKIT_API_SECRET,
+      roomId,
+      userId: user.id,
+      issuedAt: now,
+      expiresAt: reservation.expiresAt,
+    });
+
+    await recordRoomTokenIssued(this.audit, {
+      requestId,
+      userId: user.id,
+      roomId,
+      reservationId: reservation.id,
+      occurredAt: now,
+      expiresAt: reservation.expiresAt,
+    });
+
+    return {
+      status: 201,
+      // PARSED, not cast, for the reason `toRoomBody` gives: the schema is what
+      // keeps a fifth key — the secret, say — off the wire without anybody's care.
+      body: roomTokenResponseSchema.parse({
+        token,
+        url: this.config.LIVEKIT_URL,
+        expires_at: reservation.expiresAt.toISOString(),
+        room_id: roomId,
+      }),
+    };
+  }
+}
+
+/**
+ * `{roomId}` out of whatever Fastify put in `request.params`, or `null`.
+ *
+ * Total over `unknown`, like `parseCreateRoomRequest`: a params object that is
+ * not an object, has no `roomId`, or carries one that is not a room id all answer
+ * `null`, and `null` is a `404` — never a throw, never a `400` that names the
+ * parameter.
+ */
+function readRoomIdParam(params: unknown): string | null {
+  if (params === null || typeof params !== 'object') {
+    return null;
+  }
+  const candidate = (params as Record<string, unknown>)['roomId'];
+  return isRoomId(candidate) ? candidate : null;
 }
 
 /**

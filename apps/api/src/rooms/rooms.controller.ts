@@ -1,5 +1,6 @@
 import { Controller, Post, Req, Res } from '@nestjs/common';
 import type { FastifyReply, FastifyRequest } from 'fastify';
+import { requestIdOf } from '../request-id';
 import { RoomsService } from './rooms.service';
 
 /**
@@ -42,6 +43,33 @@ export class RoomsController {
   @Post()
   async create(@Req() request: FastifyRequest, @Res() reply: FastifyReply): Promise<void> {
     const outcome = await this.rooms.createRoom(request.headers.cookie, request.body);
+    void reply.status(outcome.status).send(outcome.body);
+  }
+
+  /**
+   * `POST /v1/rooms/:roomId/token` — Story 2.2.
+   *
+   * `request.params` goes down as `unknown`, for the reason the body does above:
+   * whether `roomId` is a room id is `RoomsService`'s verdict (through the
+   * contract's own `isRoomId`), and a `@Param('roomId')` with a pipe here would be
+   * a second place deciding it — and one that answers `400` where the matrix says
+   * `404` with the same body as "no such room".
+   *
+   * The request id is read the way `AuthController` reads it, through the one
+   * shared `requestIdOf`, so the audit row this route writes joins its log lines.
+   *
+   * No `@RateLimited(...)`, and this absence is worth more than the one above:
+   * every issuance writes a PERMANENT audit row, and nothing limits how often a
+   * signed-in person can ask. `deferred-work.md` records that evidence under this
+   * story; the fix is a `RateLimitAction` and that is an "Ask First" item.
+   */
+  @Post(':roomId/token')
+  async issueToken(@Req() request: FastifyRequest, @Res() reply: FastifyReply): Promise<void> {
+    const outcome = await this.rooms.issueRoomToken(
+      request.headers.cookie,
+      request.params,
+      requestIdOf(request, reply),
+    );
     void reply.status(outcome.status).send(outcome.body);
   }
 }

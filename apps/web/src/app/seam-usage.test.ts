@@ -185,8 +185,13 @@ describe('every authenticated call goes through the seam', () => {
     expect(mentionsApi('const p = AUTH_COOKIE_PATH;')).toBe(false);
     expect(mentionsApi('const p = AUTH_ME_PATH;')).toBe(true);
     // A future epic's route: not written out here, but the shape is what matters —
-    // any documented path makes its constant count, whatever its prefix.
-    expect(API_ROUTE_CONSTANTS.every((name) => name.endsWith('_PATH'))).toBe(true);
+    // any documented path makes its constant count, whatever its prefix. Two
+    // suffixes since Story 2.2: `_PATH` for a concrete route, `_PATH_TEMPLATE` for
+    // one the document keys with a `{param}` placeholder (`ROOM_TOKEN_PATH_TEMPLATE`
+    // is `/v1/rooms/{roomId}/token`). The template IS the documented path, so it
+    // counts; the name says it is not a string a client sends verbatim.
+    expect(API_ROUTE_CONSTANTS).toContain('ROOM_TOKEN_PATH_TEMPLATE');
+    expect(API_ROUTE_CONSTANTS.every((name) => /_PATH(?:_TEMPLATE)?$/.test(name))).toBe(true);
   });
 
   it.each(apiCallers)('%s asks the provider for the seam and for the API origin', (file) => {
