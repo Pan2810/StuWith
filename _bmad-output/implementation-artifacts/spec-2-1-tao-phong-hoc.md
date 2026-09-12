@@ -2,7 +2,7 @@
 title: 'Story 2.1 — Tạo phòng học với chủ đề và quyền'
 type: 'feature'
 created: '2026-09-07'
-status: 'in-progress'
+status: 'review'
 baseline_commit: '309a2c9f994dbc8256b27f0501b5edf073ae2b00'
 review_loop_iteration: 0
 context:
@@ -96,22 +96,22 @@ Bản đồ điều tra, neo tự đo trên `309a2c9`. Đừng tìm lại.
 ## Tasks & Acceptance
 
 **Execution:**
-- [ ] `packages/contracts/src/rooms.ts` — `USER_PLANS`, `PLAN_PARTICIPANT_LIMITS` (6/25/45), `ROOM_TOPICS` (sáu giá trị đã chốt), `ROOM_VISIBILITIES`, `ROOM_STATUSES` (`open`/`closing`/`closed`), `ROOMS_PATH`, `CREATE_ROOM_PATHNAME='/tao-phong'`, `roomSchema`, `parseCreateRoomRequest(body)` trả `null` khi hỏng. Trần **không** nhận từ body.
-- [ ] `packages/contracts/src/{index.ts,openapi.ts}` — export + `REGISTERED_SCHEMAS` + `POST /v1/rooms`.
-- [ ] `packages/db/migrations/1788480200000_rooms-and-plans.js` — `users.plan` (`NOT NULL DEFAULT 'study_buddy'` + CHECK); `rooms` (`id uuidv7`, `owner_user_id` **ON DELETE RESTRICT**, `name`, `description`, `topic`, `visibility`, `max_participants`, `status DEFAULT 'open'`, `created_at`, `updated_at`) + CHECK từng enum + chặn tên rỗng + giới hạn độ dài; `GRANT INSERT, UPDATE … TO stuwith_api`; `REVOKE INSERT, UPDATE, DELETE, TRUNCATE … FROM stuwith_realtime`; `COMMENT ON TABLE`; cập nhật hai `COMMENT ON ROLE`.
-- [ ] `packages/domain/src/ports/room-port.ts` + `index.ts` — `RoomPort.createRoom` / `findRoomById`, kiểu `Room`; thêm `plan` vào `User`.
-- [ ] `packages/db/src/{pg,in-memory}/room-adapter.ts` + `index.ts` — cặp adapter dùng chung hàm assert; `plan` vào hai adapter identity.
-- [ ] `packages/db/src/test-kit.ts` + `room-contract{,.pg}.test.ts` — `runRoomPortContract`, hai lượt.
-- [ ] `packages/db/src/rooms-migration.test.ts` — **probe ranh giới 2** (`42501`); bảng tồn tại; posture mặc định; CHECK khớp enum contracts qua `checkValues()`.
-- [ ] `apps/api/src/rooms/{rooms.module,rooms.runtime,rooms.service,rooms.controller}.ts` + `app.module.ts` — `@Controller('v1/rooms')`, `@Post()`, `@Res()`; trần từ `PLAN_PARTICIPANT_LIMITS[user.plan]`.
-- [ ] `apps/api/src/rooms/rooms.flow.test.ts` — mọi dòng I/O Matrix ở tầng HTTP.
-- [ ] `apps/web/src/app/tao-phong/{page.tsx,create-room-form.tsx,create-room-form.test.tsx}` — page giữ state/`fetch`; form giữ hàm thuần + JSX không state; gửi qua `authorizedFetch`.
-- [ ] `apps/web/src/app/page.tsx` — một đường đi tới `/tao-phong`; luật B/C của `routes.test.ts` đỏ nếu thiếu.
-- [ ] `apps/web/src/app/i18n/{messages.ts,messages.en.ts}` — nhóm `createRoom.*` gồm nhãn sáu chủ đề, VI + EN.
-- [ ] `apps/web/src/app/globals.css` — class cho `textarea`, `fieldset`/`legend`, nhóm radio; chỉ token.
-- [ ] `tests/gates/no-hard-delete-rooms.test.ts` — cấm `DELETE FROM rooms`/`DROP TABLE rooms`/`TRUNCATE` trong migration và route `@Delete` chạm phòng. Self-check phải gọi **chính hàm sản xuất** của gate (bài học Story 2.0).
-- [ ] `tests/e2e/support/fake-api.cjs` + `tests/e2e/web/tao-phong.spec.ts` — **probe ranh giới 1**.
-- [ ] `deferred-work.md` — hai mục kèm bằng chứng: chưa audit, chưa rate limit việc tạo phòng.
+- [x] `packages/contracts/src/rooms.ts` — `USER_PLANS`, `PLAN_PARTICIPANT_LIMITS` (6/25/45), `ROOM_TOPICS` (sáu giá trị đã chốt), `ROOM_VISIBILITIES`, `ROOM_STATUSES` (`open`/`closing`/`closed`), `ROOMS_PATH`, `CREATE_ROOM_PATHNAME='/tao-phong'`, `roomSchema`, `parseCreateRoomRequest(body)` trả `null` khi hỏng. Trần **không** nhận từ body.
+- [x] `packages/contracts/src/{index.ts,openapi.ts}` — export + `REGISTERED_SCHEMAS` + `POST /v1/rooms`.
+- [x] `packages/db/migrations/1788480200000_rooms-and-plans.js` — `users.plan` (`NOT NULL DEFAULT 'study_buddy'` + CHECK); `rooms` (`id uuidv7`, `owner_user_id` **ON DELETE RESTRICT**, `name`, `description`, `topic`, `visibility`, `max_participants`, `status DEFAULT 'open'`, `created_at`, `updated_at`) + CHECK từng enum + chặn tên rỗng + giới hạn độ dài; `GRANT INSERT, UPDATE … TO stuwith_api`; `REVOKE INSERT, UPDATE, DELETE, TRUNCATE … FROM stuwith_realtime`; `COMMENT ON TABLE`; cập nhật hai `COMMENT ON ROLE`.
+- [x] `packages/domain/src/ports/room-port.ts` + `index.ts` — `RoomPort.createRoom` / `findRoomById`, kiểu `Room`; thêm `plan` vào `User`.
+- [x] `packages/db/src/{pg,in-memory}/room-adapter.ts` + `index.ts` — cặp adapter dùng chung hàm assert; `plan` vào hai adapter identity.
+- [x] `packages/db/src/test-kit.ts` + `room-contract{,.pg}.test.ts` — `runRoomPortContract`, hai lượt.
+- [x] `packages/db/src/rooms-migration.test.ts` — **probe ranh giới 2** (`42501`); bảng tồn tại; posture mặc định; CHECK khớp enum contracts qua `checkValues()`.
+- [x] `apps/api/src/rooms/{rooms.module,rooms.runtime,rooms.service,rooms.controller}.ts` + `app.module.ts` — `@Controller('v1/rooms')`, `@Post()`, `@Res()`; trần từ `PLAN_PARTICIPANT_LIMITS[user.plan]`.
+- [x] `apps/api/src/rooms/rooms.flow.test.ts` — mọi dòng I/O Matrix ở tầng HTTP.
+- [x] `apps/web/src/app/tao-phong/{page.tsx,create-room-form.tsx,create-room-form.test.tsx}` — page giữ state/`fetch`; form giữ hàm thuần + JSX không state; gửi qua `authorizedFetch`.
+- [x] `apps/web/src/app/page.tsx` — một đường đi tới `/tao-phong`; luật B/C của `routes.test.ts` đỏ nếu thiếu.
+- [x] `apps/web/src/app/i18n/{messages.ts,messages.en.ts}` — nhóm `createRoom.*` gồm nhãn sáu chủ đề, VI + EN.
+- [x] `apps/web/src/app/globals.css` — class cho `textarea`, `fieldset`/`legend`, nhóm radio; chỉ token.
+- [x] `tests/gates/no-hard-delete-rooms.test.ts` — cấm `DELETE FROM rooms`/`DROP TABLE rooms`/`TRUNCATE` trong migration và route `@Delete` chạm phòng. Self-check phải gọi **chính hàm sản xuất** của gate (bài học Story 2.0).
+- [x] `tests/e2e/support/fake-api.cjs` + `tests/e2e/web/tao-phong.spec.ts` — **probe ranh giới 1**.
+- [x] `deferred-work.md` — hai mục kèm bằng chứng: chưa audit, chưa rate limit việc tạo phòng.
 
 **Acceptance Criteria:**
 - Given một người gói Campus, when tạo phòng, then lưu `max_participants=45`, và giá trị đó không đổi khi có người vào sau này.
