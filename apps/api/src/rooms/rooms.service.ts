@@ -102,7 +102,12 @@ export class RoomsService {
       {
         ownerUserId: user.id,
         name: request.name,
-        description: request.description,
+        // `?? ''` because `description` is optional on the wire and `NOT NULL`
+        // in the column. The bridge lives here rather than in the schema: a
+        // `.default('')` in `packages/contracts` would publish the field as
+        // required in the emitted document, which is the claim Story 2.1's review
+        // retracted.
+        description: request.description ?? '',
         topic: request.topic,
         visibility: request.visibility,
         // The whole of the capacity decision, in one expression. A `Record` over

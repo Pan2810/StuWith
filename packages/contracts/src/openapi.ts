@@ -439,7 +439,10 @@ function roomsPath(): Record<string, unknown> {
         `contract at all. The ceiling the column will store is ${String(MAX_PARTICIPANTS_CEILING)}, ` +
         'which no plan reaches. There is deliberately no endpoint that deletes a ' +
         'room — closing one is a state change, and the protocol for it is a later ' +
-        `story. The browser-facing screen for this step lives at ${CREATE_ROOM_PATHNAME}.`,
+        'story. `description` is the one OPTIONAL field: omit it and the room is ' +
+        'stored with an empty one, which is what the browser form has always told ' +
+        'the person it would do. ' +
+        `The browser-facing screen for this step lives at ${CREATE_ROOM_PATHNAME}.`,
       requestBody: {
         required: true,
         content: {

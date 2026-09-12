@@ -26,6 +26,12 @@ import {
 } from './error';
 import { healthResponseSchema } from './health';
 import { toOpenApiDocument } from './openapi';
+import {
+  MAX_ROOM_DESCRIPTION_LENGTH,
+  ROOM_TOPICS,
+  ROOM_VISIBILITIES,
+  parseCreateRoomRequest,
+} from './rooms';
 
 describe('error envelope', () => {
   it('accepts the one shape the whole system is allowed to emit', () => {
@@ -162,12 +168,84 @@ describe('OpenAPI emission (AD-13)', () => {
   // asserted the component list was exactly ['ErrorEnvelope','HealthResponse'],
   // which turned the missing audit schema from a bug into a documented fixture —
   // adding the schema would have failed the test that was supposed to protect it.
-  it.each(['ErrorEnvelope', 'HealthResponse', 'AuditEvent', 'SignInOutcome'])(
-    'publishes %s',
-    (name) => {
-      expect(Object.keys(doc.components.schemas)).toContain(name);
-    },
-  );
+  it.each([
+    'ErrorEnvelope',
+    'HealthResponse',
+    'AuditEvent',
+    'SignInOutcome',
+    // Story 2.1's pair. Both were registered and published from the day the story
+    // landed, and nothing read the document back — so deleting either line from
+    // `REGISTERED_SCHEMAS` left every suite green, which is the same unpinned state
+    // the return-path parameter below was found in.
+    'CreateRoomRequest',
+    'Room',
+  ])('publishes %s', (name) => {
+    expect(Object.keys(doc.components.schemas)).toContain(name);
+  });
+
+  /**
+   * `POST /v1/rooms`, read back out of the emitted document.
+   *
+   * The route existed, the components existed, and no test opened the document to
+   * check — so the three things `openapi.ts` exists to SAY about this endpoint were
+   * held up by nobody. Each assertion below is one of them, and each fails on a
+   * different single-line deletion in `roomsPath()`.
+   */
+  describe('the create-room endpoint', () => {
+    const rooms = () => doc.paths['/v1/rooms'] as Record<string, unknown>;
+
+    it('is published, and as a POST and nothing else', () => {
+      expect(rooms()).toBeTruthy();
+      expect(Object.keys(rooms())).toEqual(['post']);
+    });
+
+    it('never grows a delete — there is no hard-delete path for a room', () => {
+      // AC5 in document form. A generated client that saw `delete:` here would
+      // offer a teardown call that this system will never answer.
+      expect(Object.keys(rooms())).not.toContain('delete');
+    });
+
+    it('refs both components instead of inlining either shape', () => {
+      const post = rooms()['post'] as {
+        requestBody: { content: Record<string, { schema: { $ref?: string } }> };
+        responses: Record<string, { content?: Record<string, { schema: { $ref?: string } }> }>;
+      };
+      expect(post.requestBody.content['application/json']?.schema.$ref).toBe(
+        '#/components/schemas/CreateRoomRequest',
+      );
+      expect(post.responses['201']?.content?.['application/json']?.schema.$ref).toBe(
+        '#/components/schemas/Room',
+      );
+    });
+
+    it('says description is OPTIONAL, which is the whole of the round-1 decision', () => {
+      // The screen has called this field optional since it shipped; the schema
+      // required it; nothing pinned either side. Now the DOCUMENT is the pin.
+      const schema = doc.components.schemas['CreateRoomRequest'] as {
+        required?: readonly string[];
+        properties: Record<string, unknown>;
+      };
+      expect(Object.keys(schema.properties).sort()).toEqual([
+        'description',
+        'name',
+        'topic',
+        'visibility',
+      ]);
+      expect([...(schema.required ?? [])].sort()).toEqual(['name', 'topic', 'visibility']);
+    });
+
+    it('keeps the cap off the request and on the response', () => {
+      // The one fact an integrator cannot get from prose: `max_participants` is an
+      // output, never an input. A client that could not SEE the asymmetry would
+      // reasonably assume the omission from its own body was an oversight.
+      const request = doc.components.schemas['CreateRoomRequest'] as {
+        properties: Record<string, unknown>;
+      };
+      const room = doc.components.schemas['Room'] as { properties: Record<string, unknown> };
+      expect(Object.keys(request.properties)).not.toContain('max_participants');
+      expect(Object.keys(room.properties)).toContain('max_participants');
+    });
+  });
 
   it('documents both callback methods, because both share one outcome path', () => {
     const callback = doc.paths['/v1/auth/{provider}/callback'] as Record<string, unknown>;
@@ -561,5 +639,60 @@ describe('the rate-limited sentence leaks nothing a prober could calibrate on', 
     // person is left with nothing actionable.
     expect(RATE_LIMITED_MESSAGE.length).toBeGreaterThan(20);
     expect(sentence).toContain('thử lại');
+  });
+});
+
+/**
+ * The create-room body, at the boundary where a wire decision is actually made.
+ *
+ * Round 1 of Story 2.1's review found `description` required by the schema, called
+ * optional by the screen, and pinned by nothing — so either spelling passed every
+ * suite. These are the cases that make the answer falsifiable.
+ */
+describe('create-room body (Story 2.1)', () => {
+  const valid = {
+    name: 'Ôn thi cuối kỳ',
+    topic: ROOM_TOPICS[4],
+    visibility: ROOM_VISIBILITIES[0],
+  };
+
+  it('accepts a body with no description at all', () => {
+    const parsed = parseCreateRoomRequest(valid);
+
+    expect(parsed).not.toBeNull();
+    expect(parsed?.name).toBe('Ôn thi cuối kỳ');
+    // Absent, not empty. The `?? ''` that the column needs belongs to the writer,
+    // and putting it here would re-require the field through `.default('')` —
+    // which `toOpenApiComponents` would then publish as mandatory again.
+    expect(parsed?.description).toBeUndefined();
+  });
+
+  it('refuses an explicit null description, which is a different claim', () => {
+    // "I am not sending one" is something a form can mean; "here is a null" is not.
+    expect(parseCreateRoomRequest({ ...valid, description: null })).toBeNull();
+  });
+
+  it('keeps and trims a description that was sent', () => {
+    const parsed = parseCreateRoomRequest({ ...valid, description: '  ghi chú  ' });
+
+    expect(parsed?.description).toBe('ghi chú');
+  });
+
+  it('still refuses a description past the ceiling, measured after trimming', () => {
+    const tooLong = 'x'.repeat(MAX_ROOM_DESCRIPTION_LENGTH + 1);
+
+    expect(parseCreateRoomRequest({ ...valid, description: tooLong })).toBeNull();
+    // And the boundary itself is accepted, so the rule is a ceiling rather than an
+    // off-by-one nobody would notice in either direction.
+    expect(
+      parseCreateRoomRequest({
+        ...valid,
+        description: 'x'.repeat(MAX_ROOM_DESCRIPTION_LENGTH),
+      }),
+    ).not.toBeNull();
+  });
+
+  it('leaves the name required — the loosening was one field wide', () => {
+    expect(parseCreateRoomRequest({ topic: valid.topic, visibility: valid.visibility })).toBeNull();
   });
 });

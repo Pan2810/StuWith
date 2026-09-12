@@ -36,6 +36,9 @@ const {
   AUTH_DATE_OF_BIRTH_PATH,
   AUTH_REFRESH_PATH,
   BROWSER_READABLE_RESPONSE_HEADERS,
+  CORS_ALLOWED_METHODS,
+  CORS_ALLOWED_REQUEST_HEADERS,
+  CORS_ALLOW_CREDENTIALS,
   DATE_OF_BIRTH_FIELD,
   DEFAULT_USER_PLAN,
   PLAN_PARTICIPANT_LIMITS,
@@ -130,9 +133,18 @@ function corsHeaders() {
     // Named, never `*`: the fetch spec rejects a wildcard whenever credentials are
     // included, so a wildcard here would fail closed and look like a mystery.
     'access-control-allow-origin': WEB_ORIGIN,
-    'access-control-allow-credentials': 'true',
-    'access-control-allow-methods': 'GET, POST, OPTIONS',
-    'access-control-allow-headers': `content-type, ${REQUEST_ID_HEADER}`,
+    /**
+     * All three from the contract, for the reason the expose line below records —
+     * this file had already learned it once and these three had not been converted.
+     *
+     * Story 2.1 declared a browser probe that would go red if `apps/api` dropped
+     * `credentials: true`. It could not: this literal `'true'` kept answering the
+     * browser correctly no matter what the real server did. A fake that is allowed
+     * to be right on its own is a fake that makes a green run mean nothing.
+     */
+    'access-control-allow-credentials': String(CORS_ALLOW_CREDENTIALS),
+    'access-control-allow-methods': CORS_ALLOWED_METHODS.join(', '),
+    'access-control-allow-headers': CORS_ALLOWED_REQUEST_HEADERS.join(', '),
     /**
      * The line this file was MISSING, and the reason the E2E suite could not see
      * the bug it was best placed to catch.
@@ -326,7 +338,10 @@ const server = http.createServer(async (req, res) => {
         id: randomUUID(),
         owner_user_id: baseUser().id,
         name: request.name,
-        description: request.description,
+        // The same `?? ''` bridge `rooms.service.ts` applies, for the same reason:
+        // optional on the wire, `NOT NULL` in the column. A fake that defaulted
+        // differently would let a body with no description pass here and fail there.
+        description: request.description ?? '',
         topic: request.topic,
         visibility: request.visibility,
         // The whole capacity decision, from the plan and from nowhere else. A

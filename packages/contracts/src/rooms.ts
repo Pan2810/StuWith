@@ -217,7 +217,29 @@ export type Room = z.infer<typeof roomSchema>;
  */
 export const createRoomRequestSchema = z.object({
   name: z.string().min(1).max(MAX_ROOM_NAME_LENGTH),
-  description: z.string().max(MAX_ROOM_DESCRIPTION_LENGTH),
+  /**
+   * OPTIONAL, and `.optional()` rather than `.default('')` on purpose.
+   *
+   * The screen has called this field "(không bắt buộc)" since the day it shipped
+   * while the wire refused a body without it, and `CREATE_ROOM_INVALID_MESSAGE`
+   * names only "tên, chủ đề và quyền xem" — three places describing an optional
+   * field, one schema requiring it. Review round 1 found no test pinning either
+   * direction, which is what let the disagreement persist. AD-13 makes the
+   * loosening the compatible move: a client that always sent a description still
+   * works, and one that never did stops being refused.
+   *
+   * `.default('')` would have been the smaller diff and the wrong document.
+   * `toOpenApiComponents` emits with `io: 'output'`, and a defaulted field is
+   * REQUIRED in the output view — so the published `CreateRoomRequest` would have
+   * gone on telling an integrator the field is mandatory, which is the exact claim
+   * this change exists to retract. `.optional()` reads the same in both io views.
+   *
+   * The COLUMN stays `NOT NULL DEFAULT ''` and `roomSchema` above keeps
+   * `description` required: a STORED room always has one, even when it is empty.
+   * The `?? ''` that bridges the two belongs at each write site, where the row is
+   * built — not here, where it would re-require the field by the back door.
+   */
+  description: z.string().max(MAX_ROOM_DESCRIPTION_LENGTH).optional(),
   topic: roomTopicSchema,
   visibility: roomVisibilitySchema,
 });
@@ -265,6 +287,12 @@ export const CREATE_ROOM_FIELDS = {
  * - a name over {@link MAX_ROOM_NAME_LENGTH} or a description over
  *   {@link MAX_ROOM_DESCRIPTION_LENGTH}, measured AFTER trimming;
  * - a topic or a visibility outside the closed lists above.
+ *
+ * What it does NOT refuse is a body with no `description` key at all — the field
+ * is optional and the result simply has no `description`. An explicit `null` IS
+ * refused, and the asymmetry is deliberate: "I am not sending one" and "I am
+ * sending you a null" are different claims, and only the first is a thing a form
+ * can mean. Every write site turns the absent case into the column's `''`.
  *
  * ## Trimming happens here, not in the adapter
  *
