@@ -34,6 +34,7 @@ import {
   SESSION_LOST_KEY,
   TRY_AGAIN_KEY,
   createRoomDescribedBy,
+  createRoomNameInvalid,
   createRoomOutcomeFor,
   createRoomRequestBody,
   createRoomStateFor,
@@ -552,3 +553,57 @@ function topicKeySuffix(topic: string): string {
     .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
     .join('');
 }
+
+/**
+ * `aria-invalid` is a claim about ONE control.
+ *
+ * It read `current === null ? undefined : true`, so a dead session, a 502 and a
+ * rate limit all marked the name input invalid. A screen reader then sends somebody
+ * to fix a field that is fine, with nothing on the page to tell them otherwise —
+ * WCAG 2.1 AA 3.3.1 asks for the error to be IDENTIFIED, and identifying the wrong
+ * control is worse than identifying none.
+ */
+describe('createRoomNameInvalid — which notices are about the name field', () => {
+  it('is false when there is no notice at all', () => {
+    expect(createRoomNameInvalid(null)).toBe(false);
+  });
+
+  it('is true for the one notice that judges the body', () => {
+    // Raised by the pre-flight and by a 400, and they are the same sentence on
+    // purpose: one mistake gets one explanation whether or not the network helped.
+    expect(createRoomNameInvalid({ messageKey: CREATE_ROOM_INVALID_KEY, retryAfterSeconds: null }))
+      .toBe(true);
+  });
+
+  it.each([
+    ['a dead session', SESSION_LOST_KEY],
+    ['a server that failed', TRY_AGAIN_KEY],
+    ['a request that was never sent', REQUEST_NOT_SENT_KEY],
+    ['a rate limit', 'error.rateLimited' as MessageKey],
+  ])('is false for %s', (_label, messageKey) => {
+    expect(createRoomNameInvalid({ messageKey, retryAfterSeconds: null })).toBe(false);
+  });
+});
+
+describe('the name input marks itself invalid only when it is the problem', () => {
+  it('marks it invalid while the body is what was refused', () => {
+    expect(render({ kind: 'ready' }, CREATE_ROOM_INVALID_KEY)).toContain('aria-invalid="true"');
+  });
+
+  it.each([SESSION_LOST_KEY, TRY_AGAIN_KEY, REQUEST_NOT_SENT_KEY])(
+    'leaves it unmarked for %s',
+    (messageKey) => {
+      expect(render({ kind: 'ready' }, messageKey)).not.toContain('aria-invalid');
+    },
+  );
+
+  it('still describes the error region for a notice that is not about the field', () => {
+    // The two attributes answer different questions, and this is the line between
+    // them: the sentence is worth hearing whatever it is about, so it stays
+    // described — while the field stops claiming to be the thing that is wrong.
+    const html = render({ kind: 'ready' }, SESSION_LOST_KEY);
+
+    expect(html).toContain(createRoomDescribedBy(true));
+    expect(html).not.toContain('aria-invalid');
+  });
+});

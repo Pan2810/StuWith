@@ -440,3 +440,49 @@ Mỗi mục có ba khoá bắt buộc và một khoá tuỳ chọn:
   summary: Gate AC5 không quét file `.test.ts`, nên một đường xoá cứng phòng viết trong test là vô hình với nó.
   evidence: `tests/gates/no-hard-delete-rooms.test.ts` loại mọi file test, và loại trừ đó là BẮT BUỘC chứ không tiện tay: `packages/db/src/rooms-migration.test.ts` chạy `DELETE FROM rooms` dưới `stuwith_api` và kỳ vọng `42501`, còn `room-contract.pg.test.ts` `TRUNCATE` bảng giữa các ca với vai OWNER của container. Hai câu lệnh đó CHÍNH LÀ bằng chứng luật đang có hiệu lực — xoá chúng để làm hài lòng luật quét sẽ xoá luôn thứ duy nhất chứng minh database từ chối. Lỗ hổng còn lại được thu hẹp bởi hai điều: file test không phải đường mà production đi được, và mô hình quyền từ chối câu lệnh đó cho cả hai role ứng dụng dù ai viết. Cách đóng nếu ai đó muốn: một danh sách miễn trừ THEO CÂU LỆNH thay vì theo loại file, đúng khuôn `EXEMPT_STATEMENTS` của `audit-append-only.test.ts` — nơi docblock giải thích vì sao miễn trừ cả file là "một cái lỗ có tên file trên đó".
   status: CHƯA CÓ CHỦ (2026-09-07). Đã cân nhắc và chọn có ý thức trong Story 2.1; ghi lại để vòng sau không phải điều tra lại.
+
+## Deferred from: code review of spec-2-1-tao-phong-hoc (2026-09-12)
+
+Mười mục dưới đây do vòng review 1 của `bmad-code-review` phát hiện trên phạm vi
+`309a2c9..a9d2d6d`. Tất cả đều là "thật nhưng không chặn story", và đều đã được
+đọc tận nơi trước khi chấm mức độ.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-1-tao-phong-hoc.md`
+  summary: `stuwith_api` giữ `UPDATE` trên `rooms` mà không gì ghim được phép sửa cột nào.
+  evidence: `packages/db/migrations/1788480200000_rooms-and-plans.js:177` cấp `INSERT, UPDATE`, nhưng `RoomPort` không có phương thức cập nhật và `PgRoomAdapter` không phát câu `UPDATE` nào — quyền này dành cho Story 4.8 chuyển `status`. `rooms-migration.test.ts` chỉ chứng minh `stuwith_realtime` KHÔNG `UPDATE` được; không gì chặn hay phát hiện `stuwith_api` ghi đè `max_participants` hay `owner_user_id` — đúng cột mà toàn bộ lập luận về trần người dựa vào việc nó không bao giờ đổi. Hoãn được vì hướng đóng còn mơ hồ (GRANT theo cột, trigger, hay không làm gì) và Story 4.8 mới là nơi câu `UPDATE` đầu tiên xuất hiện.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-1-tao-phong-hoc.md`
+  summary: `PgIdentityAdapter` ép kiểu `plan` không kiểm, trong khi `isUserPlan` đã có sẵn và không ai gọi.
+  evidence: `packages/db/src/pg/identity-adapter.ts:83` viết `plan: row.plan as UserPlan`, khác hẳn `date_of_birth` vốn được `isCalendarDate` canh. Một hàng có `plan` ngoài `USER_PLANS` sẽ làm `PLAN_PARTICIPANT_LIMITS[user.plan]` thành `undefined` ở `rooms.service.ts:111`, chạm `assertValidMaxParticipants` và ném — tức 500 trên một request hợp lệ. Hoãn được vì CHECK constraint `users_plan_check` chặn giá trị đó từ phía DB ngay hôm nay; kịch bản chỉ mở ra khi Epic 5 nới CHECK. Đáng chú ý: `packages/contracts/src/rooms.ts:31` đã export sẵn `isUserPlan` và không file nào gọi — nó chính là cái chốt còn thiếu ở đây.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-1-tao-phong-hoc.md`
+  summary: `RoomsController` không có `try/catch`, một throw bất ngờ trả 500 không đúng phong bì lỗi.
+  evidence: `apps/api/src/rooms/rooms.controller.ts:43` gọi thẳng service rồi `reply.status(...).send(...)`. Không có `APP_FILTER` hay `useGlobalFilters` nào trong `apps/api` (đã grep `main.ts`, `http-setup.ts`, `app.module.ts`), nên một throw cho ra body mặc định của Nest `{statusCode, message}`, không khớp `errorEnvelopeSchema` mà mọi route `/v1` khác publish. Hoãn được vì đây là tư thế CÓ SẴN chứ không do story này tạo: `AuthController` cũng không `try/catch`. Đóng đúng cách là một exception filter toàn cục cho cả process, không phải một `try` trong controller mới.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-1-tao-phong-hoc.md`
+  summary: Một phòng ĐÃ ghi vẫn có thể trả 500, và không ai xoá được hàng đó.
+  evidence: `apps/api/src/rooms/rooms.service.ts:136` dựng body bằng `roomSchema.parse(...)` SAU khi `INSERT` đã commit; bất kỳ drift nào cũng ném sau khi hàng đã tồn tại. `apps/web/src/app/tao-phong/page.tsx:135` làm bản đối xứng — một `201` mà body hỏng `safeParse` hiện `createRoom.tryAgain`. Cả hai đường đều nói với người dùng là thất bại, họ tạo phòng nữa, và không role nào có `DELETE`. Không test nào chạy hai nhánh này. Hoãn được vì nó cần schema drift mới với tới, mà chính bộ contract test sẽ bắt drift đó trước.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-1-tao-phong-hoc.md`
+  summary: Migration trộn `IF NOT EXISTS` với `ADD COLUMN` / `ADD CONSTRAINT` không idempotent.
+  evidence: `1788480200000_rooms-and-plans.js:140` và `:164` dùng `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS`, còn `:114` là `ALTER TABLE users ADD COLUMN plan` trần. Trên một database đã có `rooms` lệch hình dạng, câu CREATE im lặng thành công và mọi CHECK, GRANT lẫn `RESTRICT` sau đó được khẳng định trên một bảng file này không hề tạo. Hoãn được vì `node-pg-migrate` ghi sổ migration đã chạy nên chạy lại không phải trạng thái bình thường; nhưng file đang tự mâu thuẫn về việc nó có hỗ trợ chạy lại hay không.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-1-tao-phong-hoc.md`
+  summary: Độ dài tên phòng đo bằng đơn vị UTF-16 ở tầng ứng dụng, bằng ký tự ở tầng cột.
+  evidence: `packages/contracts/src/rooms.ts:193` dùng `z.string().max(120)`, đếm mã đơn vị UTF-16; `rooms_name_length CHECK (char_length(name) <= 120)` đếm KÝ TỰ. Một tên gồm 115 emoji là 230 đơn vị → bị từ chối `400` dù cột sẵn sàng nhận. Hoãn được vì đây là nới lỏng một ràng buộc đã publish (AD-13: nới là tương thích) và đáng quyết một lần cho cả `name` lẫn `description`.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-1-tao-phong-hoc.md`
+  summary: `EXPERIENCE.md` đòi `role="radiogroup"` cho nhóm tương tự, còn CSS story này gọi `fieldset` là khuôn sẽ dùng lại.
+  evidence: `apps/web/src/app/globals.css:513` nói hình dạng fieldset "is the shape the later story will reuse", dẫn chiếu nhóm ba chế độ khuôn mặt của Story 2.7; nhưng `EXPERIENCE.md:176` và `:276` yêu cầu `role="radiogroup"` với `role="radio"` + `aria-checked` cho đúng nhóm đó, trong khi `create-room-form.tsx` vẽ `<fieldset>` (role ngầm định `group`, và đó cũng là thứ `tao-phong.spec.ts` khẳng định). Như đang viết, Story 2.7 không thể thoả cả hai. Hoãn vì phải sửa MỘT trong hai tài liệu, và chủ của quyết định là story dựng nhóm đó.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-1-tao-phong-hoc.md`
+  summary: `.choice` vô hình với vòng quét hoàn chỉnh của gate tương phản.
+  evidence: `apps/web/src/app/globals.css:561` cho `.choice` nền `var(--surface-raised)` và luật `:checked` đổi sang `--surface-sunken`, cố ý không khai `color`. `tests/gates/contrast.test.ts:487-490` khoá vòng quét COMPOSED trên các luật CÓ khai `color:`, nên control đầu tiên của sản phẩm có bề mặt đổi theo trạng thái không đóng góp hàng nào và không bao giờ được đo — đúng hình dạng hồi quy nút disabled mà mục đó được viết ra để chặn. Hoãn vì đổi cách khoá của gate là việc cắt ngang toàn hệ thiết kế.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-1-tao-phong-hoc.md`
+  summary: AC1 "không tính lại" được khẳng định trên một store vốn không có cơ chế tính lại.
+  evidence: `apps/api/src/rooms/rooms.flow.test.ts:260` lật `planOverride` sau khi tạo rồi đọc lại `harness.rooms.findRoomById(...)` từ store in-memory — một `Map`, nơi mệnh đề đúng hiển nhiên. Không có endpoint đọc (`GET /v1/rooms/:id` chưa tồn tại), nên ở story này tính chất đó không có môi trường HTTP nào để đo; nó được bảo đảm bằng sự VẮNG MẶT của mã chứ không bằng test. Hoãn vì Story 2.2 là nơi đầu tiên có đường đọc thật để khẳng định nó.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-1-tao-phong-hoc.md`
+  summary: `fake-api.cjs` trả 405 ở chỗ `apps/api` trả 404.
+  evidence: `tests/e2e/support/fake-api.cjs:314` trả `405` cho method khác POST trên `ROOMS_PATH` kèm bình luận rằng như vậy "makes it visible to a spec"; nhưng `RoomsController` chỉ khai `@Post()` và process không đặt global prefix, nên `apps/api` trả `404`. Không spec nào khẳng định bên nào. Fake tồn tại để phản chiếu sản phẩm, và chính docblock của nó đã ghi một lần lệch cùng loại bị bắt trước đây (một 204 ở chỗ sản phẩm trả 200). Hoãn vì nó là hạ tầng test và chưa ai dựa vào hành vi này.

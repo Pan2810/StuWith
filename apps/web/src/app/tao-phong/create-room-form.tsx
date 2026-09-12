@@ -330,6 +330,25 @@ export function createRoomDescribedBy(hasNotice: boolean): string {
   return hasNotice ? `${ROOM_NAME_HINT_ID} ${CREATE_ROOM_ERROR_ID}` : ROOM_NAME_HINT_ID;
 }
 
+/**
+ * Whether the NAME FIELD is what a notice is complaining about.
+ *
+ * `aria-invalid` is a claim about one control, not a mood the form is in. It read
+ * `current === null ? undefined : true`, so a dead session, a 502 and a rate limit
+ * all marked the name input invalid — and a screen reader then tells somebody to
+ * fix a field that is perfectly fine, with no way to discover that it is not the
+ * problem. WCAG 2.1 AA (3.3.1) wants the error identified; identifying the WRONG
+ * one is worse than identifying none.
+ *
+ * `CREATE_ROOM_INVALID_KEY` is the only notice about the body: it is what the
+ * pre-flight raises and what a `400` maps to. `aria-describedby` deliberately
+ * does NOT use this — the error region stays described for every notice, because
+ * the sentence is worth hearing whatever it is about.
+ */
+export function createRoomNameInvalid(current: CreateRoomNotice | null): boolean {
+  return current !== null && current.messageKey === CREATE_ROOM_INVALID_KEY;
+}
+
 export const CREATE_ROOM_HEADING_KEY: MessageKey = 'createRoom.heading';
 export const CREATE_ROOM_SUBMIT_KEY: MessageKey = 'createRoom.submit';
 export const CREATED_HEADING_KEY: MessageKey = 'createRoom.createdHeading';
@@ -488,9 +507,10 @@ export function CreateRoomPanel({
             required
             maxLength={MAX_ROOM_NAME_LENGTH}
             aria-describedby={createRoomDescribedBy(current !== null)}
-            // Only while a message is on screen, and it is the field's own state:
-            // "unavailable" and "signed out" never render this input at all.
-            aria-invalid={current === null ? undefined : true}
+            // Only when the notice is ABOUT this field. "Unavailable" and "signed
+            // out" never render this input at all; a 429, a 502 or a dead session
+            // do, and none of them is a complaint about the name.
+            aria-invalid={createRoomNameInvalid(current) ? true : undefined}
           />
           <p className="meta" id={ROOM_NAME_HINT_ID}>
             {t('createRoom.nameHint')}

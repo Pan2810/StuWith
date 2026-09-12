@@ -120,6 +120,53 @@ Bản đồ điều tra, neo tự đo trên `309a2c9`. Đừng tìm lại.
 - Given mã hiện tại, when chạy gate AC5, then xanh; khi thêm một đường xoá cứng phòng, then đỏ.
 - Given màn hình tạo phòng ở cả hai locale, when đo ở 320px, then không nhãn nào bị cắt chữ và mọi ô nhập có nhãn liên kết.
 
+### Review Findings
+
+Vòng review 1 (2026-09-12), `bmad-code-review`, phạm vi `309a2c9..a9d2d6d`. Bốn
+lớp review chạy song song; không lớp nào lỗi. Kiểm chứng độc lập đã chạy thật:
+`typecheck` xanh · `test:unit` 1934/1934 · `test:gates` 495/495 · `dep-check` sạch ·
+`test:migrations` 65/65 trên PG18 thật · Playwright 71/71 (gồm 9 ca `tao-phong`).
+Mutation cả hai probe cũng đã chạy thật — kết quả ghi ở mục Decision đầu tiên.
+
+**Vòng sửa 1 (2026-09-12).** Con người chốt ba việc: hướng (c) cho probe CORS, `description`
+thành TUỲ CHỌN, và phạm vi áp patch dừng ở bốn mục trung bình rẻ. Sáu mục đã đóng ở dưới.
+Còn MỞ có chủ ý, không phải bỏ quên: gate AC5 hở bốn cách viết, nhánh `throw` của
+`RoomsModule.forRuntime` không ca nào chạy, và sáu patch mức thấp.
+
+Đo lại sau khi sửa, cùng bộ lệnh như vòng review: `typecheck` xanh · `test:unit` 1958/1958
+(trước 1934) · `test:gates` 504/504 trong 15 file (trước 495/14 — file mới là
+`cors-policy.test.ts`) · `test:contract` 392/392 · `dep-check` 207 module 0 vi phạm ·
+`test:migrations` 65/65 trên PG18 thật · Playwright 71/71. Chín mutation đã CHẠY THẬT và
+mỗi cái đỏ đúng test đã khai trước khi chạy; chi tiết nằm trong từng mục.
+
+- [x] [Review][Decision] Mutation khai trong Probe ranh giới 1 KHÔNG làm probe đỏ — AGENTS.md §4 đòi "the named mutation on the far side must actually turn it RED". Spec khai: bỏ `credentials: true` khỏi `apps/api/src/http-setup.ts:131` thì probe đỏ. Nhưng bộ e2e nói chuyện với `tests/e2e/support/fake-api.cjs`, không phải `apps/api` (`tests/e2e/web/tao-phong.spec.ts:37`), nên mutation đó chỉ làm đỏ 2 ca trong `apps/api/src/http-setup.test.ts` — một assert trên options đã cấu hình, không phải trình duyệt. Chính `deferred-work.md` đã ghi nhận trung thực điều này. Đây đúng hình dạng thất bại mà §4 nêu đích danh (`Retry-After`: "the E2E fake API mirrored the omission"). Vì `## Probe ranh giới` nằm trong `<frozen-after-approval>`, §4 xếp nó là `intent_gap` chứ không phải patch — cần con người chọn hướng: (a) chấp nhận nguyên trạng dựa trên mục `deferred-work.md` đã có; (b) trỏ probe vào `apps/api` thật; (c) một hằng CORS dùng chung cho cả hai phía + gate so sánh chúng (đúng khuôn `BROWSER_READABLE_RESPONSE_HEADERS` đã đóng lỗ `Retry-After`); (d) sửa lại câu mutation trong spec đã đóng băng. — mức: cao — **ĐÃ ĐÓNG 2026-09-12, hướng (c)**: `CORS_ALLOW_CREDENTIALS`, `CORS_ALLOWED_METHODS`, `CORS_ALLOWED_REQUEST_HEADERS` vào `packages/contracts/src/http.ts`; `http-setup.ts` và `fake-api.cjs` cùng trải từ đó; gate mới `tests/gates/cors-policy.test.ts` đọc cả hai file. Mutation đã CHẠY THẬT và đỏ: xoá `credentials` khỏi `http-setup.ts` → đỏ `the API takes its credentials answer from the contract`; trả `'true'` vào fake → đỏ `the E2E fake API answers credentials from the same constant`; trả literal methods vào fake → đỏ `both ends take the allowed methods`; thêm `DELETE` vào hằng → đỏ `never advertises a method for deleting anything`. LƯU Ý câu chữ trong `<frozen-after-approval>` nay đọc lệch một bậc: dòng bị mutation không còn là `credentials: true` mà là `credentials: CORS_ALLOW_CREDENTIALS`, và thứ đỏ lên là gate chứ không phải probe trình duyệt. Không sửa khối đóng băng; ghi ở đây.
+- [x] [Review][Decision] `description` là trường BẮT BUỘC trên wire nhưng màn hình gọi nó là tuỳ chọn, và không test nào ghim chiều nào — `packages/contracts/src/rooms.ts:220` khai `z.string().max(...)` không `.optional()`, nên thiếu khoá là `400`; trong khi `createRoom.descriptionLabel` là 'Mô tả (không bắt buộc)' / 'Description (optional)' và cột là `NOT NULL DEFAULT ''`. Câu từ chối (`rooms.ts:303`) chỉ nêu "tên, chủ đề và quyền xem". Đổi sang `.optional().default('')` hay ngược lại đều để mọi test xanh — không fixture nào bỏ khoá này. AD-13 nói nới lỏng là tương thích, siết lại là breaking, nên hướng đi là quyết định hợp đồng cần con người. — mức: trung bình — **ĐÃ ĐÓNG 2026-09-12: TUỲ CHỌN, sửa hợp đồng theo UI.** `createRoomRequestSchema.description` thành `.optional()` — KHÔNG `.default('')`, vì `toOpenApiComponents` phát với `io: 'output'` và một trường có default vẫn nằm trong `required` của tài liệu, tức là vẫn nói với integrator đúng điều vừa rút lại. Cột giữ `NOT NULL DEFAULT ''`, `roomSchema` giữ `description` bắt buộc, và `?? ''` nằm ở hai chỗ ghi row (`rooms.service.ts`, `fake-api.cjs`). Năm ca mới trong `contracts.test.ts` ghim cả hai chiều, gồm `null` tường minh VẪN bị từ chối.
+
+- [x] [Review][Patch] `POST /v1/rooms` và hai component của nó được publish nhưng không test nào ghim [packages/contracts/src/contracts.test.ts:165] — **ĐÃ SỬA 2026-09-12**: `CreateRoomRequest` + `Room` vào danh sách `publishes %s`, thêm describe `the create-room endpoint` với 5 ca — chỉ có `post`, không bao giờ có `delete`, hai `$ref`, `description` ngoài `required`, và trần nằm ở response chứ không ở request. Mutation: bỏ `Room: roomSchema` → đỏ 2 ca.
+- [x] [Review][Patch] Adapter kiểm độ dài tên đã trim nhưng lưu chuỗi thô [packages/db/src/pg/room-adapter.ts:114] — **ĐÃ SỬA 2026-09-12**: thêm `normalizedCreateRoomInput` dùng chung, CẢ HAI adapter lưu bản đã trim; độ dài `description` cũng chuyển sang đo sau trim cho khớp `parseCreateRoomRequest`. Ba ca mới nằm trong `runRoomPortContract` (suite dùng chung) chứ không ở phía PG, vì nửa lớn hơn của lỗi là hai store bất đồng. Mutation từng adapter một → đỏ đúng 3 ca mỗi lần.
+- [x] [Review][Patch] `.gitignore` không phủ file probe gate AC5 tự trồng vào `apps/api/src` [.gitignore:44] — **ĐÃ SỬA 2026-09-12**: thêm `**/rooms-gate-probe.generated.ts`. `git check-ignore -v` xác nhận `.gitignore:57` bắt file đó.
+- [ ] [Review][Patch] Nhánh ném của `RoomsModule.forRuntime` không test nào chạy, và vế `port === null` là thừa [apps/api/src/rooms/rooms.module.ts:48]
+- [x] [Review][Patch] `aria-invalid="true"` gắn lên ô tên phòng cho cả lỗi không liên quan tới nó [apps/web/src/app/tao-phong/create-room-form.tsx:493] — **ĐÃ SỬA 2026-09-12**: thêm `createRoomNameInvalid`, chỉ true cho `CREATE_ROOM_INVALID_KEY`. `aria-describedby` CỐ Ý không đổi — vùng lỗi vẫn được mô tả cho mọi thông báo. 8 ca mới; mutation trả về `current === null ? undefined : true` → đỏ 4 ca.
+- [ ] [Review][Patch] Gate AC5 hở bốn cách viết: `TRUNCATE TABLE users, rooms`, `GRANT DELETE ON ALL TABLES IN SCHEMA`, `pgm.dropTable(...)` / `onDelete: 'CASCADE'`, và `ALTER TABLE public.rooms` có schema [tests/gates/no-hard-delete-rooms.test.ts:77]
+- [ ] [Review][Patch] `429` lúc submit vẽ đồng hồ đếm ngược đứng yên và vẫn để nút gửi bật [apps/web/src/app/tao-phong/create-room-form.tsx:556]
+- [ ] [Review][Patch] Docblock `auth.runtime.ts` mâu thuẫn với `rooms.runtime.ts` về nội dung `RoomsRuntime` [apps/api/src/auth/auth.runtime.ts:46]
+- [ ] [Review][Patch] Bản ghi quyết định i18n vẫn nói "đúng MỘT chuỗi cần số nhiều" trong khi story này thêm chuỗi thứ hai [apps/web/src/app/i18n/messages.ts:21]
+- [ ] [Review][Patch] Ca "accepts every topic the contract declares" lại lặp danh sách chép tay thay vì `ROOM_TOPICS` [apps/api/src/rooms/rooms.flow.test.ts:398]
+- [ ] [Review][Patch] Ca 320px mở `en-GB` nhưng không khẳng định màn hình thật sự vẽ tiếng Anh [tests/e2e/web/tao-phong.spec.ts:281]
+- [ ] [Review][Patch] `fake-api.cjs` ném bên trong handler async khi gặp gói lạ, cho ra request treo thay vì lỗi đọc được [tests/e2e/support/fake-api.cjs:335]
+- [ ] [Review][Patch] `.choice` dùng `padding: 8px 15px`, `15px` không nằm trên thang giãn cách nào [apps/web/src/app/globals.css:566]
+
+- [x] [Review][Defer] `stuwith_api` giữ `UPDATE` trên `rooms` mà không gì ghim được phép sửa cột nào [packages/db/migrations/1788480200000_rooms-and-plans.js:177] — deferred, thuộc Story 4.8
+- [x] [Review][Defer] `PgIdentityAdapter` ép kiểu `plan` không kiểm, trong khi `isUserPlan` đã có sẵn và không ai gọi [packages/db/src/pg/identity-adapter.ts:83] — deferred, CHECK constraint chặn từ phía DB
+- [x] [Review][Defer] Controller không có `try/catch`, một throw bất ngờ trả 500 không đúng phong bì lỗi [apps/api/src/rooms/rooms.controller.ts:43] — deferred, pre-existing (AuthController cùng tư thế)
+- [x] [Review][Defer] Một phòng đã ghi vẫn có thể trả 500 qua `roomSchema.parse` chạy sau INSERT [apps/api/src/rooms/rooms.service.ts:136] — deferred, cần schema drift mới với tới
+- [x] [Review][Defer] Migration trộn `IF NOT EXISTS` với `ADD COLUMN`/`ADD CONSTRAINT` không idempotent [packages/db/migrations/1788480200000_rooms-and-plans.js:114] — deferred, pre-existing shape
+- [x] [Review][Defer] Độ dài tên đo bằng đơn vị UTF-16 còn Postgres đo bằng `char_length` [packages/contracts/src/rooms.ts:193] — deferred, cần quyết định hợp đồng
+- [x] [Review][Defer] `EXPERIENCE.md` đòi `role="radiogroup"` cho nhóm tương tự trong khi CSS này gọi `fieldset` là khuôn dùng lại [apps/web/src/app/globals.css:513] — deferred, thuộc Story 2.7
+- [x] [Review][Defer] `.choice` vô hình với vòng quét COMPOSED của gate tương phản [apps/web/src/app/globals.css:561] — deferred, sửa gate là việc cắt ngang
+- [x] [Review][Defer] AC1 "không tính lại" được khẳng định trên một store không có cơ chế tính lại nào [apps/api/src/rooms/rooms.flow.test.ts:260] — deferred, Story 2.2 mới có môi trường thật
+- [x] [Review][Defer] `fake-api.cjs` trả 405 ở chỗ `apps/api` trả 404 [tests/e2e/support/fake-api.cjs:314] — deferred, chưa spec nào khẳng định bên nào
+
 ## Design Notes
 
 **`ON DELETE RESTRICT` chứ không `CASCADE`.** `user_identities` và `sessions` dùng `CASCADE` và đúng cho chúng. Với `rooms`, `CASCADE` **chính là** một đường xoá cứng phòng, chỉ nằm trong schema thay vì trong controller — AC5 cấm "endpoint **hay đường code nào**".

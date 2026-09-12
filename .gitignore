@@ -48,3 +48,10 @@ pnpm-debug.log*
 # name rather than a shared one: the two gates write into the same directory, and a
 # leftover file has to say which test left it.
 **/__plan_capacity_probe__.ts
+
+# And for tests/gates/no-hard-delete-rooms.test.ts, which plants a probe in
+# apps/api/src/rooms/. This one needs the ignore MORE than the two above, not less:
+# their contents break the build, so a crashed run announces itself on the next
+# command. This probe is valid TypeScript that merely trips the gate's own scan, so
+# a leftover would typecheck, build, and sit in `git status` looking committable.
+**/rooms-gate-probe.generated.ts

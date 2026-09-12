@@ -101,6 +101,7 @@ export class PgRoomAdapter implements RoomPort {
 
   async createRoom(input: CreateRoomInput, now: Date): Promise<Room> {
     assertValidCreateRoomInput(input, now);
+    const stored = normalizedCreateRoomInput(input);
 
     const result = await this.pool.query<RoomRow>(
       // `status` is deliberately absent from the column list: the schema's default
@@ -110,12 +111,12 @@ export class PgRoomAdapter implements RoomPort {
        VALUES ($1, $2, $3, $4, $5, $6, $7, $7)
        RETURNING ${ROOM_COLUMNS}`,
       [
-        input.ownerUserId,
-        input.name,
-        input.description,
-        input.topic,
-        input.visibility,
-        input.maxParticipants,
+        stored.ownerUserId,
+        stored.name,
+        stored.description,
+        stored.topic,
+        stored.visibility,
+        stored.maxParticipants,
         now,
       ],
     );
@@ -171,10 +172,15 @@ export function assertValidCreateRoomInput(
   }
   if (typeof input.description !== 'string') {
     // Never `null`: "no description" and "an empty description" are one fact, and
-    // the column is `NOT NULL DEFAULT ''` for the same reason.
+    // the column is `NOT NULL DEFAULT ''` for the same reason. The wire field is
+    // optional; turning an absent one into `''` is the CALLER's job, done before
+    // a value reaches a port.
     throw new RoomInputError('description must be a string');
   }
-  if (input.description.length > MAX_ROOM_DESCRIPTION_LENGTH) {
+  // Trimmed, like the name above and like `parseCreateRoomRequest`. Measuring the
+  // raw string here was the second half of the same asymmetry: this layer judged
+  // one string and the column stored another.
+  if (input.description.trim().length > MAX_ROOM_DESCRIPTION_LENGTH) {
     throw new RoomInputError(
       `description must be at most ${String(MAX_ROOM_DESCRIPTION_LENGTH)} characters`,
     );
@@ -186,6 +192,31 @@ export function assertValidCreateRoomInput(
     throw new RoomInputError('visibility must be one of the declared room visibilities');
   }
   assertValidMaxParticipants(input.maxParticipants);
+}
+
+/**
+ * The values an adapter WRITES, which are the trimmed ones.
+ *
+ * ## The bug this exists for
+ *
+ * `assertValidCreateRoomInput` measured `input.name.trim().length` and said so in
+ * a comment — "that is the length the column stores" — while both adapters then
+ * stored `input.name` RAW. A 118-character name carrying five trailing spaces is
+ * 118 to the assert and 123 to the column, so it passed this layer and came back
+ * from Postgres as `23514`: a CHECK violation for a value this code had just
+ * declared valid. The in-memory adapter had no CHECK to disagree with it, so the
+ * pair also drifted from each other — the exact failure the shared assert exists
+ * to prevent.
+ *
+ * Normalising rather than tightening the assert, because the comment was right
+ * about the intent: `'  Ôn thi  '` and `'Ôn thi'` are one room name, and the
+ * column should hold one spelling of it. `parseCreateRoomRequest` already trims at
+ * the wire, so in production this is a second application over an idempotent
+ * operation; it earns its place on the paths that do NOT come from the wire, which
+ * is every direct caller of the port.
+ */
+export function normalizedCreateRoomInput(input: CreateRoomInput): CreateRoomInput {
+  return { ...input, name: input.name.trim(), description: input.description.trim() };
 }
 
 /**

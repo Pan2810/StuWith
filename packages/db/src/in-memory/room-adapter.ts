@@ -1,6 +1,10 @@
 import { INITIAL_ROOM_STATUS } from '@stuwith/contracts';
 import type { CreateRoomInput, Room, RoomPort } from '@stuwith/domain';
-import { assertValidCreateRoomInput, assertValidRoomId } from '../pg/room-adapter';
+import {
+  assertValidCreateRoomInput,
+  assertValidRoomId,
+  normalizedCreateRoomInput,
+} from '../pg/room-adapter';
 
 /**
  * TD-5 — the second implementation, so the shared contract suite runs twice.
@@ -30,15 +34,20 @@ export class InMemoryRoomAdapter implements RoomPort {
 
   async createRoom(input: CreateRoomInput, now: Date): Promise<Room> {
     assertValidCreateRoomInput(input, now);
+    // The SAME normalisation the PG adapter applies, from the same function. Doing
+    // it in only one of the two is how the pair drifts: this store has no CHECK
+    // constraint to disagree with a raw value, so it would accept forever what
+    // Postgres refuses with `23514`.
+    const stored = normalizedCreateRoomInput(input);
 
     const room: Room = {
       id: this.nextId(),
-      ownerUserId: input.ownerUserId,
-      name: input.name,
-      description: input.description,
-      topic: input.topic,
-      visibility: input.visibility,
-      maxParticipants: input.maxParticipants,
+      ownerUserId: stored.ownerUserId,
+      name: stored.name,
+      description: stored.description,
+      topic: stored.topic,
+      visibility: stored.visibility,
+      maxParticipants: stored.maxParticipants,
       // The schema's DEFAULT, spelled through the contract's constant rather than
       // as a literal — a room that started `closed` in one adapter and `open` in
       // the other would pass every test written against the one it was developed on.

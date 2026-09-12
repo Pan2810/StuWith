@@ -1916,6 +1916,52 @@ export function runRoomPortContract(options: RoomPortContractOptions): void {
     });
 
     /**
+     * The row holds the TRIMMED strings — the ones this layer actually measured.
+     *
+     * `assertValidCreateRoomInput` judged `input.name.trim().length` and said so in
+     * a comment, and both adapters then wrote `input.name` raw. A name of
+     * {@link MAX_ROOM_NAME_LENGTH} − 2 characters carrying five trailing spaces was
+     * therefore ACCEPTED here and refused by the column with `23514`: a length the
+     * code had just called valid.
+     *
+     * It belongs in the SHARED suite rather than in the PG tests, because the two
+     * stores disagreeing is the larger half of the bug. The in-memory store has no
+     * CHECK constraint to object, so it would have gone on accepting the raw string
+     * for ever while only Postgres complained — and whichever adapter an author
+     * developed against decided whether they ever saw it.
+     */
+    describe('stores the strings it measured, not the ones it was handed', () => {
+      it('trims the name and the description on the way in', async () => {
+        const created = await (await port()).createRoom(
+          await input({ name: '  Ôn thi cuối kỳ  ', description: '  ghi chú  ' }),
+          t0,
+        );
+
+        expect(created.name).toBe('Ôn thi cuối kỳ');
+        expect(created.description).toBe('ghi chú');
+      });
+
+      it('accepts a name that is only over the ceiling before it is trimmed', async () => {
+        // The measured case, not an invented one: under the ceiling once trimmed,
+        // over it as sent. This is the input that produced `23514` from Postgres
+        // against code that had already approved it.
+        const padded = `${'x'.repeat(MAX_ROOM_NAME_LENGTH - 2)}     `;
+
+        const created = await (await port()).createRoom(await input({ name: padded }), t0);
+
+        expect(created.name).toHaveLength(MAX_ROOM_NAME_LENGTH - 2);
+      });
+
+      it('reads back the trimmed name, so a later fetch agrees with the write', async () => {
+        const created = await (await port()).createRoom(await input({ name: '  Lý 12  ' }), t0);
+
+        const found = await (await port()).findRoomById(created.id);
+
+        expect(found?.name).toBe('Lý 12');
+      });
+    });
+
+    /**
      * The refusals, and they THROW rather than return.
      *
      * A caller reaching this port with an unusable value has skipped
