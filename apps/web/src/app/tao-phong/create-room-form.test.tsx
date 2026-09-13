@@ -8,6 +8,7 @@ import {
   ROOM_TOPICS,
   ROOM_VISIBILITIES,
   SIGN_IN_PATHNAME,
+  roomPathname,
   type CurrentUser,
   type Room,
 } from '@stuwith/contracts';
@@ -488,6 +489,18 @@ describe('CreateRoomPanel — what each state actually renders', () => {
     expect(html).toContain('Lop toi');
     expect(html).toContain(VI_TRANSLATE(CREATED_HEADING_KEY));
     expect(html).toContain(VI_TRANSLATE(CREATE_ANOTHER_KEY));
+  });
+
+  it('leads to the room that was CREATED — its id, not the owner\'s', () => {
+    // Story 2.3: the only in-product path into a room. `Room` carries two UUIDs,
+    // and `routes.test.ts` rule B cannot tell which one the link was built from.
+    const created = room({
+      id: '019200f1-0000-7000-8000-0000000000aa',
+      owner_user_id: '019200f0-0000-7000-8000-0000000000bb',
+    });
+    const html = render({ kind: 'created', room: created });
+    expect(html).toContain(`href="${roomPathname(created.id)}"`);
+    expect(html).not.toContain(roomPathname(created.owner_user_id));
   });
 
   it('states the capacity the SERVER stored, not one it worked out', () => {

@@ -425,3 +425,77 @@ export const ROOM_CLOSED_MESSAGE = 'Phòng này đã đóng. Hãy chọn phòng 
 export const ROOM_NOT_FOUND_MESSAGE = 'Không tìm thấy phòng này.';
 
 export const ROOM_ADMISSION_FORBIDDEN_MESSAGE = 'Bạn không thể vào phòng học lúc này.';
+
+/* -------------------------------------------------------------------------- *
+ * Story 2.3 — the pre-join screen
+ * -------------------------------------------------------------------------- */
+
+/**
+ * The route the room screen lives at, in `apps/web`, as a TEMPLATE.
+ *
+ * `{roomId}` is the same placeholder syntax {@link ROOM_TOKEN_PATH_TEMPLATE}
+ * uses, and for the same reason: the constant is what a document or a gate keys
+ * on, and it is NOT the string a link carries. {@link roomPathname} fills the slot.
+ * `apps/web/src/app/routes.test.ts` resolves this template against the App Router
+ * tree (`phong/[roomId]/page.tsx`), which is what makes a renamed directory a red
+ * run rather than a 404 somebody finds by clicking.
+ *
+ * The screen's FIRST state is pre-join: there is deliberately no second route such
+ * as `/phong/{roomId}/chuan-bi`. A separate pre-join URL needs a guard on the room
+ * route, and a guard is an `if` a later story can forget; a room shell that only
+ * renders from an `admitted` state has no URL that walks around it.
+ */
+export const ROOM_PATHNAME = '/phong/{roomId}';
+
+/** The concrete pathname for one room, from the template above. */
+export function roomPathname(roomId: string): string {
+  return ROOM_PATHNAME.replace('{roomId}', encodeURIComponent(roomId));
+}
+
+/**
+ * The two reasons a token request answers `409`, machine-readable.
+ *
+ * Story 2.2 shipped both refusals under one `code: 'conflict'` with the SENTENCE
+ * as the only difference, and its own docblock says a client reads the status and
+ * not the sentence — so the first screen that had to tell "full" from "closed"
+ * (this one) had nothing to read. Comparing `message` is comparing display text,
+ * and Story 2.0 moved every sentence a person sees into the client's own
+ * catalogue precisely so the wire's wording could change without a screen noticing.
+ *
+ * `details.reason` is the compatible fix (AD-13): `details` was already optional
+ * on the envelope, `conflict` stays the code, and a client that never reads
+ * `details` behaves exactly as before. A second error code would have been a
+ * change to `ERROR_CODES`, which the spec keeps as "Ask First".
+ */
+export const ROOM_TOKEN_REFUSAL_REASONS = ['room_full', 'room_closed'] as const;
+
+export const roomTokenRefusalReasonSchema = z.enum(ROOM_TOKEN_REFUSAL_REASONS);
+export type RoomTokenRefusalReason = z.infer<typeof roomTokenRefusalReasonSchema>;
+
+/** The key under `error.details` the reason travels in, spelled once for both processes. */
+export const ROOM_TOKEN_REFUSAL_REASON_KEY = 'reason';
+
+/**
+ * Only the part of the envelope this question is about. Everything else is
+ * stripped rather than validated: a `409` whose `message` somebody has since
+ * re-worded still carries the reason, and the reason is all a client wants here.
+ */
+const refusalEnvelopeSchema = z.object({
+  error: z.object({
+    details: z.object({ [ROOM_TOKEN_REFUSAL_REASON_KEY]: roomTokenRefusalReasonSchema }),
+  }),
+});
+
+/**
+ * The reason inside a `409` body, or `null` for every other shape.
+ *
+ * PARSED, never cast, and total over `unknown`: a body that is not an object, an
+ * envelope without `details`, a `reason` outside the closed list — all `null`.
+ * The caller decides what `null` means, and for the pre-join screen it means the
+ * general "cannot enter right now" sentence rather than a guess at which of the
+ * two it was.
+ */
+export function roomTokenRefusalReason(body: unknown): RoomTokenRefusalReason | null {
+  const parsed = refusalEnvelopeSchema.safeParse(body);
+  return parsed.success ? parsed.data.error.details[ROOM_TOKEN_REFUSAL_REASON_KEY] : null;
+}

@@ -6,6 +6,7 @@ import {
   ROOM_CLOSED_MESSAGE,
   ROOM_FULL_MESSAGE,
   ROOM_NOT_FOUND_MESSAGE,
+  ROOM_TOKEN_REFUSAL_REASON_KEY,
   ROOM_TOKEN_TTL_SECONDS,
   UNAUTHENTICATED_MESSAGE,
   isRoomId,
@@ -13,6 +14,7 @@ import {
   parseCreateRoomRequest,
   roomSchema,
   roomTokenResponseSchema,
+  type RoomTokenRefusalReason,
 } from '@stuwith/contracts';
 import { fixedAt, roomAdmission, type Room } from '@stuwith/domain';
 import { SESSION_AUTHENTICATOR, SessionAuthenticator } from '../auth/session-authenticator';
@@ -238,10 +240,30 @@ export class RoomsService {
       case 'no_room':
         // Byte-identical to the not-a-room-id body above, on purpose.
         return { status: 404, body: makeError('not_found', ROOM_NOT_FOUND_MESSAGE) };
+      /**
+       * Both refusals share `code: 'conflict'` and differ in `details.reason`.
+       *
+       * Story 2.3 is the first screen that has to tell the two apart, and the
+       * contract's own docblock says a client reads the status and never the
+       * sentence — so the sentence was, until this field existed, the only thing
+       * it could read. `ROOM_TOKEN_REFUSAL_REASONS` is the closed list; the key is
+       * spelled once in `packages/contracts` and read back by
+       * `roomTokenRefusalReason`, which is what the flow suite pins this with.
+       */
       case 'closed':
-        return { status: 409, body: makeError('conflict', ROOM_CLOSED_MESSAGE) };
+        return {
+          status: 409,
+          body: makeError('conflict', ROOM_CLOSED_MESSAGE, {
+            [ROOM_TOKEN_REFUSAL_REASON_KEY]: 'room_closed' satisfies RoomTokenRefusalReason,
+          }),
+        };
       case 'full':
-        return { status: 409, body: makeError('conflict', ROOM_FULL_MESSAGE) };
+        return {
+          status: 409,
+          body: makeError('conflict', ROOM_FULL_MESSAGE, {
+            [ROOM_TOKEN_REFUSAL_REASON_KEY]: 'room_full' satisfies RoomTokenRefusalReason,
+          }),
+        };
       case 'reserved':
         break;
     }

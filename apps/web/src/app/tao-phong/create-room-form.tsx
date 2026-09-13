@@ -7,6 +7,7 @@ import {
   SIGN_IN_PATHNAME,
   parseCreateRoomRequest,
   parseSignInRetryAfterSeconds,
+  roomPathname,
   type CreateRoomRequest,
   type CurrentUser,
   type Room,
@@ -487,9 +488,17 @@ export function CreateRoomPanel({
               count: state.room.max_participants,
             })}
           </p>
-          {/* A way ONWARD, so this terminal state is not a dead end with a sentence
-              in it. There is no room screen to link to yet (Story 2.3 owns pre-join),
-              so the honest next move is another room. */}
+          {/*
+            The way ONWARD: the room's own screen, whose first state is pre-join
+            (Story 2.3). The route comes from `packages/contracts` through its
+            builder, never from a literal — `routes.test.ts` rule B is what
+            insists a product module outside `phong/[roomId]` leads here, and this
+            link is that module. A plain `<a href>`: a full navigation is correct
+            for a screen that asks the browser for a camera on arrival.
+          */}
+          <a className="button-primary" href={roomPathname(state.room.id)}>
+            {t('createRoom.enterRoom')}
+          </a>
           <button type="button" className="button-secondary" onClick={onCreateAnother}>
             {t(CREATE_ANOTHER_KEY)}
           </button>

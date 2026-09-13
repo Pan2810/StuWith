@@ -435,6 +435,43 @@ const COMPOSED: readonly ComposedPair[] = [
     background: 'primary',
     where: 'the pressed button sets both halves itself',
   },
+  /* Story 2.3 — the pre-join screen. */
+  {
+    selector: '.preview-label',
+    color: 'ink-primary',
+    background: 'surface-raised',
+    where: 'the pill in the corner of the preview sets both halves itself',
+  },
+  {
+    selector: '.avatar-letter',
+    color: 'ink-primary',
+    background: 'tile-avatar-bg',
+    where: 'the initials tile sets both halves itself — the same pair the grid avatar will use',
+  },
+  {
+    selector: '.choice:has(input[type="radio"]:disabled)',
+    color: 'ink-secondary',
+    background: 'surface-sunken',
+    where: 'a disabled choice (Filter, or Để nguyên with no camera) sets both halves itself, as the disabled button does',
+  },
+  {
+    selector: '.notice-ok',
+    color: 'ok',
+    background: 'ok-container',
+    where: 'the reassuring variant sets both halves itself',
+  },
+  {
+    selector: '.permission-help',
+    color: 'ink-primary',
+    background: 'warn-container',
+    where: 'the help block sets both halves itself; its body text is ink on the warn surface',
+  },
+  {
+    selector: '.permission-help > h2',
+    color: 'warn',
+    background: 'warn-container',
+    where: 'the heading inside the help block, on the block\'s own surface',
+  },
 ];
 
 describe('every pair globals.css composes clears AA, in both palettes', () => {

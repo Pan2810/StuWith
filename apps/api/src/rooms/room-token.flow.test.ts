@@ -13,6 +13,7 @@ import {
   errorEnvelopeSchema,
   roomSchema,
   roomTokenPath,
+  roomTokenRefusalReason,
   roomTokenResponseSchema,
 } from '@stuwith/contracts';
 import type {
@@ -402,9 +403,13 @@ describe('Matrix: the room is closing or closed', () => {
       const response = await askForToken(jar, roomId);
 
       expect(response.status).toBe(409);
-      const envelope = errorEnvelopeSchema.parse(await response.json());
+      const body: unknown = await response.json();
+      const envelope = errorEnvelopeSchema.parse(body);
       expect(envelope.error.code).toBe('conflict');
       expect(envelope.error.message).toBe(ROOM_CLOSED_MESSAGE);
+      // Story 2.3: the reason is machine-readable, read back through the SAME
+      // parser the pre-join screen uses — not by looking at `details` by hand.
+      expect(roomTokenRefusalReason(body)).toBe('room_closed');
       expect(harness.reservations.countRows(roomId)).toBe(0);
       expect(issued()).toHaveLength(0);
     },
@@ -431,9 +436,13 @@ describe('Matrix: the room is full', () => {
     const response = await askForToken(late, roomId);
 
     expect(response.status).toBe(409);
-    const envelope = errorEnvelopeSchema.parse(await response.json());
+    const body: unknown = await response.json();
+    const envelope = errorEnvelopeSchema.parse(body);
     expect(envelope.error.code).toBe('conflict');
     expect(envelope.error.message).toBe(ROOM_FULL_MESSAGE);
+    // The other reason, through the same parser: the two 409s are now two
+    // answers a client can branch on without comparing Vietnamese sentences.
+    expect(roomTokenRefusalReason(body)).toBe('room_full');
     expect(harness.reservations.countRows(roomId)).toBe(cap);
     expect(issued()).toHaveLength(cap);
   }, 30_000);
