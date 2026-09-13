@@ -117,6 +117,7 @@ export const EN_MESSAGES = {
   'createRoom.capacity.one': 'This room holds {count} person.',
   'createRoom.capacity.other': 'This room holds up to {count} people.',
   'createRoom.createAnother': 'Create another room',
+  'createRoom.enterRoom': 'Enter the room',
   'createRoom.signedOut': 'You need to sign in before creating a room.',
   'createRoom.toSignIn': 'Go to the sign-in page',
   'createRoom.sessionLost': 'Your session has ended. Sign in again, then try once more.',
@@ -153,6 +154,76 @@ export const EN_MESSAGES = {
    * SUCCESS body), so these are the client's own translations of sentences the API
    * happens to send in Vietnamese.
    */
+  /**
+   * Story 2.3 — the pre-join screen. The 15 help steps are one per browser family
+   * and step, as in the Vietnamese catalogue; step 3 is the same action in every
+   * family and is kept as five keys so they can diverge later.
+   */
+  'preJoin.heading': 'Before you go in, how do you want to appear?',
+  'preJoin.subheading': 'Only you can see this preview. You can change it any time once inside.',
+  'preJoin.checkingSession': 'Checking your session before you go in…',
+  'preJoin.requestingDevices': 'Asking for camera and microphone access…',
+  'preJoin.signedOut': 'You need to sign in before entering a room.',
+  'preJoin.signInHint': 'After signing in you will come back to this room.',
+  'preJoin.modeLegend': 'Face mode',
+  'preJoin.modeShow': 'Show my face',
+  'preJoin.modeHide': 'Hide my face',
+  'preJoin.modeFilter': 'Face filter',
+  'preJoin.comingSoon': 'Coming soon',
+  'preJoin.showNotice': 'Your face will be visible to everyone in the room.',
+  'preJoin.hideNotice': 'Your face is hidden. Nobody in the room can see it, not even the host.',
+  'preJoin.previewLabelShow': 'Face shown',
+  'preJoin.previewVideoLabel': 'Your camera preview — only you can see it',
+  'preJoin.previewLabelHide': 'Face hidden',
+  'preJoin.previewNoteShow': 'Other people will see your real face.',
+  'preJoin.previewNoteHide': 'Other people will see this avatar instead of your face.',
+  'preJoin.avatarLabel': 'Your initials avatar',
+  'preJoin.micHeading': 'Test your microphone',
+  'preJoin.micMeterLabel': 'Microphone level',
+  'preJoin.micQuiet': 'Nothing heard yet',
+  'preJoin.micLoud': 'Loud and clear',
+  'preJoin.noMic': 'No microphone found. You can still enter the room and use chat.',
+  'preJoin.noCamera': 'No camera found. You will enter the room with an initials avatar.',
+  'preJoin.notRecorded': 'This session is not recorded.',
+  'preJoin.blockedHeading': 'Your browser is blocking the camera and microphone',
+  'preJoin.blockedIntro':
+    'You do not need a camera to study. If you want to turn it on, follow these three steps:',
+  'preJoin.help.chrome.1':
+    'Click the lock icon (or the site controls icon) on the left of the address bar.',
+  'preJoin.help.chrome.2': 'Turn on Camera and Microphone for this site.',
+  'preJoin.help.chrome.3': 'Reload this page.',
+  'preJoin.help.edge.1': 'Click the lock icon on the left of the address bar.',
+  'preJoin.help.edge.2': 'Under Permissions for this site, choose Allow for Camera and Microphone.',
+  'preJoin.help.edge.3': 'Reload this page.',
+  'preJoin.help.firefox.1':
+    'Click the permissions icon (a crossed-out camera) on the left of the address bar.',
+  'preJoin.help.firefox.2': 'Unblock Camera and Microphone.',
+  'preJoin.help.firefox.3': 'Reload this page.',
+  'preJoin.help.safari.1': 'Open the Safari menu and choose Settings for This Website.',
+  'preJoin.help.safari.2': 'Choose Allow for Camera and Microphone.',
+  'preJoin.help.safari.3': 'Reload this page.',
+  'preJoin.help.other.1': 'Open the site permission settings in your browser.',
+  'preJoin.help.other.2': 'Allow Camera and Microphone.',
+  'preJoin.help.other.3': 'Reload this page.',
+  'preJoin.unreadable': 'The camera or microphone could not be opened. You can still enter to listen.',
+  'preJoin.retryPermission': 'Try the permission again',
+  'preJoin.joinListenOnly': 'Enter to listen only',
+  'preJoin.listenOnlyNote': 'Listening only still lets you use room chat and ask privately in text.',
+  'preJoin.join': 'Enter the room',
+  'preJoin.joining': 'Asking to enter the room…',
+  'preJoin.sessionLost': 'Your session has ended. Sign in again, then try once more.',
+  'preJoin.joinFailed': 'The room cannot be entered right now.',
+  'preJoin.joinTryAgain': 'You did not get into the room. Please try again.',
+  'preJoin.retryJoin': 'Try again',
+  'preJoin.toCreateRoom': 'Back to creating a room',
+
+  'room.heading': 'You are in the room',
+  'room.faceShow': 'Your face is shown.',
+  'room.faceHide': 'Your face is hidden.',
+  'room.audioMic': 'Your microphone is on.',
+  'room.audioListenOnly': 'You are listening only.',
+  'room.notRecorded': 'This room is not recorded.',
+
   'error.rateLimited': 'You have tried too many times. Please wait a moment, then try again.',
   'error.dateOfBirthInvalid':
     'That date of birth is not valid. Choose your date of birth again, then try once more.',
@@ -163,4 +234,12 @@ export const EN_MESSAGES = {
   'error.unauthenticated': 'That sign-in session is not valid. Please try signing in again.',
   'error.moneyInForbidden':
     'Your account is not allowed to receive coins from other users yet.',
+  /**
+   * Story 2.3. Chosen by STATUS or by `details.reason`, never by matching the
+   * Vietnamese sentence the wire sent — see the Vietnamese catalogue's note.
+   */
+  'error.roomForbidden': 'You cannot enter a study room right now.',
+  'error.roomNotFound': 'That room could not be found.',
+  'error.roomFull': 'The room is full. Try again later, or pick another room.',
+  'error.roomClosed': 'This room has closed. Pick another room.',
 };

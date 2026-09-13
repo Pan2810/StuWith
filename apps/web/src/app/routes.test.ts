@@ -109,6 +109,51 @@ const webPathnames: ReadonlyArray<readonly [string, string]> = Object.entries(co
   .map(([name, value]) => [name, value] as const);
 
 /**
+ * The route BUILDERS — Story 2.3, the same shape `seam-usage.test.ts` learned in
+ * Story 2.2 for `roomTokenPath`.
+ *
+ * A templated pathname is published twice: as the template the resolver keys on
+ * (`ROOM_PATHNAME`, `/phong/{roomId}`) and as a FUNCTION that fills the slot
+ * (`roomPathname(id)`). A product module links to a room by calling the function
+ * and never writes the constant's name, so rule B over constant names alone would
+ * report the create-room screen's "Vào phòng" link as "nothing leads here" — and
+ * a screen that DID write the template name into an `href` would be shipping a
+ * literal `{roomId}` in a URL.
+ *
+ * Discovered from the contract rather than listed: an export whose name ends in
+ * `Pathname`, is a function, and — handed a probe string per `{param}` slot —
+ * answers the template with the probe in every slot.
+ */
+const PROBE_PARAM = 'routes-probe';
+
+function buildersFor(template: string): readonly string[] {
+  const slots = (template.match(/\{[^}]+\}/g) ?? []).length;
+  if (slots === 0) {
+    return [];
+  }
+  const filled = template.replace(/\{[^}]+\}/g, PROBE_PARAM);
+  return Object.entries(contracts)
+    .filter(([name, value]) => /Pathname$/.test(name) && typeof value === 'function')
+    .filter(([, value]) => {
+      try {
+        return (
+          (value as (...parameters: string[]) => unknown)(
+            ...Array.from({ length: slots }, () => PROBE_PARAM),
+          ) === filled
+        );
+      } catch {
+        return false;
+      }
+    })
+    .map(([name]) => name);
+}
+
+/** Every name a product module may use to reach the route: the constant, and its builders. */
+function namesLeadingTo(name: string, pathname: string): readonly string[] {
+  return [name, ...buildersFor(pathname)];
+}
+
+/**
  * The App Router directory a pathname resolves to, or `null`.
  *
  * It understands the three spellings Next.js routes on that a `segments[0]` lookup
@@ -218,16 +263,33 @@ describe('rule B — something in the product leads to each route', () => {
       const own = routeDirectoryOf(pathname);
       expect(own, `no route serves ${pathname}`).not.toBeNull();
 
+      const leads = namesLeadingTo(name, pathname);
       const referrers = PRODUCT_FILES.filter(
-        (file) => !file.startsWith(`${own ?? ''}${sep()}`) && mentions(CODE.get(file) ?? '', name),
+        (file) =>
+          !file.startsWith(`${own ?? ''}${sep()}`) &&
+          leads.some((lead) => mentions(CODE.get(file) ?? '', lead)),
       );
 
       expect(
         referrers,
-        `nothing in apps/web outside ${own} names ${name}, so ${pathname} can only be reached by typing it`,
+        `nothing in apps/web outside ${own} names ${leads.join(' or ')}, so ${pathname} can only be reached by typing it`,
       ).not.toEqual([]);
     },
   );
+
+  it('knows the builder of a templated pathname, and only that builder', () => {
+    // The positive pin for the third spelling, and its negative: a flat pathname
+    // has no builder, and a function that fills a DIFFERENT template is not one.
+    expect(buildersFor('/phong/{roomId}')).toEqual(['roomPathname']);
+    expect(buildersFor('/dang-nhap')).toEqual([]);
+    expect(namesLeadingTo('ROOM_PATHNAME', '/phong/{roomId}')).toEqual([
+      'ROOM_PATHNAME',
+      'roomPathname',
+    ]);
+    // And a mention of the builder counts as a mention of the route.
+    expect(mentions('href={roomPathname(room.id)}', 'roomPathname')).toBe(true);
+    expect(mentions('href={roomTokenPath(room.id)}', 'roomPathname')).toBe(false);
+  });
 
   /**
    * The reverse direction, which the previous version of this file did not check at

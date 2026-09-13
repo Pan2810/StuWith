@@ -17,7 +17,13 @@ import {
   RATE_LIMITED_MESSAGE,
   UNAUTHENTICATED_MESSAGE,
 } from '../../packages/contracts/src/auth';
-import { CREATE_ROOM_INVALID_MESSAGE } from '../../packages/contracts/src/rooms';
+import {
+  CREATE_ROOM_INVALID_MESSAGE,
+  ROOM_ADMISSION_FORBIDDEN_MESSAGE,
+  ROOM_CLOSED_MESSAGE,
+  ROOM_FULL_MESSAGE,
+  ROOM_NOT_FOUND_MESSAGE,
+} from '../../packages/contracts/src/rooms';
 
 /**
  * Two rules over `apps/web/src/app`, and both are about a class rather than an
@@ -640,6 +646,12 @@ describe('rule 3 — the shared sentences are imported, never copied', () => {
     ['UNAUTHENTICATED_MESSAGE', UNAUTHENTICATED_MESSAGE],
     ['MONEY_IN_FORBIDDEN_MESSAGE', MONEY_IN_FORBIDDEN_MESSAGE],
     ['CREATE_ROOM_INVALID_MESSAGE', CREATE_ROOM_INVALID_MESSAGE],
+    // Story 2.3: the four token refusals the pre-join screen shows, chosen by
+    // status or by `details.reason` and never by matching the sentence.
+    ['ROOM_ADMISSION_FORBIDDEN_MESSAGE', ROOM_ADMISSION_FORBIDDEN_MESSAGE],
+    ['ROOM_NOT_FOUND_MESSAGE', ROOM_NOT_FOUND_MESSAGE],
+    ['ROOM_FULL_MESSAGE', ROOM_FULL_MESSAGE],
+    ['ROOM_CLOSED_MESSAGE', ROOM_CLOSED_MESSAGE],
   ] as const;
 
   const VI_SOURCE = readFileSync(VI_CATALOGUE, 'utf8');

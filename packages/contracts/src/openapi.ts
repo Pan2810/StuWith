@@ -23,6 +23,7 @@ import {
   PLAN_PARTICIPANT_LIMITS,
   ROOMS_PATH,
   ROOM_TOKEN_PATH_TEMPLATE,
+  ROOM_TOKEN_REFUSAL_REASONS,
   ROOM_TOKEN_TTL_SECONDS,
   ROOM_TOPICS,
   ROOM_VISIBILITIES,
@@ -575,8 +576,10 @@ function roomTokenPathItem(): Record<string, unknown> {
         },
         '409': {
           description:
-            'The room is closing or closed, or it is full. The message says which; ' +
-            'in either case no seat is reserved and nothing is written.',
+            'The room is closing or closed, or it is full. `error.details.reason` ' +
+            `says which — \`${ROOM_TOKEN_REFUSAL_REASONS.join('\` or \`')}\` — and a client ` +
+            'branches on that field, never on the sentence in `message`. In either ' +
+            'case no seat is reserved and nothing is written.',
           content: envelope,
         },
       },

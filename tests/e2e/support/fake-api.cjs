@@ -46,13 +46,39 @@ const {
   isUserPlan,
   REQUEST_ID_HEADER,
   ROOMS_PATH,
+  ROOM_ADMISSION_FORBIDDEN_MESSAGE,
+  ROOM_CLOSED_MESSAGE,
+  ROOM_FULL_MESSAGE,
+  ROOM_NOT_FOUND_MESSAGE,
+  ROOM_TOKEN_PATH_TEMPLATE,
+  ROOM_TOKEN_REFUSAL_REASONS,
+  ROOM_TOKEN_REFUSAL_REASON_KEY,
+  ROOM_TOKEN_TTL_SECONDS,
   SESSION_COOKIE_NAME,
   SESSION_REFRESHED_STATUS,
+  UNAUTHENTICATED_MESSAGE,
   currentUserSchema,
+  isRoomId,
+  makeError,
   parseCreateRoomRequest,
   parseDateOfBirth,
   roomSchema,
+  roomTokenResponseSchema,
 } = contracts;
+
+/**
+ * `POST /v1/rooms/{roomId}/token`, as a matcher over a concrete path.
+ *
+ * Built FROM the template the contract publishes rather than typed as a regex of
+ * its own, so a renamed route makes this fake stop answering rather than go on
+ * answering a path the product no longer calls. The captured segment is the room
+ * id as the browser sent it; `isRoomId` judges it exactly as `apps/api` does.
+ */
+const ROOM_TOKEN_PATH_PATTERN = new RegExp(
+  // `/` is not special inside a RegExp built from a string, so the template needs
+  // no escaping: only the `{roomId}` slot is rewritten, into one path segment.
+  `^${ROOM_TOKEN_PATH_TEMPLATE.replace('{roomId}', '([^/]+)')}$`,
+);
 
 /** Control surface. Not under `/v1` — nothing here may look like a real route. */
 const RESET_PATH = '/__e2e__/reset';
@@ -270,7 +296,28 @@ async function dispatch(req, res) {
        */
       roomsStatus: next?.roomsStatus ?? 201,
       roomsRetryAfterSeconds: next?.roomsRetryAfterSeconds ?? null,
+      /**
+       * Story 2.3. What `POST /v1/rooms/{roomId}/token` answers, and for a 409,
+       * which of the two reasons it carries.
+       *
+       * `201` is the default. `roomTokenReason` is `null` by default and STAYS
+       * null unless a spec sets it, so a spec asking for a 409 without a reason
+       * drives the "thiếu `reason` → câu chung" row of the matrix on purpose
+       * rather than by accident.
+       */
+      roomTokenStatus: next?.roomTokenStatus ?? 201,
+      roomTokenReason: next?.roomTokenReason ?? null,
     };
+    if (
+      state.roomTokenReason !== null &&
+      !ROOM_TOKEN_REFUSAL_REASONS.includes(state.roomTokenReason)
+    ) {
+      send(res, 400, {
+        error: 'ly-do-khong-hop-le',
+        detail: `unknown reason ${JSON.stringify(state.roomTokenReason)} — expected one of ${ROOM_TOKEN_REFUSAL_REASONS.join(', ')}`,
+      });
+      return;
+    }
     /**
      * Refused HERE, where the mistake is, rather than three hops later.
      *
@@ -445,6 +492,76 @@ async function dispatch(req, res) {
       }),
     );
     return;
+  }
+
+  /**
+   * Story 2.3's endpoint — the pre-join screen's "Vào phòng".
+   *
+   * The order of the checks is the order `RoomsService.issueRoomToken` runs them:
+   * a session first (401 before anything else, with the contract's own envelope
+   * and sentence), then the id (404 for a non-id and for an unknown room alike,
+   * one body), then the scenario's refusal, then a `201` whose body is built
+   * through the REAL `roomTokenResponseSchema` so this fake cannot drift from
+   * `apps/api` on the shape. Every refusal is a real `ErrorEnvelope` from the
+   * contract's `makeError`, and the two 409s carry `details.reason` exactly as the
+   * product does — which is what lets the browser spec drive the screen's two
+   * different sentences without comparing Vietnamese text.
+   */
+  const tokenMatch = ROOM_TOKEN_PATH_PATTERN.exec(url.pathname);
+  if (tokenMatch !== null) {
+    if (req.method !== 'POST') {
+      send(res, 405, { error: 'phuong-thuc-khong-dung' });
+      return;
+    }
+    if (!state.signedIn) {
+      send(res, 401, makeError('unauthenticated', UNAUTHENTICATED_MESSAGE));
+      return;
+    }
+    const roomId = decodeURIComponent(tokenMatch[1] ?? '');
+    if (!isRoomId(roomId)) {
+      send(res, 404, makeError('not_found', ROOM_NOT_FOUND_MESSAGE));
+      return;
+    }
+    switch (state.roomTokenStatus) {
+      case 201: {
+        const expiresAt = new Date(Date.now() + ROOM_TOKEN_TTL_SECONDS * 1_000).toISOString();
+        send(
+          res,
+          201,
+          roomTokenResponseSchema.parse({
+            // Obviously not a real JWT, and deliberately so: nothing in Story 2.3
+            // presents it anywhere, and a spec that finds it in the DOM has found
+            // a leak.
+            token: `e2e-token.${randomUUID()}`,
+            url: 'ws://127.0.0.1:7880',
+            expires_at: expiresAt,
+            room_id: roomId,
+          }),
+        );
+        return;
+      }
+      case 403:
+        send(res, 403, makeError('forbidden', ROOM_ADMISSION_FORBIDDEN_MESSAGE));
+        return;
+      case 404:
+        send(res, 404, makeError('not_found', ROOM_NOT_FOUND_MESSAGE));
+        return;
+      case 409: {
+        const reason = state.roomTokenReason;
+        const message = reason === 'room_closed' ? ROOM_CLOSED_MESSAGE : ROOM_FULL_MESSAGE;
+        send(
+          res,
+          409,
+          reason === null
+            ? makeError('conflict', message)
+            : makeError('conflict', message, { [ROOM_TOKEN_REFUSAL_REASON_KEY]: reason }),
+        );
+        return;
+      }
+      default:
+        send(res, state.roomTokenStatus, { error: 'khong-cap-duoc-token' });
+        return;
+    }
   }
 
   send(res, 404, { error: 'khong-tim-thay' });

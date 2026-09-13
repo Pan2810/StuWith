@@ -1,5 +1,5 @@
 import { expect, type Page } from '@playwright/test';
-import type { UserPlan } from '@stuwith/contracts';
+import type { RoomTokenRefusalReason, UserPlan } from '@stuwith/contracts';
 import { FAKE_API_BASE_URL } from '../../../playwright.config';
 
 /**
@@ -27,6 +27,8 @@ export const HOME_PATHNAME = '/';
 export const SIGN_IN_PATHNAME = '/dang-nhap';
 export const DATE_OF_BIRTH_PATHNAME = '/khai-ngay-sinh';
 export const CREATE_ROOM_PATHNAME = '/tao-phong';
+/** Story 2.3. Spelled by hand for the reason the four above are. */
+export const roomPathname = (roomId: string): string => `/phong/${roomId}`;
 
 export interface Scenario {
   readonly signedIn?: boolean;
@@ -63,6 +65,18 @@ export interface Scenario {
    */
   readonly roomsStatus?: number;
   readonly roomsRetryAfterSeconds?: number;
+  /**
+   * Story 2.3. What `POST /v1/rooms/{roomId}/token` answers — `201` when omitted —
+   * so a spec can drive every refusal the pre-join screen has a sentence for.
+   */
+  readonly roomTokenStatus?: number;
+  /**
+   * For a 409: which of the two reasons the envelope carries, or `null` (the
+   * default) for the Story 2.2 body with no `details` at all. Typed from the
+   * contract for the reason `plan` is: an argument this suite SENDS, refused at the
+   * fake rather than three hops later.
+   */
+  readonly roomTokenReason?: RoomTokenRefusalReason | null;
 }
 
 export async function scenario(page: Page, state: Scenario): Promise<void> {

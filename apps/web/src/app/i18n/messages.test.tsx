@@ -3,6 +3,10 @@ import {
   DATE_OF_BIRTH_INVALID_MESSAGE,
   MONEY_IN_FORBIDDEN_MESSAGE,
   RATE_LIMITED_MESSAGE,
+  ROOM_ADMISSION_FORBIDDEN_MESSAGE,
+  ROOM_CLOSED_MESSAGE,
+  ROOM_FULL_MESSAGE,
+  ROOM_NOT_FOUND_MESSAGE,
   UNAUTHENTICATED_MESSAGE,
   USER_ROLES,
 } from '@stuwith/contracts';
@@ -57,6 +61,11 @@ describe('every locale answers every key with a real sentence', () => {
     expect(vi['error.dateOfBirthAlreadySet']).toBe(DATE_OF_BIRTH_ALREADY_SET_MESSAGE);
     expect(vi['error.unauthenticated']).toBe(UNAUTHENTICATED_MESSAGE);
     expect(vi['error.moneyInForbidden']).toBe(MONEY_IN_FORBIDDEN_MESSAGE);
+    // Story 2.3: the four token refusals.
+    expect(vi['error.roomForbidden']).toBe(ROOM_ADMISSION_FORBIDDEN_MESSAGE);
+    expect(vi['error.roomNotFound']).toBe(ROOM_NOT_FOUND_MESSAGE);
+    expect(vi['error.roomFull']).toBe(ROOM_FULL_MESSAGE);
+    expect(vi['error.roomClosed']).toBe(ROOM_CLOSED_MESSAGE);
   });
 });
 

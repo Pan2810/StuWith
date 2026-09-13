@@ -131,6 +131,32 @@ export default defineConfig({
          * second one and sets its own locale per context.
          */
         locale: 'vi-VN',
+        /**
+         * Story 2.3. Fake devices, granted up front.
+         *
+         * `--use-fake-device-for-media-stream` gives `getUserMedia` a synthetic
+         * camera (a moving test pattern) and a synthetic microphone (a periodic
+         * tone), so a track really exists, really has a `readyState`, and really
+         * reaches `ended` when the screen stops it. `--use-fake-ui-for-media-stream`
+         * answers the permission prompt without a dialog, and `permissions` grants
+         * the two permissions to the context so no spec has to. The REFUSED cases
+         * are not produced by withholding these: `phong.spec.ts` overrides
+         * `navigator.mediaDevices.getUserMedia` with `addInitScript` to throw the
+         * named `DOMException`, which is a seam inside the browser rather than a
+         * product seam, and is documented as such there.
+         *
+         * `--autoplay-policy=no-user-gesture-required` lets the `AudioContext`
+         * behind the microphone meter start without a click, which is what makes
+         * "the meter moves" an assertion rather than a hope.
+         */
+        launchOptions: {
+          args: [
+            '--use-fake-device-for-media-stream',
+            '--use-fake-ui-for-media-stream',
+            '--autoplay-policy=no-user-gesture-required',
+          ],
+        },
+        permissions: ['camera', 'microphone'],
       },
     },
   ],
@@ -150,7 +176,15 @@ export default defineConfig({
         // Required from Story 1.2 on. No provider is enabled here, so no
         // credential is needed: `AUTH_ENABLED_PROVIDERS` defaults to empty and
         // every `/v1/auth/:provider/start` answers 404.
-        WEB_BASE_URL: 'http://127.0.0.1:3000',
+        /**
+         * The E2E WEB ORIGIN, not the dev server's. This is what `apps/api` puts
+         * in `Access-Control-Allow-Origin`, and Story 2.3's boundary probe
+         * (`web/phong-token-seam.spec.ts`) has a page on THIS origin call the real
+         * API with `credentials: 'include'`. While this said `:3000` the browser
+         * refused every such call before any header could be read, and a probe
+         * that cannot be green cannot go red for the right reason either.
+         */
+        WEB_BASE_URL,
         OAUTH_REDIRECT_BASE_URL: API_BASE_URL,
         // Required from Story 1.3 part 2 on, with no default: every wrong value is
         // silent, so the process refuses to start rather than guess. The smoke test

@@ -28,14 +28,72 @@ import { healthResponseSchema } from './health';
 import { toOpenApiDocument } from './openapi';
 import {
   MAX_ROOM_DESCRIPTION_LENGTH,
+  ROOM_CLOSED_MESSAGE,
+  ROOM_FULL_MESSAGE,
+  ROOM_PATHNAME,
   ROOM_TOKEN_PATH_TEMPLATE,
+  ROOM_TOKEN_REFUSAL_REASONS,
+  ROOM_TOKEN_REFUSAL_REASON_KEY,
   ROOM_TOKEN_TTL_SECONDS,
   ROOM_TOPICS,
   ROOM_VISIBILITIES,
   parseCreateRoomRequest,
+  roomPathname,
   roomTokenPath,
+  roomTokenRefusalReason,
   roomTokenResponseSchema,
 } from './rooms';
+
+describe('the room screen and the 409 reason (Story 2.3)', () => {
+  it('turns the pathname template into a concrete route for one room', () => {
+    const id = '019200f1-0000-7000-8000-000000000001';
+    expect(roomPathname(id)).toBe(`/phong/${id}`);
+    // The template keeps its placeholder, in the same spelling the token route
+    // uses, so `routes.test.ts` can resolve it against `phong/[roomId]`.
+    expect(ROOM_PATHNAME).toBe('/phong/{roomId}');
+    expect(ROOM_PATHNAME).not.toMatch(/^\/v1/);
+  });
+
+  it('escapes a room id that is not a bare token, so a link cannot rewrite the route', () => {
+    expect(roomPathname('a/b')).toBe('/phong/a%2Fb');
+  });
+
+  it('publishes exactly the two refusal reasons, one per 409 sentence', () => {
+    // Two sentences, two reasons: a third refusal added to the service has to be
+    // given a reason here, or the pre-join screen shows the general sentence for it.
+    expect([...ROOM_TOKEN_REFUSAL_REASONS].sort()).toEqual(['room_closed', 'room_full']);
+    expect(ROOM_TOKEN_REFUSAL_REASON_KEY).toBe('reason');
+  });
+
+  it.each(ROOM_TOKEN_REFUSAL_REASONS)('reads %s back out of a conflict envelope', (reason) => {
+    const message = reason === 'room_full' ? ROOM_FULL_MESSAGE : ROOM_CLOSED_MESSAGE;
+    const body = makeError('conflict', message, { [ROOM_TOKEN_REFUSAL_REASON_KEY]: reason });
+    // Still a valid envelope — `details` is the narrow record `error.ts` allows.
+    expect(errorEnvelopeSchema.safeParse(body).success).toBe(true);
+    expect(roomTokenRefusalReason(body)).toBe(reason);
+  });
+
+  it('answers null for every other shape, so a screen never guesses which refusal it was', () => {
+    // The Story 2.2 body, with no `details` at all: the case this field was added
+    // for, and the one an older server still answers.
+    expect(roomTokenRefusalReason(makeError('conflict', ROOM_FULL_MESSAGE))).toBeNull();
+    // A reason outside the closed list is not a reason.
+    expect(
+      roomTokenRefusalReason(makeError('conflict', ROOM_FULL_MESSAGE, { reason: 'room_on_fire' })),
+    ).toBeNull();
+    // And the function is total over `unknown`: nothing here throws.
+    for (const junk of [null, undefined, 'room_full', 42, [], {}, { error: null }, { error: {} }]) {
+      expect(roomTokenRefusalReason(junk)).toBeNull();
+    }
+  });
+
+  it('does NOT read the reason off the sentence — a re-worded message still parses', () => {
+    // The whole point of the field: the wire's wording may change and the client
+    // keeps working, because it never compared strings.
+    const body = makeError('conflict', 'Phòng này hết chỗ rồi.', { reason: 'room_full' });
+    expect(roomTokenRefusalReason(body)).toBe('room_full');
+  });
+});
 
 describe('the room-token contract (Story 2.2)', () => {
   it('turns the template into a concrete path for one room', () => {
@@ -369,6 +427,20 @@ describe('OpenAPI emission (AD-13)', () => {
       // route never gives; and a `409` with two meanings is documented as such.
       const post = tokenRoute()['post'] as { responses: Record<string, unknown> };
       expect(Object.keys(post.responses).sort()).toEqual(['201', '401', '403', '404', '409']);
+    });
+
+    it('tells an integrator the 409 carries `details.reason`, and names both values', () => {
+      // Story 2.3: the sentence used to say "The message says which", which is the
+      // exact instruction the contract's own docblock tells clients NOT to follow.
+      const post = tokenRoute()['post'] as {
+        responses: Record<string, { description: string }>;
+      };
+      const description = post.responses['409']?.description ?? '';
+      expect(description).toContain('details.reason');
+      for (const reason of ROOM_TOKEN_REFUSAL_REASONS) {
+        expect(description).toContain(reason);
+      }
+      expect(description).not.toContain('The message says which');
     });
   });
 

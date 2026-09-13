@@ -621,6 +621,177 @@ a {
   outline-offset: 2px;
 }
 
+/* ===================== pre-join (Story 2.3) ===================== */
+
+/*
+  Khung xem trước: 4:3, viền ink, bo `rounded-lg` như `pre-join.html`. Nền là
+  `surface-raised` (trạng thái Ẩn mặt — avatar trên nền thẻ); khi có `<video>` thì
+  video phủ kín khung nên nền không nhìn thấy. `overflow: hidden` ở đây là hợp lệ
+  với luật cắt vòng focus của `he-thiet-ke.spec.ts`: bên trong không có control
+  focus được nào — `<video>` không có `controls`, avatar là `role="img"`.
+*/
+.preview {
+  position: relative;
+  aspect-ratio: 4 / 3;
+  max-width: 100%;
+  min-width: 0;
+  border: 2px solid var(--border-ink);
+  border-radius: var(--rounded-lg);
+  background: var(--surface-raised);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+/*
+  Lật gương (`scaleX(-1)`): người ta quen nhìn mình trong gương, và một khung
+  xem trước KHÔNG lật là thứ khiến người dùng nghiêng sai bên. Chỉ áp cho xem
+  trước cục bộ — track đi lên phòng (2.4) không đi qua CSS.
+*/
+.preview-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scaleX(-1);
+}
+
+/* Nhãn trạng thái ở góc khung — viên thuốc ink trên nền raised, như mockup. */
+.preview-label {
+  position: absolute;
+  top: var(--spacing-3);
+  left: var(--spacing-3);
+  z-index: 1;
+  padding: var(--spacing-2) var(--spacing-4);
+  border-radius: var(--rounded-full);
+  border: 2px solid var(--border-ink);
+  background: var(--surface-raised);
+  color: var(--ink-primary);
+  font-size: var(--typography-label-font-size);
+  font-weight: var(--typography-label-font-weight);
+  line-height: var(--typography-label-line-height);
+  max-width: calc(100% - 2 * var(--spacing-3));
+}
+
+/*
+  Avatar chữ cái — `tile-avatar-bg` là token DESIGN.md dành riêng cho ô avatar
+  trong lưới, nên pre-join dùng đúng nó để người dùng thấy thứ người khác sẽ thấy.
+  Nghiêng -3deg là chữ ký của hệ "Cắm trại" trong `pre-join.html`; dưới
+  `prefers-reduced-motion` nó vẫn nghiêng vì đó là hình dạng, không phải chuyển động.
+*/
+.avatar-letter {
+  /*
+    Vuông theo chiều cao khung: ở cột 320px khung 4:3 chỉ cao ~216px, nên ô
+    110px cố định chiếm nửa khung; theo tỉ lệ nó co lại cùng khung, và có trần
+    để trên màn rộng không phình thành poster.
+  */
+  width: clamp(var(--spacing-12), 40%, 110px);
+  aspect-ratio: 1 / 1;
+  border-radius: var(--rounded-xl);
+  background: var(--tile-avatar-bg);
+  border: 2px solid var(--border-ink);
+  color: var(--ink-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--typography-display-font-size);
+  font-weight: var(--typography-display-font-weight);
+  line-height: var(--typography-display-line-height);
+  letter-spacing: var(--typography-display-letter-spacing);
+  transform: rotate(-3deg);
+}
+
+/*
+  Lựa chọn bị vô hiệu (Filter — "Sắp có"; Để nguyên khi không có camera) đọc được
+  bằng CẶP MÀU THẬT như nút vô hiệu — `ink-secondary` trên `surface-sunken` —
+  không bằng `opacity`, vì lý do `contrast.test.ts` ghi lại cho nút.
+*/
+.choice:has(input[type="radio"]:disabled) {
+  background: var(--surface-sunken);
+  color: var(--ink-secondary);
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+/* Câu xác nhận khi Ẩn mặt: biến thể `ok` của `.notice`, cặp màu của `chip-status.ok`. */
+.notice-ok {
+  background: var(--ok-container);
+  color: var(--ok);
+}
+
+/*
+  Vạch mic: một `role="meter"` CÓ CHỮ bên cạnh. Vạch là kênh thứ hai; câu
+  "Nghe rõ"/"Chưa nghe thấy" là kênh thứ nhất (WCAG 1.4.1). `overflow: hidden`
+  trên rãnh là để cắt phần tô, và rãnh không phải control focus được.
+*/
+.mic-level {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-3);
+  min-width: 0;
+}
+
+.mic-level-track {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 12px;
+  border-radius: var(--rounded-full);
+  border: 2px solid var(--border-ink);
+  background: var(--surface-raised);
+  overflow: hidden;
+}
+
+.mic-level-fill {
+  display: block;
+  height: 100%;
+  background: var(--primary);
+  transition: width var(--motion-duration-fast) var(--motion-easing-standard);
+}
+
+/*
+  Khối hướng dẫn khi trình duyệt chặn: thẻ `warn-container` nổi mức 2, tiêu đề
+  màu `warn`, thân chữ `ink-primary` — cả ba cặp đo trong `contrast.test.ts`.
+  Không bao giờ là ngõ cụt: hai nút thoát nằm ngay trong khối.
+*/
+.permission-help {
+  border: 2px solid var(--border-ink);
+  border-radius: var(--rounded-lg);
+  background: var(--warn-container);
+  color: var(--ink-primary);
+  padding: var(--spacing-6);
+  box-shadow: var(--shadow-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-3);
+  min-width: 0;
+}
+
+.permission-help > h2 {
+  color: var(--warn);
+  margin: 0;
+}
+
+.permission-help > p {
+  margin: 0;
+}
+
+.permission-help ol {
+  margin: 0;
+  padding-left: var(--spacing-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-2);
+}
+
+/* Hàng nút: xuống dòng ở 320px, không cắt chữ. */
+.pre-join-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-3);
+}
+
 /* ======================= danh sách provider ======================= */
 
 .provider-list {

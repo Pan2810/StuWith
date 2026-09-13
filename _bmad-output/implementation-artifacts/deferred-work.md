@@ -555,9 +555,51 @@ Mười mục dưới đây do vòng review 1 của `bmad-code-review` phát hi�
 - source_spec: `_bmad-output/implementation-artifacts/spec-2-2-cap-token-vao-phong.md`
   summary: `409` của route token mang HAI nghĩa (phòng đóng / phòng đầy) với cùng `code: 'conflict'`, không `details` — client chỉ phân biệt được bằng câu tiếng Việt.
   evidence: `packages/contracts/src/rooms.ts` docblock các câu từ chối nói client "đọc STATUS chứ không đọc câu", còn `openapi.ts` mô tả 409 nói "The message says which". Hai câu `ROOM_FULL_MESSAGE`/`ROOM_CLOSED_MESSAGE` đều export từ contracts nên màn hình 2.3 so sánh được, nhưng đó là so chuỗi hiển thị. Thêm `details` máy-đọc-được hoặc một `code` thứ hai là thay đổi hợp đồng và `ERROR_CODES` là Ask First của spec 2.2. Chủ tự nhiên: Story 2.3 (màn pre-join), nơi lần đầu có người cần rẽ nhánh UI trên hai nghĩa này.
-  status: CHƯA CÓ CHỦ (2026-09-13, review vòng 2 của spec 2.2 — thuộc 2.3).
+  status: ĐÃ ĐÓNG (2026-09-13, Story 2.3). `packages/contracts/src/rooms.ts` thêm `ROOM_TOKEN_REFUSAL_REASONS = ['room_full','room_closed']`, khoá `ROOM_TOKEN_REFUSAL_REASON_KEY = 'reason'` và parser `roomTokenRefusalReason(body)` (zod, không cast, `null` cho mọi hình dạng khác); `rooms.service.ts` gắn `{ reason }` vào `details` của cả hai 409 — `details` vốn đã tuỳ chọn trên envelope nên đây là thay đổi tương thích (AD-13), không thêm mã vào `ERROR_CODES`; `openapi.ts` mô tả 409 nêu `details.reason`. `room-token.flow.test.ts` đọc lại qua parser; màn pre-join (`joinOutcomeFor`) rẽ nhánh trên `reason`, và thiếu `reason` thì hiện câu chung "Không vào được phòng lúc này" chứ không đoán — `tests/e2e/web/phong.spec.ts` chạy cả ba trường hợp trong trình duyệt.
 
 - source_spec: `_bmad-output/implementation-artifacts/spec-2-2-cap-token-vao-phong.md`
   summary: Đường `500` không đi qua `ErrorEnvelope` — Nest trả `{statusCode, message}` mặc định, trái với "một hình dạng lỗi duy nhất toàn hệ thống" mà contracts công bố; có từ trước 2.2.
   evidence: `apps/api` chỉ đăng ký `RateLimitedFilter` dưới `APP_FILTER`; một fault ném từ `issueRoomToken` (và từ `AuthService` từ Epic 1) rơi vào exception filter mặc định của Nest. Hai ca fault trong `room-token.flow.test.ts` chỉ khẳng định body không có `token` và không lộ message; OpenAPI không liệt kê `500`. Không do 2.2 gây ra — mọi route từ 1.2 cùng cảnh — nên không sửa ở đây; sửa là một filter toàn cục + pin hình dạng ở một suite, một quyết định cho cả process.
   status: CHƯA CÓ CHỦ (2026-09-13, review vòng 2 của spec 2.2 — có từ Epic 1).
+
+## Deferred from: spec-2-3-man-pre-join (2026-09-13)
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-3-man-pre-join.md`
+  summary: Pre-join KHÔNG có thẻ thông tin phòng (tên, host, gói, đang có mặt) như mockup `pre-join.html` — chưa có endpoint đọc phòng.
+  evidence: Mockup pre-join vẽ một thẻ bên phải: tên phòng, host kèm huy hiệu, gói, "Đang có mặt 6 / 25", mô tả. Hôm nay `/v1` chỉ có `POST /v1/rooms` (tạo) và `POST /v1/rooms/{roomId}/token` (cấp token); không có `GET /v1/rooms/{id}` và thêm nó là Ask First của spec 2.3. Màn pre-join vì thế chỉ biết `roomId` từ URL và hồ sơ của chính người dùng; người vào phòng chỉ thấy tên phòng sau khi 2.4 nối. Số "đang có mặt" còn phức tạp hơn: `room_participants` do gateway ghi theo tín hiệu LiveKit (trễ vài giây) còn `room_reservations` là chỗ đang giữ — hai con số khác nhau, và endpoint đọc phòng phải chọn một và nói rõ. Chủ: Story 2.4, cùng lúc dựng endpoint đọc phòng cho vỏ phòng.
+  status: CHƯA CÓ CHỦ (2026-09-13, Story 2.3 — thuộc 2.4 theo spec).
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-3-man-pre-join.md`
+  summary: Người chưa đăng nhập vào `/phong/{id}` thấy đồng thời HAI bộ link đăng nhập — của trang và của dialog "Phiên đăng nhập đã kết thúc" — vì seam coi mọi 401 ngoài `/dang-nhap` là phiên vừa chết.
+  evidence: `authorizedCall` thử `/v1/auth/refresh` rồi `nextSessionExpiry` mở dialog cho mọi 401 sống sót ngoài trang đăng nhập; `/tao-phong` và `/khai-ngay-sinh` cùng hành vi (epic-2-context đã ghi "seam phiên hết hạn ... mở dialog sai khi người dùng chủ động đăng xuất"). Với pre-join, hệ quả là một khách chưa từng đăng nhập đọc "Phiên đăng nhập đã kết thúc" trên một trang họ mở lần đầu, và bốn link provider xuất hiện hai lần (dialog + `<nav>` của trang; `phong.spec.ts` phải scope vào `navigation` để không vi phạm strict mode). Không sửa trong 2.3 vì đây là quyết định cho seam (phân biệt "chưa từng có phiên" với "phiên vừa hết" cần một tín hiệu từ `/v1/auth/me` hoặc từ cookie) và ảnh hưởng cả ba màn hình.
+  status: CHƯA CÓ CHỦ (2026-09-13, Story 2.3 — cùng mục seam của epic-2-context).
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-3-man-pre-join.md`
+  summary: Probe phủ định của 2.3 (không `RTCPeerConnection`/`WebSocket`, không request rời web/fake-api) chỉ có mutation PHÍA CLIENT — ranh giới trình duyệt ↔ LiveKit chưa mở nên chưa có mutation phía xa.
+  evidence: `tests/e2e/web/phong.spec.ts` bọc hai constructor bằng `addInitScript` và nghe `page.on('request')`; mở `new WebSocket(url)` ở pre-join làm nó đỏ. Nhưng "phía xa" của ranh giới media là LiveKit và 2.3 không nối nó, nên không có cấu hình server nào để đổi cho probe đỏ. Story 2.4 mở ranh giới đó và phải khai probe MỚI có mutation phía LiveKit (ví dụ đổi `LIVEKIT_URL`/key ký token → kết nối bị từ chối), đồng thời giữ probe phủ định này cho giai đoạn pre-join.
+  status: CHƯA CÓ CHỦ (2026-09-13, Story 2.3 — thuộc 2.4).
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-3-man-pre-join.md`
+  summary: Máy có camera nhưng không có micro rơi vào trạng thái `no-mic` và mất luôn lựa chọn khuôn mặt — cần lần thử `{video:true}` thứ ba và một trạng thái `granted-no-mic` có radiogroup nhưng không có vạch mic.
+  evidence: `requestDevices` trong `apps/web/src/app/phong/[roomId]/page.tsx` chỉ thử `{video,audio}` rồi `{audio}`; ma trận đóng băng của 2.3 định nghĩa đúng hai bước đó nên đây là mở rộng, không phải lỗi so với spec. Review vòng 1 (edge-case + blind) cùng nêu. Chủ tự nhiên: 2.4 hoặc 2.7 khi chạm lại pipeline thiết bị.
+  status: CHƯA CÓ CHỦ (2026-09-13, review vòng 1 spec 2.3).
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-3-man-pre-join.md`
+  summary: Track camera/mic kết thúc từ bên ngoài (rút thiết bị, OS thu hồi, app khác chiếm) không được lắng nghe — xem trước đóng băng, `device` vẫn `granted`, "Vào phòng" gửi `faceMode:'show'` cho một camera đã chết.
+  evidence: `adoptStream` không gắn `ended` listener lên track. Hậu quả ở 2.3 chỉ là xem trước đứng hình; ở 2.4 khi publish track thì đây là lỗi thật. Chủ: 2.4.
+  status: CHƯA CÓ CHỦ (2026-09-13, review vòng 1 spec 2.3).
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-3-man-pre-join.md`
+  summary: `NotReadableError` trên lần xin `{video,audio}` (camera đang bị app khác giữ) đi thẳng tới `unreadable` mà không thử `{audio}` riêng, nên người có mic tốt bị đẩy sang "chỉ để nghe".
+  evidence: `deviceStateFor` xếp `NotReadableError` vào `unreadable` ở mọi stage; ma trận đóng băng ghi "Lỗi thiết bị khác → câu chung + Vào phòng chỉ để nghe" nên mã đúng spec. Cải tiến: retry audio-only cho `unreadable` ở stage `both`. Chủ: cùng chỗ với mục camera-không-mic ở trên.
+  status: CHƯA CÓ CHỦ (2026-09-13, review vòng 1 spec 2.3).
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-3-man-pre-join.md`
+  summary: OpenAPI mô tả `details.reason` của 409 token chỉ bằng văn xuôi; response vẫn `$ref` `ErrorEnvelope` chung nên client sinh từ tài liệu không có enum `ROOM_TOKEN_REFUSAL_REASONS`.
+  evidence: `packages/contracts/src/openapi.ts` `roomTokenPathItem()` 409; thêm một component `RoomTokenRefusal` với `reason` enum là thay đổi tương thích nhưng ngoài Tasks của 2.3. Chủ: story đầu tiên sinh client từ OpenAPI, hoặc 2.4.
+  status: CHƯA CÓ CHỦ (2026-09-13, review vòng 1 spec 2.3).
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-3-man-pre-join.md`
+  summary: `RoomDecision.expiresAt` tới `RoomShell` nhưng không ai quan sát — ngồi ở vỏ phòng quá 120 giây là cầm token chết và chỗ đã hết hạn mà không có tín hiệu nào.
+  evidence: `apps/web/src/app/phong/[roomId]/room-shell.tsx` chỉ hiển thị tóm tắt; 2.3 không nối LiveKit nên chưa có hậu quả, nhưng 2.4 phải nối trong cửa sổ TTL hoặc xin lại token (cùng người xin lại = gia hạn, spec 2.2). Chủ: 2.4.
+  status: CHƯA CÓ CHỦ (2026-09-13, review vòng 1 spec 2.3).

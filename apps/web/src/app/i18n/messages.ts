@@ -4,6 +4,10 @@ import {
   DATE_OF_BIRTH_INVALID_MESSAGE,
   MONEY_IN_FORBIDDEN_MESSAGE,
   RATE_LIMITED_MESSAGE,
+  ROOM_ADMISSION_FORBIDDEN_MESSAGE,
+  ROOM_CLOSED_MESSAGE,
+  ROOM_FULL_MESSAGE,
+  ROOM_NOT_FOUND_MESSAGE,
   UNAUTHENTICATED_MESSAGE,
   type UserRole,
 } from '@stuwith/contracts';
@@ -154,6 +158,8 @@ const VI_MESSAGES = {
   'createRoom.capacity.one': 'Phòng này nhận tối đa {count} người.',
   'createRoom.capacity.other': 'Phòng này nhận tối đa {count} người.',
   'createRoom.createAnother': 'Tạo phòng khác',
+  /** Story 2.3 — the way ONWARD from a created room: its pre-join screen. */
+  'createRoom.enterRoom': 'Vào phòng',
   'createRoom.signedOut': 'Bạn cần đăng nhập trước khi tạo phòng.',
   'createRoom.toSignIn': 'Tới trang đăng nhập',
   'createRoom.sessionLost': 'Phiên đăng nhập đã kết thúc. Hãy đăng nhập lại rồi thử lại.',
@@ -186,16 +192,103 @@ const VI_MESSAGES = {
   'role.unknown': 'Thành viên',
 
   /**
-   * The six sentences `packages/contracts` owns, IMPORTED rather than retyped.
+   * Story 2.3 — the pre-join screen at `/phong/{roomId}`.
+   *
+   * The screen's first state IS pre-join; the room shell below it renders only
+   * from an `admitted` state, so there is no URL that skips the decision. Three
+   * face modes are one radio group (Filter is present and disabled — Story 2.7),
+   * the permission help is three steps per browser family, and every exit from a
+   * refused device is a way INTO the room rather than a wall.
+   *
+   * The 15 help steps are separate keys rather than one sentence with a slot: a
+   * browser's own menu wording differs per family and a translator gets a whole
+   * sentence each time. Step 3 reads the same in every family, on purpose — it is
+   * the same action — and stays five keys so a family can diverge later without
+   * touching the others.
+   */
+  'preJoin.checkingSession': 'Đang kiểm tra phiên đăng nhập trước khi vào phòng…',
+  'preJoin.heading': 'Trước khi vào, bạn muốn hiện thế nào?',
+  'preJoin.subheading': 'Chỉ mình bạn thấy khung hình này. Đổi lại bất cứ lúc nào khi đã vào phòng.',
+  'preJoin.requestingDevices': 'Đang xin quyền camera và micro…',
+  'preJoin.signedOut': 'Bạn cần đăng nhập trước khi vào phòng.',
+  'preJoin.signInHint': 'Đăng nhập xong, bạn sẽ quay lại đúng phòng này.',
+  'preJoin.modeLegend': 'Chế độ khuôn mặt',
+  'preJoin.modeShow': 'Để nguyên',
+  'preJoin.modeHide': 'Ẩn mặt',
+  'preJoin.modeFilter': 'Filter',
+  'preJoin.comingSoon': 'Sắp có',
+  'preJoin.showNotice': 'Khuôn mặt bạn sẽ hiện với mọi người trong phòng.',
+  'preJoin.hideNotice': 'Bạn đang ẩn mặt. Không ai trong phòng thấy khuôn mặt bạn, kể cả host.',
+  'preJoin.previewLabelShow': 'Đang hiện mặt',
+  'preJoin.previewVideoLabel': 'Khung xem trước camera của bạn — chỉ mình bạn thấy',
+  'preJoin.previewLabelHide': 'Đang ẩn mặt',
+  'preJoin.previewNoteShow': 'Người khác sẽ thấy khuôn mặt thật của bạn.',
+  'preJoin.previewNoteHide': 'Người khác sẽ thấy avatar này thay cho khuôn mặt bạn.',
+  'preJoin.avatarLabel': 'Avatar chữ cái của bạn',
+  'preJoin.micHeading': 'Thử mic',
+  'preJoin.micMeterLabel': 'Mức âm micro',
+  'preJoin.micQuiet': 'Chưa nghe thấy',
+  'preJoin.micLoud': 'Nghe rõ',
+  'preJoin.noMic': 'Không thấy micro. Bạn vẫn vào phòng và dùng chat được.',
+  'preJoin.noCamera': 'Không thấy camera. Bạn sẽ vào phòng với avatar chữ cái.',
+  'preJoin.notRecorded': 'Buổi học không được ghi lại.',
+  'preJoin.blockedHeading': 'Trình duyệt đang chặn camera và micro',
+  'preJoin.blockedIntro': 'Bạn không cần camera để học. Nhưng nếu muốn bật, làm theo ba bước sau:',
+  'preJoin.help.chrome.1': 'Bấm biểu tượng ổ khoá (hoặc biểu tượng điều khiển trang) bên trái thanh địa chỉ.',
+  'preJoin.help.chrome.2': 'Bật Camera và Micro cho trang này.',
+  'preJoin.help.chrome.3': 'Tải lại trang này.',
+  'preJoin.help.edge.1': 'Bấm biểu tượng ổ khoá bên trái thanh địa chỉ.',
+  'preJoin.help.edge.2': 'Ở mục Quyền của trang, chọn “Cho phép” cho Camera và Micro.',
+  'preJoin.help.edge.3': 'Tải lại trang này.',
+  'preJoin.help.firefox.1': 'Bấm biểu tượng quyền (camera gạch chéo) bên trái thanh địa chỉ.',
+  'preJoin.help.firefox.2': 'Bỏ chặn Camera và Micro.',
+  'preJoin.help.firefox.3': 'Tải lại trang này.',
+  'preJoin.help.safari.1': 'Mở menu Safari, chọn “Cài đặt cho trang web này”.',
+  'preJoin.help.safari.2': 'Chọn “Cho phép” ở mục Camera và Micro.',
+  'preJoin.help.safari.3': 'Tải lại trang này.',
+  'preJoin.help.other.1': 'Mở phần cài đặt quyền của trang trong trình duyệt.',
+  'preJoin.help.other.2': 'Cho phép Camera và Micro.',
+  'preJoin.help.other.3': 'Tải lại trang này.',
+  'preJoin.unreadable': 'Không mở được camera/micro. Bạn vẫn vào phòng chỉ để nghe được.',
+  'preJoin.retryPermission': 'Thử lại quyền',
+  'preJoin.joinListenOnly': 'Vào phòng chỉ để nghe',
+  'preJoin.listenOnlyNote': 'Vào chỉ để nghe vẫn dùng được chat cả phòng và hỏi riêng bằng chữ.',
+  'preJoin.join': 'Vào phòng',
+  'preJoin.joining': 'Đang xin vào phòng…',
+  'preJoin.sessionLost': 'Phiên đăng nhập đã kết thúc. Hãy đăng nhập lại rồi thử lại.',
+  'preJoin.joinFailed': 'Không vào được phòng lúc này.',
+  'preJoin.joinTryAgain': 'Chưa vào được phòng. Hãy thử lại.',
+  'preJoin.retryJoin': 'Thử lại',
+  'preJoin.toCreateRoom': 'Về trang tạo phòng',
+
+  /**
+   * Story 2.3 — the room shell, rendered only once a token has been issued.
+   *
+   * It says what was decided and nothing more: Story 2.4 mounts the media here.
+   */
+  'room.heading': 'Bạn đã vào phòng',
+  'room.faceShow': 'Bạn đang để nguyên khuôn mặt.',
+  'room.faceHide': 'Bạn đang ẩn mặt.',
+  'room.audioMic': 'Micro của bạn đang bật.',
+  'room.audioListenOnly': 'Bạn vào chỉ để nghe.',
+  'room.notRecorded': 'Buổi học này không được ghi lại.',
+
+  /**
+   * The ten sentences `packages/contracts` owns, IMPORTED rather than retyped.
    *
    * One string, two consumers — `apps/api` puts it on the wire, this catalogue puts
    * it on a screen — and no copy for an edit to miss. Retyping any of them here is
    * the exact defect `tests/gates/i18n-catalogue.test.ts` refuses: it holds this
    * file's text against the contract's own constants.
    *
-   * Two of the six (`unauthenticated`, `moneyInForbidden`) are not rendered by any
+   * Two of them (`unauthenticated`, `moneyInForbidden`) are not rendered by any
    * screen today. They are here because the rule is about the STRING having one
    * home, and because Epic 3 hides money controls behind the second of them.
+   *
+   * The four `room*` sentences arrived with Story 2.3: the pre-join screen chooses
+   * one by STATUS (403, 404) or by `details.reason` (the two 409s) — never by
+   * comparing the sentence the wire sent, which is why the wire's wording and this
+   * catalogue's can be one constant without the client depending on it.
    */
   'error.rateLimited': RATE_LIMITED_MESSAGE,
   'error.dateOfBirthInvalid': DATE_OF_BIRTH_INVALID_MESSAGE,
@@ -203,6 +296,10 @@ const VI_MESSAGES = {
   'error.createRoomInvalid': CREATE_ROOM_INVALID_MESSAGE,
   'error.unauthenticated': UNAUTHENTICATED_MESSAGE,
   'error.moneyInForbidden': MONEY_IN_FORBIDDEN_MESSAGE,
+  'error.roomForbidden': ROOM_ADMISSION_FORBIDDEN_MESSAGE,
+  'error.roomNotFound': ROOM_NOT_FOUND_MESSAGE,
+  'error.roomFull': ROOM_FULL_MESSAGE,
+  'error.roomClosed': ROOM_CLOSED_MESSAGE,
 };
 
 /** Every key a component may name. Derived, so the catalogue is the only list. */
