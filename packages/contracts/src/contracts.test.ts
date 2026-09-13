@@ -304,7 +304,7 @@ describe('OpenAPI emission (AD-13)', () => {
    * `POST /v1/rooms/{roomId}/token`, read back out of the emitted document.
    *
    * Same posture as the create-room block: the route, the component and the
-   * parameter each fail on a different single-line deletion in `roomTokenPath()`,
+   * parameter each fail on a different single-line deletion in `roomTokenPathItem()`,
    * and a generated client reads THIS document rather than the NestJS decorator.
    */
   describe('the room-token endpoint', () => {
@@ -319,15 +319,21 @@ describe('OpenAPI emission (AD-13)', () => {
       expect(Object.keys(tokenRoute())).not.toContain('delete');
     });
 
-    it('declares roomId as a required path parameter', () => {
+    it('declares roomId as a required path parameter, in the same uuid format as Room.id', () => {
       // A template path with no declared parameter is one a generator refuses or,
-      // worse, renders as a literal `{roomId}` in the URL it builds.
+      // worse, renders as a literal `{roomId}` in the URL it builds. And the
+      // parameter IS a room id: a bare `string` here would have a generated client
+      // accept what the server 404s, while `Room.id` and `room_id` say `uuid`.
       const post = tokenRoute()['post'] as {
         parameters?: ReadonlyArray<{ name: string; in: string; required?: boolean }>;
       };
       expect(post.parameters).toEqual([
-        { name: 'roomId', in: 'path', required: true, schema: { type: 'string' } },
+        { name: 'roomId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } },
       ]);
+      const room = doc.components.schemas['Room'] as {
+        properties: Record<string, { format?: string }>;
+      };
+      expect(room.properties['id']?.format).toBe('uuid');
     });
 
     it('refs the response component and carries all four keys as REQUIRED', () => {

@@ -1,6 +1,7 @@
 import type { AuditPort, RoomPort, RoomReservationPort } from '@stuwith/domain';
 import { describe, expect, it } from 'vitest';
 import { testApiEnv } from '../__testing__/api-env';
+import { APP_CONFIG } from '../config.token';
 import { RoomsModule } from './rooms.module';
 import { ROOMS_RUNTIME, type RoomsRuntime } from './rooms.runtime';
 import { RoomsService } from './rooms.service';
@@ -133,6 +134,66 @@ describe('RoomsModule.forRuntime refuses a runtime it cannot serve requests with
   });
 });
 
+/**
+ * The config half of the same guard. `config` is typed `ApiEnv`, and every shape
+ * below is one the type system says cannot arrive — which is exactly why each is
+ * spelled `as never`: a test file is typechecked by nothing, and
+ * `forRuntime(undefined as never, runtime)` booted green and answered 500 to the
+ * first token request before this check existed.
+ *
+ * `as never`, and NOT a cast to the config type: `config-cast-ban.test.ts` bans
+ * `as ApiEnv` because a test that casts INTO a config skips the schema while
+ * claiming to stand in for a deployment. These shapes claim the opposite — that
+ * they are NOT a config — and the module is what has to say so.
+ */
+describe('RoomsModule.forRuntime refuses a config the token issuer cannot read', () => {
+  const runtime = complete();
+
+  it.each([
+    ['undefined', undefined],
+    ['null', null],
+    ['an empty object', {}],
+  ])('throws for %s as the config, naming all three variables', (_label, shape) => {
+    expect(() => RoomsModule.forRuntime(shape as never, runtime)).toThrow(
+      /LIVEKIT_URL and LIVEKIT_API_KEY and LIVEKIT_API_SECRET/,
+    );
+  });
+
+  it.each(['LIVEKIT_URL', 'LIVEKIT_API_KEY', 'LIVEKIT_API_SECRET'] as const)(
+    'names %s when it alone is missing, and does not name the other two',
+    (variable) => {
+      const others = (['LIVEKIT_URL', 'LIVEKIT_API_KEY', 'LIVEKIT_API_SECRET'] as const).filter(
+        (name) => name !== variable,
+      );
+      const missing = { ...config, [variable]: undefined };
+      const empty = { ...config, [variable]: '' };
+
+      for (const shape of [missing, empty]) {
+        let caught: unknown;
+        try {
+          RoomsModule.forRuntime(shape as never, runtime);
+        } catch (error) {
+          caught = error;
+        }
+        expect(caught).toBeInstanceOf(Error);
+        const message = (caught as Error).message;
+        expect(message).toContain(variable);
+        for (const other of others) {
+          expect(message).not.toContain(other);
+        }
+      }
+    },
+  );
+
+  it('checks the config BEFORE the ports, so one message names the first thing to fix', () => {
+    // Both halves wrong: the config is what is reported. Somebody who reads the
+    // message, fixes the config and re-runs is then told about the runtime.
+    expect(() => RoomsModule.forRuntime(undefined as never, {} as RoomsRuntime)).toThrow(
+      /LIVEKIT_URL/,
+    );
+  });
+});
+
 describe('RoomsModule.forRuntime wires the module when every port is usable', () => {
   const runtime = complete();
 
@@ -161,14 +222,18 @@ describe('RoomsModule.forRuntime wires the module when every port is usable', ()
     expect(provider?.useValue).toBe(runtime);
   });
 
-  it('provides the config it was handed, so the token issuer can read the LiveKit pair', () => {
+  it('provides the config it was handed UNDER APP_CONFIG, so the token issuer can read the LiveKit pair', () => {
+    // Found by TOKEN, not by value: a provider that carried the right object under
+    // the wrong token would satisfy "some provider has this useValue" while
+    // `RoomsService`'s `@Inject(APP_CONFIG)` resolved nothing.
     const provider = RoomsModule.forRuntime(config, runtime).providers?.find(
       (candidate): candidate is { provide: symbol; useValue: unknown } =>
         typeof candidate === 'object' &&
         candidate !== null &&
         'provide' in candidate &&
-        candidate.useValue === config,
+        candidate.provide === APP_CONFIG,
     );
+    expect(provider).toBeDefined();
     expect(provider?.useValue).toBe(config);
   });
 

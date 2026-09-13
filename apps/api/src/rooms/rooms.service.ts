@@ -167,8 +167,10 @@ export class RoomsService {
    *    before it: a read outside the transaction is a hint, not a gate (AD-22),
    *    and everything it could say the transaction says better. A path parameter
    *    that is not a room id at all is `404` with the SAME body as "no such room",
-   *    decided by the contract's own `isRoomId`, so the error does not publish the
-   *    id format.
+   *    decided by the contract's own `isRoomId`: one status for "there is no room
+   *    here" whatever the reason, because a client has nothing different to do
+   *    for a malformed id than for an unknown one (the format itself is public —
+   *    the OpenAPI document says `uuid`).
    * 4. **Mint, then record.** The token's `exp` is the RESERVATION's `expiresAt`,
    *    not `now + TTL` computed again here: one arithmetic, done once, in the
    *    adapter, so the seat and the token cannot disagree by a millisecond. The
@@ -176,13 +178,28 @@ export class RoomsService {
    *    returned — an issuance that failed to record is a `500` without a token
    *    reaching anybody, which is the fail-closed direction.
    *
-   * ## Refusals return, faults throw
+   * ## Refusals return, faults throw — and there are two kinds of fault
    *
-   * Every branch above that says no is a RETURN. A store that cannot answer — the
-   * pool is gone, the transaction deadlocked — throws out of here, becomes the
-   * `500` it is, and reserves nothing and records nothing. The matrix row "Store
-   * lỗi giữa chừng" is that path, and there is no `try/catch` that could turn it
-   * into a `409` telling somebody the room is full when we are broken.
+   * Every branch above that says no is a RETURN. A fault throws out of here and
+   * becomes the `500` it is; there is no `try/catch` that could turn one into a
+   * `409` telling somebody the room is full when we are broken, and none that
+   * could turn a failed audit append into a `201` with a token in it. But the two
+   * places a fault can come from leave different states behind, and the docblock
+   * has to say so rather than promise "nothing happened" for both:
+   *
+   * - **Inside `reserveSeat`** — the pool is gone, the transaction deadlocked.
+   *   The adapter rolls back: no seat, no token, no audit row. The matrix row
+   *   "Store lỗi giữa chừng — pool chết / transaction ném" is THIS path, and its
+   *   "không dòng lẻ" is about the reservation store.
+   * - **After the seat committed** — `mintRoomToken` or `recordRoomTokenIssued`
+   *   throws. Still `500`, still no token to anybody, still no audit row; but the
+   *   seat IS held, and nothing here releases it. It lapses on its own after
+   *   `ROOM_TOKEN_TTL_SECONDS`, and the same person asking again inside that
+   *   window renews it rather than taking a second one. Compensating needs a
+   *   release path on the port, and Story 2.4 owns "release a seat" —
+   *   `deferred-work.md` carries the entry. The flow suite pins this branch by
+   *   making the audit port throw and asserting `500`, no `token` in the body,
+   *   no audit row, and exactly ONE seat still counted.
    *
    * ## The same person asking twice
    *
@@ -269,13 +286,23 @@ export class RoomsService {
  * not an object, has no `roomId`, or carries one that is not a room id all answer
  * `null`, and `null` is a `404` — never a throw, never a `400` that names the
  * parameter.
+ *
+ * LOWER-CASED on the way out, and that is not cosmetic. `isRoomId` accepts a UUID
+ * in either case (so does Postgres, which compares `uuid` by value), but the
+ * string travels on from here VERBATIM into `video.room`, into `room_id` on the
+ * body and — through the token — into the name LiveKit gives the room. A caller
+ * spelling the same id in upper case would therefore hold a seat in the one
+ * `rooms` row and be admitted to a DIFFERENT media room from everybody who spelled
+ * it in lower case: one room in the database, two on LiveKit. `rooms.id` is minted
+ * lower case, so lower case is the canonical spelling and this is the one place
+ * the wire spelling is folded onto it.
  */
 function readRoomIdParam(params: unknown): string | null {
   if (params === null || typeof params !== 'object') {
     return null;
   }
   const candidate = (params as Record<string, unknown>)['roomId'];
-  return isRoomId(candidate) ? candidate : null;
+  return isRoomId(candidate) ? candidate.toLowerCase() : null;
 }
 
 /**

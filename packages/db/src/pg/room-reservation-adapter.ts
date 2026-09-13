@@ -108,9 +108,17 @@ export class PgRoomReservationAdapter implements RoomReservationPort {
 
       // Step 3 — renewal. A live row for this person is extended, not doubled.
       // `reserved_at` is left as it was: the seat was taken the first time.
+      //
+      // `GREATEST`, never a bare assignment. `now` is the instant the SESSION was
+      // resolved at, not the instant this statement runs, so two requests from
+      // one person can reach this lock in the opposite order to their instants —
+      // and a bare `SET expires_at = $3` would then move the seat's expiry
+      // BACKWARDS, leaving a token already handed out outliving the seat behind
+      // it. A renewal only ever extends; the contract suite renews with an
+      // earlier `now` and asserts the expiry did not move.
       const renewed = await client.query<ReservationRow>(
         `UPDATE room_reservations
-            SET expires_at = $3
+            SET expires_at = GREATEST(expires_at, $3)
           WHERE room_id = $1 AND user_id = $2
           RETURNING ${RESERVATION_COLUMNS}`,
         [input.roomId, input.userId, expiresAt],
@@ -188,6 +196,14 @@ export function assertValidReserveSeatInput(
   }
   if (!(now instanceof Date) || Number.isNaN(now.getTime())) {
     throw new RoomReservationInputError('now must be a valid Date');
+  }
+  // A positive integer is not enough: `now + hold * 1000` past the `Date` range is
+  // an Invalid Date, which Postgres would raise as a driver fault and the in-memory
+  // store would keep as a seat with a `NaN` expiry that is never reaped and counts
+  // towards the cap for ever. Both stores refuse it here, identically, as the
+  // caller's bug it is.
+  if (Number.isNaN(expiryFor(now, input.holdForSeconds).getTime())) {
+    throw new RoomReservationInputError('holdForSeconds puts the expiry outside the Date range');
   }
 }
 

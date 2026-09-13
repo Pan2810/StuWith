@@ -56,6 +56,7 @@ runRoomReservationPortContract({
       },
       createUserId: async () => nextUserId(),
       countRows: async (roomId) => adapter.countRows(roomId),
+      countLive: async (roomId, now) => adapter.countLive(roomId, now),
       createFaultingPort: async () => new UnreachableReservationAdapter(),
     };
   },

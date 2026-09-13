@@ -71,7 +71,13 @@ export class InMemoryRoomReservationAdapter implements RoomReservationPort {
 
     const held = seats.get(input.userId);
     if (held !== undefined) {
-      const extended: RoomReservation = { ...held, expiresAt: new Date(expiresAt.getTime()) };
+      // The same `GREATEST` the SQL applies: a renewal only ever extends. Two
+      // requests from one person whose session instants arrive out of order must
+      // not move the expiry backwards under a token already issued.
+      const extended: RoomReservation = {
+        ...held,
+        expiresAt: new Date(Math.max(held.expiresAt.getTime(), expiresAt.getTime())),
+      };
       seats.set(input.userId, extended);
       return { kind: 'reserved', reservation: extended, renewed: true };
     }
@@ -97,6 +103,21 @@ export class InMemoryRoomReservationAdapter implements RoomReservationPort {
    */
   countRows(roomId: string): number {
     return this.seats.get(roomId)?.size ?? 0;
+  }
+
+  /**
+   * Test affordance: seats still live as of `now` — the number the concurrency
+   * example samples WHILE a burst is in flight, to assert it never exceeds the
+   * cap at any instant rather than only after the dust settles.
+   */
+  countLive(roomId: string, now: Date): number {
+    let live = 0;
+    for (const seat of this.seats.get(roomId)?.values() ?? []) {
+      if (seat.expiresAt.getTime() > now.getTime()) {
+        live += 1;
+      }
+    }
+    return live;
   }
 
   clear(): void {

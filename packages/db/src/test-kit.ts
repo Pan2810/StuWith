@@ -24,6 +24,7 @@ import {
   type RateLimitDecision,
   type RateLimitPort,
   type ReserveSeatInput,
+  type ReserveSeatResult,
   type RoomPort,
   type RoomReservationPort,
   type SessionGeneration,
@@ -2102,6 +2103,17 @@ export interface RoomReservationPortHarness {
    * an expired seat was really removed and a refused call really wrote nothing.
    */
   countRows(roomId: string): Promise<number>;
+  /**
+   * Seats still live as of `now`, read through a path that sees ONLY committed
+   * state — for Postgres, a connection of its own, never the adapter's pool.
+   *
+   * This is what the concurrency example samples while a burst is in flight. The
+   * port's docblock promises that at no instant do more than `max_participants`
+   * live rows exist; a count taken after `Promise.all` settles cannot tell "never
+   * more than the cap" from "more than the cap for a while, then reaped", and it
+   * is exactly the transient overshoot a missing lock produces.
+   */
+  countLive(roomId: string, now: Date): Promise<number>;
   /** See HeartbeatPortHarness.createFaultingPort — same reasoning, same rule. */
   createFaultingPort?(): Promise<RoomReservationPort>;
 }
@@ -2248,6 +2260,30 @@ export function runRoomReservationPortContract(
         expect(await h.countRows(roomId)).toBe(1);
       });
 
+      it('never moves the expiry BACKWARDS — a renewal with an earlier instant keeps the later expiry', async () => {
+        // `now` is the instant the session was resolved at, not the instant the
+        // statement runs, so two requests from one person can reach the store in
+        // the opposite order to their instants. The later expiry must win either
+        // way: a token already issued for `t0 + 30 + HOLD` must not outlive a seat
+        // that a straggling request just shortened to `t0 + 10 + HOLD`.
+        const h = await use();
+        const roomId = await h.createRoom({ maxParticipants: 6 });
+        const request = await input(roomId);
+
+        const first = await h.port.reserveSeat(request, later(30));
+        const straggler = await h.port.reserveSeat(request, later(10));
+
+        expect(first.kind).toBe('reserved');
+        expect(straggler.kind).toBe('reserved');
+        if (first.kind !== 'reserved' || straggler.kind !== 'reserved') return;
+        expect(straggler.renewed).toBe(true);
+        expect(straggler.reservation.id).toBe(first.reservation.id);
+        expect(straggler.reservation.expiresAt.toISOString()).toBe(
+          later(30 + HOLD).toISOString(),
+        );
+        expect(await h.countRows(roomId)).toBe(1);
+      });
+
       it('lets the holder of the last seat renew it in a room that is otherwise full', async () => {
         // The order inside the lock matters here: "is this a renewal" is asked
         // BEFORE "is there room", or the person holding the last seat is told the
@@ -2345,6 +2381,17 @@ export function runRoomReservationPortContract(
      * with more than 100 rows — measured. In memory it is the absence of an `await`
      * between count and write; insert one and this goes red the same way. Neither
      * store can stand in for the other on this example, which is why there are two.
+     *
+     * ## Sampled DURING the burst, not only counted after it
+     *
+     * The port promises "at no instant do more than 100 live rows exist". A count
+     * after `Promise.all` is a count of what SURVIVED, and would stay green for an
+     * adapter that overshot to 109 and then reaped its own excess. So a sampler
+     * reads `countLive` every few milliseconds while the burst is in flight —
+     * through a connection of its own on Postgres, so it sees committed rows only
+     * — and every sample has to be at or under the cap. The first sample is taken
+     * before the first `sleep`, so a store fast enough to finish the whole burst
+     * inside one tick still produces at least one reading.
      */
     it('admits exactly the cap under 130 concurrent requests for a room of 100', async () => {
       const h = await use();
@@ -2354,11 +2401,28 @@ export function runRoomReservationPortContract(
         people.push(await h.createUserId());
       }
 
-      const results = await Promise.all(
-        people.map((userId) =>
-          h.port.reserveSeat({ roomId, userId, holdForSeconds: HOLD }, t0),
-        ),
-      );
+      const samples: number[] = [];
+      let burstSettled = false;
+      const sampler = (async () => {
+        do {
+          samples.push(await h.countLive(roomId, t0));
+          await new Promise((resolve) => setTimeout(resolve, 3));
+        } while (!burstSettled);
+      })();
+
+      let results: ReserveSeatResult[];
+      try {
+        results = await Promise.all(
+          people.map((userId) =>
+            h.port.reserveSeat({ roomId, userId, holdForSeconds: HOLD }, t0),
+          ),
+        );
+      } finally {
+        // Whatever the burst did, the sampler must stop: a rejected burst that
+        // left it polling would surface as a 120-second timeout, not as the fault.
+        burstSettled = true;
+      }
+      await sampler;
 
       const reserved = results.filter((r) => r.kind === 'reserved').length;
       const full = results.filter((r) => r.kind === 'full').length;
@@ -2366,6 +2430,11 @@ export function runRoomReservationPortContract(
       expect(full).toBe(30);
       expect(reserved + full).toBe(130);
       expect(await h.countRows(roomId)).toBe(100);
+
+      // The sampler really ran, and never once saw the cap exceeded.
+      expect(samples.length).toBeGreaterThanOrEqual(1);
+      const peak = Math.max(...samples);
+      expect(peak, `live seats peaked at ${String(peak)} during the burst`).toBeLessThanOrEqual(100);
     }, 120_000);
 
     describe('refuses what neither store could describe, identically', () => {
@@ -2375,6 +2444,9 @@ export function runRoomReservationPortContract(
         ['a hold of zero seconds', { holdForSeconds: 0 }],
         ['a negative hold', { holdForSeconds: -1 }],
         ['a fractional hold', { holdForSeconds: 1.5 }],
+        // A positive integer whose expiry is an Invalid Date: a driver fault in one
+        // store and a never-reaped NaN seat in the other, unless refused up front.
+        ['a hold that puts the expiry past the Date range', { holdForSeconds: Number.MAX_SAFE_INTEGER }],
       ])('throws RoomReservationInputError for %s', async (_label, overrides) => {
         const h = await use();
         const roomId = await h.createRoom({ maxParticipants: 6 });

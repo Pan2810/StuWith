@@ -33,8 +33,18 @@ runRoomReservationPortContract({
     started = await startPostgres();
     await applyMigrations(started.connectionString);
 
+    /**
+     * A WIDER pool than production's ten, on purpose. The property under test —
+     * never more than the cap, at any instant — has to hold at every pool size,
+     * and the mutation this suite exists to catch (dropping `FOR UPDATE`) is a
+     * race in the count→insert window: with ten connections it lost 108–109 of
+     * 130 on a cold pool and, once in a while, exactly 100 on a warm one, which
+     * is a mutation that is red "usually". Thirty-two transactions in flight
+     * collide in that window on every run.
+     */
     const pool = createPool(
       started.connectionStringFor('stuwith_api', TEST_ROLE_PASSWORDS.DB_ROLE_API_PASSWORD),
+      { max: 32 },
     );
     const adminUrl = started.connectionString;
     const faultingPools: Pool[] = [];
@@ -96,6 +106,20 @@ runRoomReservationPortContract({
           ),
         );
         return Number(result.rows[0]?.count ?? '0');
+      },
+
+      // A connection of its OWN per read, never the adapter's pool: under READ
+      // COMMITTED a fresh client sees committed rows only, so a sample taken
+      // mid-burst is a true reading of what other transactions could see — the
+      // number the port's "at no instant" promise is about.
+      countLive: async (roomId, now) => {
+        const result = await withClient(adminUrl, (client) =>
+          client.query<{ live: string }>(
+            'SELECT count(*)::text AS live FROM room_reservations WHERE room_id = $1 AND expires_at > $2',
+            [roomId, now],
+          ),
+        );
+        return Number(result.rows[0]?.live ?? '0');
       },
 
       createFaultingPort: async () => {

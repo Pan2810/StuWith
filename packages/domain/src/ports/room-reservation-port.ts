@@ -73,8 +73,10 @@ export type ReserveSeatResult =
       readonly reservation: RoomReservation;
       /**
        * `true` when the caller already held a live seat in this room and it was
-       * extended rather than a new one taken. Carried so the audit row and the
-       * flow suite can tell the two apart; the response body does not.
+       * extended rather than a new one taken. Reported so the CONTRACT SUITE can
+       * tell the two apart; nothing on the wire carries it — not the response
+       * body, and deliberately not the audit row either (`apps/api/src/rooms/
+       * audit.ts`: two rows with one `reservation_id` are how a renewal reads).
        */
       readonly renewed: boolean;
     }

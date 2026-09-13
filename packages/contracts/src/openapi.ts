@@ -512,10 +512,14 @@ function roomsPath(): Record<string, unknown> {
  *   their mind about a device, without eating the room;
  * - the room's name on LiveKit IS `room_id`. There is no slug and no mapping.
  *
- * `404` covers both "no such room" and "that is not a room id", with one body: the
- * alternative teaches the id format to anybody who sends rubbish.
+ * `404` covers both "no such room" and "that is not a room id", with one body. Not
+ * because the id format is a secret — this document publishes it, as `format:
+ * uuid` on the parameter and on every `room_id` — but because there is ONE status
+ * for "there is no room here", whatever the reason: a client has nothing different
+ * to do for a malformed id than for an unknown one, and a second status would be a
+ * second branch for every client to write and get wrong.
  */
-function roomTokenPath(): Record<string, unknown> {
+function roomTokenPathItem(): Record<string, unknown> {
   const envelope = {
     'application/json': { schema: { $ref: '#/components/schemas/ErrorEnvelope' } },
   } as const;
@@ -524,16 +528,30 @@ function roomTokenPath(): Record<string, unknown> {
     post: {
       summary: 'Issue a short-lived LiveKit token for one room, reserving a seat atomically',
       description:
-        'Checks four conditions in one place — signed in, not banned, old enough, ' +
-        'a seat left under the room cap — and issues a token only when all four ' +
-        'hold. The seat is reserved in the same transaction as the count, so two ' +
+        'Checks the admission conditions in one place — signed in, not banned, ' +
+        'a seat left under the room cap — and issues a token only when all of them ' +
+        'hold. Age is judged at the same gate and, today, every age is admitted: ' +
+        'entering a room has no age floor (the money rules that will need one ' +
+        'arrive with Epic 3 and are added at that gate, not beside it). ' +
+        'The seat is reserved in the same transaction as the count, so two ' +
         'people racing for the last seat cannot both get a token. The token is ' +
         `valid for ${String(ROOM_TOKEN_TTL_SECONDS)} seconds, names exactly this room ` +
         '(`video.room` is the room id) and grants join, publish and subscribe only: ' +
         'no room creation, administration or listing. Asking again for the same room ' +
         'while the seat is live renews it and returns a fresh token rather than ' +
         'taking a second seat. No request body.',
-      parameters: [{ name: 'roomId', in: 'path', required: true, schema: { type: 'string' } }],
+      parameters: [
+        {
+          name: 'roomId',
+          in: 'path',
+          required: true,
+          // `format: uuid`, the same as `Room.id` and `room_id` in the response: the
+          // parameter is the same thing those two are, and a document that typed one
+          // as a bare string would have a generated client accept what the server
+          // will 404.
+          schema: { type: 'string', format: 'uuid' },
+        },
+      ],
       responses: {
         '201': {
           description:
@@ -550,8 +568,9 @@ function roomTokenPath(): Record<string, unknown> {
         },
         '404': {
           description:
-            'No such room. The same body is returned when the id is not a room id ' +
-            'at all.',
+            'No such room — whether the id names nothing or is not a room id at all. ' +
+            'One status and one body for both, because a client has nothing ' +
+            'different to do in the two cases.',
           content: envelope,
         },
         '409': {
@@ -571,7 +590,9 @@ export function toOpenApiDocument(): Record<string, unknown> {
     info: { title: 'StuWith API', version: CONTRACT_VERSION },
     paths: {
       [ROOMS_PATH]: roomsPath(),
-      [ROOM_TOKEN_PATH_TEMPLATE]: roomTokenPath(),
+      // `...PathItem`, not `roomTokenPath`: that name is the exported URL builder
+      // in `rooms.ts`, and one name for two meanings in one package is a trap.
+      [ROOM_TOKEN_PATH_TEMPLATE]: roomTokenPathItem(),
       '/healthz': {
         get: {
           summary: 'Liveness probe',

@@ -15,7 +15,8 @@ import { requestIdOf } from './request-id';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 interface Shape {
-  readonly stamped?: string;
+  /** What `reply.raw.getHeader` answers: `string`, `number`, `string[]` or nothing. */
+  readonly stamped?: unknown;
   readonly rawId?: unknown;
   readonly inbound?: string;
 }
@@ -89,7 +90,10 @@ describe('requestIdOf — each source, in order', () => {
 
     it.each([
       ['an empty stamped header', { stamped: '', rawId: 'raw-0003' }, 'raw-0003'],
-      ['a non-string stamped header', { stamped: undefined, rawId: 'raw-0004' }, 'raw-0004'],
+      // `getHeader` may answer a number or an array — the two shapes the
+      // `typeof === 'string'` guard exists for. Neither is an id to join a row to.
+      ['a numeric stamped header', { stamped: 42, rawId: 'raw-0004' }, 'raw-0004'],
+      ['an array-valued stamped header', { stamped: ['a', 'b'], rawId: 'raw-0005' }, 'raw-0005'],
       ['an empty raw id', { rawId: '', inbound: '3f9d2c1e-1111-4222-8333-444455556666' }, '3f9d2c1e-1111-4222-8333-444455556666'],
       ['a non-string raw id', { rawId: 42, inbound: '3f9d2c1e-1111-4222-8333-444455556666' }, '3f9d2c1e-1111-4222-8333-444455556666'],
     ] as const)('skips %s rather than returning it', (_label, shape, expected) => {

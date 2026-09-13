@@ -366,9 +366,13 @@ export const ROOM_TOKEN_PATH_TEMPLATE = '/v1/rooms/{roomId}/token';
  *
  * `apps/api` reads `{roomId}` out of the path as `unknown` and has to answer 404
  * for "that is not a room id" with the same body as "no such room". The judgement
- * is here rather than in a NestJS pipe because a pipe answers 400, names the
- * parameter and publishes the format — and because a second spelling of "what is
- * a room id" beside the schema is a second spelling that drifts.
+ * is here rather than in a NestJS pipe because a pipe answers 400 and names the
+ * parameter, and the contract says there is ONE status for "there is no room
+ * here" whatever the reason — not because the format is secret (the OpenAPI
+ * document publishes `format: uuid` on the parameter), but because a client has
+ * nothing different to do for a malformed id than for an unknown one. And because
+ * a second spelling of "what is a room id" beside the schema is a second spelling
+ * that drifts.
  */
 export function isRoomId(value: unknown): value is string {
   return roomSchema.shape.id.safeParse(value).success;
@@ -409,8 +413,10 @@ export type RoomTokenResponse = z.infer<typeof roomTokenResponseSchema>;
  * stable, but a mobile client reading the envelope gets one wording per refusal.
  *
  * None of them says which condition was checked in what order, and the not-found
- * sentence is used for BOTH "no such room" and "that is not a room id": a caller
- * that could tell the two apart has learned the id format from an error message.
+ * sentence is used for BOTH "no such room" and "that is not a room id": one status
+ * and one sentence for "there is no room here", whatever the reason, because a
+ * client has nothing different to do in the two cases (the id format itself is
+ * public — the OpenAPI document says `uuid`).
  */
 export const ROOM_FULL_MESSAGE = 'Phòng đã đủ người. Hãy thử lại sau hoặc chọn phòng khác.';
 

@@ -7,33 +7,63 @@ import { ROOMS_RUNTIME, type RoomsRuntime } from './rooms.runtime';
 import { RoomsService } from './rooms.service';
 
 /**
- * What a usable runtime has to carry, member by member and method by method.
+ * Every method of each port, as an object whose KEYS are checked against the
+ * port type — exhaustively, in both directions.
  *
- * Derived from the port types, so a method added to a port cannot be added
- * without being checked here — the `satisfies` is what makes a typo in a method
- * name a compile error rather than a check that silently looks for nothing.
+ * `satisfies Record<keyof Port, true>` is the whole mechanism. `Record` over a
+ * union requires every member, so a method ADDED to a port is a compile error on
+ * this line until it is listed; and an object literal under `satisfies` is
+ * subject to excess-property checking, so a method REMOVED from a port — or a
+ * typo — is a compile error too. The previous spelling, `[...] satisfies readonly
+ * (keyof Port)[]`, caught only the typo: an array of valid keys is still an array
+ * of valid keys when it is missing one, so a port could grow a method and this
+ * check would go on looking for the old list, green. Proved by adding a method
+ * to `RoomPort` and watching `typecheck` fail here, then reverting.
  */
+const ROOM_PORT_METHODS = {
+  createRoom: true,
+  findRoomById: true,
+} satisfies Record<keyof RoomPort, true>;
+
+const ROOM_RESERVATION_PORT_METHODS = {
+  reserveSeat: true,
+} satisfies Record<keyof RoomReservationPort, true>;
+
+const AUDIT_PORT_METHODS = {
+  append: true,
+} satisfies Record<keyof AuditPort, true>;
+
+/** What a usable runtime has to carry, member by member and method by method. */
 const REQUIRED: ReadonlyArray<{
   readonly member: keyof RoomsRuntime;
   readonly port: string;
   readonly methods: readonly string[];
 }> = [
-  {
-    member: 'rooms',
-    port: 'RoomPort',
-    methods: ['createRoom', 'findRoomById'] satisfies readonly (keyof RoomPort)[],
-  },
+  { member: 'rooms', port: 'RoomPort', methods: Object.keys(ROOM_PORT_METHODS) },
   {
     member: 'reservations',
     port: 'RoomReservationPort',
-    methods: ['reserveSeat'] satisfies readonly (keyof RoomReservationPort)[],
+    methods: Object.keys(ROOM_RESERVATION_PORT_METHODS),
   },
-  {
-    member: 'audit',
-    port: 'AuditPort',
-    methods: ['append'] satisfies readonly (keyof AuditPort)[],
-  },
+  { member: 'audit', port: 'AuditPort', methods: Object.keys(AUDIT_PORT_METHODS) },
 ];
+
+/**
+ * The three variables `RoomsService` reads, checked at construction the way the
+ * ports are.
+ *
+ * `config` is typed `ApiEnv`, but the same argument the ports docblock makes
+ * applies: a test file is typechecked by nothing, and `forRuntime(undefined as
+ * never, runtime)` builds, boots, serves `POST /v1/rooms` — which reads no config
+ * — and throws a `500` on the first token request, at `this.config.LIVEKIT_API_KEY`.
+ * A check here turns that into a refusal before a port is open that NAMES the
+ * member, which is the posture `packages/config` takes with the environment
+ * (AD-14). Only these three are checked: they are the whole of what this module
+ * reads, and checking every `ApiEnv` member here would be a second copy of the
+ * schema.
+ */
+const REQUIRED_CONFIG = ['LIVEKIT_URL', 'LIVEKIT_API_KEY', 'LIVEKIT_API_SECRET'] as const satisfies
+  readonly (keyof ApiEnv)[];
 
 @Module({})
 export class RoomsModule {
@@ -47,8 +77,7 @@ export class RoomsModule {
    * assertions are not looking at. `AppModule.forConfig` builds the one runtime
    * and hands it to everybody who needs an adapter.
    *
-   * ## `config` arrived with Story 2.2, and the docblock that said "no config" is
-   * ## gone with it
+   * ## `config` arrived with Story 2.2; the "no config" docblock went with it
    *
    * Story 2.1's module took no `ApiEnv` because nothing about creating a room read
    * the environment, and taking one "for symmetry" would have been an unused
@@ -85,6 +114,20 @@ export class RoomsModule {
      * throws on the first read. The `unknown` hop is what lets the comparison be
      * written at all.
      */
+    const env = config as Partial<Record<keyof ApiEnv, unknown>> | null | undefined;
+    const missingConfig = REQUIRED_CONFIG.filter((name) => {
+      const value = env?.[name];
+      return typeof value !== 'string' || value.length === 0;
+    });
+    if (missingConfig.length > 0) {
+      throw new Error(
+        'RoomsModule.forRuntime was given no usable config. The ApiEnv handed to ' +
+          `AppModule.forConfig is missing ${missingConfig.join(' and ')} — the token ` +
+          'issuer reads all three LiveKit variables, and a config that lacks one boots ' +
+          'and then answers 500 to the first token request.',
+      );
+    }
+
     const partial = runtime as Partial<Record<keyof RoomsRuntime, unknown>> | null | undefined;
     for (const { member, port, methods } of REQUIRED) {
       const value = partial?.[member] as Partial<Record<string, unknown>> | null | undefined;

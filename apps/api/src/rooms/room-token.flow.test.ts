@@ -16,6 +16,7 @@ import {
   roomTokenResponseSchema,
 } from '@stuwith/contracts';
 import type {
+  AuditPort,
   FixedClock,
   IdentityPort,
   ReserveSeatInput,
@@ -54,6 +55,13 @@ let bannedAtOverride: Date | null = null;
 /** The "store lỗi giữa chừng" row: the reservation port throws when this is set. */
 let reservationFault: Error | null = null;
 
+/**
+ * The OTHER fault: the audit append throws AFTER the seat has committed. A
+ * different row from the one above, with a different state left behind, and the
+ * service's docblock says which.
+ */
+let auditFault: Error | null = null;
+
 beforeAll(async () => {
   harness = await createAuthHarness({
     wrapIdentity: (base: IdentityPort): IdentityPort => ({
@@ -76,6 +84,14 @@ beforeAll(async () => {
         return base.reserveSeat(input, now);
       },
     }),
+    wrapAudit: (base: AuditPort): AuditPort => ({
+      append: (event) => {
+        if (auditFault !== null) {
+          return Promise.reject(auditFault);
+        }
+        return base.append(event);
+      },
+    }),
   });
 }, 60_000);
 
@@ -86,6 +102,7 @@ afterAll(async () => {
 beforeEach(() => {
   bannedAtOverride = null;
   reservationFault = null;
+  auditFault = null;
   harness.identity.clear();
   harness.rooms.clear();
   harness.reservations.clear();
@@ -144,9 +161,15 @@ describe('Matrix: a valid request', () => {
     const response = await askForToken(jar, roomId);
 
     expect(response.status).toBe(201);
-    // PARSED against the published schema, so a fifth key — or a missing one — is
-    // a failure of the contract and not a surprise for a client.
-    const body = roomTokenResponseSchema.parse(await response.json());
+    const raw = (await response.json()) as Record<string, unknown>;
+    // EXACTLY the four documented keys, read off the raw JSON. `z.object` STRIPS
+    // unknown keys rather than refusing them (measured on this repo's zod), so a
+    // `roomTokenResponseSchema.parse` alone would let a fifth key — `renewed`, a
+    // reservation id — ship on the one body clients are generated against, with
+    // every example here still green.
+    expect(Object.keys(raw).sort()).toEqual(['expires_at', 'room_id', 'token', 'url']);
+    // And then parsed, so each value is what the contract says it is.
+    const body = roomTokenResponseSchema.parse(raw);
     expect(body.room_id).toBe(roomId);
     expect(body.url).toBe(harness.config.LIVEKIT_URL);
     expect(body.expires_at).toBe(
@@ -217,6 +240,27 @@ describe('Matrix: a valid request', () => {
       const { payload } = await decode(roomTokenResponseSchema.parse(JSON.parse(raw)).token);
       expect(payload['video']).not.toHaveProperty(grant);
     }
+  });
+
+  it('folds an UPPER-CASE spelling of the id onto the canonical lower-case one, everywhere it travels', async () => {
+    // `z.uuid()` and Postgres both accept either case, so without the fold the
+    // person would hold a seat in the right `rooms` row and be admitted to a
+    // DIFFERENT LiveKit room from everybody who spelled the id in lower case.
+    const jar = await signedIn();
+    const roomId = await createRoom(jar);
+    expect(roomId).toBe(roomId.toLowerCase());
+
+    const response = await askForToken(jar, roomId.toUpperCase());
+
+    expect(response.status).toBe(201);
+    const body = roomTokenResponseSchema.parse(await response.json());
+    expect(body.room_id).toBe(roomId);
+    const { payload } = await decode(body.token);
+    expect((payload['video'] as { room: string }).room).toBe(roomId);
+    // ONE seat, not one per spelling.
+    expect((await askForToken(jar, roomId)).status).toBe(201);
+    expect(harness.reservations.countRows(roomId)).toBe(1);
+    expect(issued().every((row) => row.subjectId === roomId)).toBe(true);
   });
 
   it('lets somebody who did not create the room get a token for it', async () => {
@@ -322,9 +366,15 @@ describe('Matrix: no such room', () => {
     ['a uuid with a bad variant nibble', '019200ff-0000-7000-0000-ffffffffffff'],
     // NOT `..`: `roomTokenPath('..')` is `/v1/rooms/../token`, and every URL
     // client — Node's `fetch` included — collapses that to `/v1/token` before it
-    // leaves the machine, so the route never sees it. A row nothing can deliver
-    // is a row that tests the client's URL parser, not this endpoint.
-    ['a percent-encoded dotted segment', '%2e%2e'],
+    // leaves the machine, so the route never sees it. The WHATWG parser treats
+    // `%2e%2e` as a dotted segment too, so the raw path `/v1/rooms/%2e%2e/token`
+    // is collapsed the same way. What THIS row delivers is what the builder
+    // makes of the string: `roomTokenPath('%2e%2e')` escapes the percent signs,
+    // the wire path is `/v1/rooms/%252e%252e/token`, and the service receives the
+    // literal `%2e%2e` — a string with percent signs in it, which is not a uuid.
+    // A row nothing can deliver is a row that tests the client's URL parser, not
+    // this endpoint.
+    ['a string of percent signs (what the builder makes of `%2e%2e`)', '%2e%2e'],
   ])('answers 404 for %s as the id, with the SAME body as an unknown uuid', async (_label, id) => {
     const jar = await signedIn();
 
@@ -332,8 +382,10 @@ describe('Matrix: no such room', () => {
     const response = await askForToken(jar, id);
 
     expect(response.status).toBe(404);
-    // Byte-for-byte: a caller that could tell the two apart has learned the id
-    // format from an error message.
+    // Byte-for-byte: one status and one body for "there is no room here", whatever
+    // the reason — the contract's rule, and a second body would be a second branch
+    // for every client to write. (The id format itself is public: the OpenAPI
+    // document says `uuid`.)
     expect(await response.json()).toEqual(unknown);
   });
 });
@@ -469,6 +521,45 @@ describe('Matrix: the store fails mid-request', () => {
 
     reservationFault = null;
     expect((await askForToken(jar, roomId)).status).toBe(201);
+  });
+});
+
+describe('Matrix: the audit append fails AFTER the seat was reserved', () => {
+  it('answers 500 with no token and no audit row — and the seat it committed is still held', async () => {
+    // Fail-closed in the direction that matters: a token nobody can account for
+    // never leaves the process. The mutation this pins is swallowing the audit
+    // fault (`.catch(() => undefined)`) and answering 201 anyway — the whole suite
+    // stayed green under it until this example existed.
+    const jar = await signedIn();
+    const roomId = await createRoom(jar);
+    auditFault = new Error('simulated audit outage');
+
+    const response = await askForToken(jar, roomId);
+
+    expect(response.status).toBe(500);
+    const text = await response.text();
+    expect(text).not.toContain('"token"');
+    expect(text).not.toContain('simulated audit outage');
+    expect(issued()).toHaveLength(0);
+    // NOT zero: the reservation committed before the audit was attempted, and
+    // nothing releases it — it lapses after the TTL (Story 2.4 owns the release
+    // path; `deferred-work.md` carries the entry). The docblock on
+    // `issueRoomToken` says exactly this, and this line is what keeps it true.
+    expect(harness.reservations.countRows(roomId)).toBe(1);
+  });
+
+  it('issues normally once the audit store answers again, renewing the seat it left behind', async () => {
+    // The positive control, and the observable consequence of the held seat: the
+    // retry is a RENEWAL of the row the failed request committed, not a second row.
+    const jar = await signedIn();
+    const roomId = await createRoom(jar);
+    auditFault = new Error('simulated audit outage');
+    expect((await askForToken(jar, roomId)).status).toBe(500);
+
+    auditFault = null;
+    expect((await askForToken(jar, roomId)).status).toBe(201);
+    expect(harness.reservations.countRows(roomId)).toBe(1);
+    expect(issued()).toHaveLength(1);
   });
 });
 

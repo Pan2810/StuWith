@@ -172,19 +172,35 @@ suite('Story 2.2 — room_reservations, ownership enforced by GRANT', () => {
     await pg?.stop();
   }, 120_000);
 
+  /**
+   * The id a seed statement returned, or a failure that NAMES the seed.
+   *
+   * Not `?? ''`: an empty string handed to the next statement surfaces later as a
+   * blind `22P02 invalid input syntax for type uuid` on a line that did nothing
+   * wrong, and the probe's real finding — a GRANT that stopped the seed itself —
+   * is lost. Same posture as `room-reservation-contract.pg.test.ts`.
+   */
+  const returnedId = (label: string, rows: ReadonlyArray<{ id: string }>): string => {
+    const id = rows[0]?.id;
+    if (id === undefined || id.length === 0) {
+      throw new Error(`seeding ${label} returned no row — the INSERT ... RETURNING id produced nothing`);
+    }
+    return id;
+  };
+
   /** A room and a person, through the writing role. */
   const seed = async (): Promise<{ userId: string; roomId: string }> =>
     withClient(apiUrl, async (client) => {
       const user = await client.query<{ id: string }>(
         `INSERT INTO users (display_name) VALUES ('Seat Taker') RETURNING id`,
       );
-      const userId = user.rows[0]?.id ?? '';
+      const userId = returnedId('the user', user.rows);
       const room = await client.query<{ id: string }>(
         `INSERT INTO rooms (owner_user_id, name, topic, visibility, max_participants)
          VALUES ($1, 'Phong hoc', 'on_thi', 'public', 6) RETURNING id`,
         [userId],
       );
-      return { userId, roomId: room.rows[0]?.id ?? '' };
+      return { userId, roomId: returnedId('the room', room.rows) };
     });
 
   /** A reservation, through the writing role, so UPDATE/DELETE probes have a row. */
@@ -197,7 +213,7 @@ suite('Story 2.2 — room_reservations, ownership enforced by GRANT', () => {
         [roomId, userId],
       ),
     );
-    return { userId, roomId, id: result.rows[0]?.id ?? '' };
+    return { userId, roomId, id: returnedId('the reservation', result.rows) };
   };
 
   it('creates the room_reservations table', async () => {

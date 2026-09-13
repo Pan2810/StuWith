@@ -27,6 +27,41 @@ const secret = (minLength = 1) =>
 
 const url = z.string({ error: 'is required' }).min(1);
 
+/**
+ * `LIVEKIT_URL`: an absolute URL with a scheme a media client can open —
+ * `ws`/`wss` (what the browser SDK dials) or `http`/`https` (what LiveKit's own
+ * tooling accepts and rewrites). Not `httpUrl`: that helper insists on http(s)
+ * and on a bare origin, and a LiveKit deployment behind a path prefix is a real
+ * shape this repo has no reason to refuse.
+ *
+ * Story 2.2, review round 1. This value was `z.string().min(1)` while the wire
+ * contract it feeds — `roomTokenResponseSchema.url` in `packages/contracts` —
+ * says `z.url()`. So `LIVEKIT_URL=livekit-host` booted green and every token
+ * request then answered `500` at `roomTokenResponseSchema.parse(...)`, AFTER the
+ * seat had committed and a permanent audit row had been written. A config seam
+ * whose two ends disagree is exactly what AD-14's "before a port is opened" is
+ * for; the schema now refuses what the contract would refuse, and names the
+ * variable. This is a BREAKING change for an existing `.env` that spelled the
+ * host without a scheme — see `AGENTS.md` section 6.
+ */
+const LIVEKIT_SCHEMES = new Set(['ws:', 'wss:', 'http:', 'https:']);
+const livekitUrl = z
+  .string({ error: 'is required' })
+  .min(1)
+  .refine((value) => {
+    let parsed: URL;
+    try {
+      parsed = new URL(value);
+    } catch {
+      return false;
+    }
+    // No userinfo: this value is handed VERBATIM to every client in the token
+    // response, so `wss://user:pass@host` would publish a credential to the
+    // browser. The key pair belongs to `apps/api` and travels as a signed token,
+    // never as part of the URL (AD-9).
+    return LIVEKIT_SCHEMES.has(parsed.protocol) && parsed.username === '' && parsed.password === '';
+  }, 'must be an absolute ws(s) or http(s) URL a media client can open, with no embedded credentials — e.g. ws://localhost:7880 or wss://livekit.example.vn');
+
 /** A browser-reachable origin. The scheme is checked because a redirect target
  * without one is not a URL a browser will follow, and the failure would otherwise
  * appear as a broken login rather than as a configuration error. */
@@ -244,7 +279,7 @@ export const sharedEnvSchema = z.object({
 
   // Infrastructure both processes talk to.
   VALKEY_URL: url,
-  LIVEKIT_URL: url,
+  LIVEKIT_URL: livekitUrl,
   LIVEKIT_API_KEY: secret(),
   LIVEKIT_API_SECRET: secret(32),
 });
