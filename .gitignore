@@ -55,3 +55,14 @@ pnpm-debug.log*
 # command. This probe is valid TypeScript that merely trips the gate's own scan, so
 # a leftover would typecheck, build, and sit in `git status` looking committable.
 **/rooms-gate-probe.generated.ts
+
+# Story 2.2's planted files. tests/gates/livekit-token.test.ts plants one under
+# apps/web/src and one under apps/web/public to prove its sweep covers each root;
+# apps/web/src/app/seam-usage.test.ts plants a screen that imports only a route
+# builder. All three are valid files that merely trip the scan that planted them,
+# so a crashed run would leave something that builds and looks committable — and
+# the `.tsx` sits inside `app/`, where Next would pick it up as a route module.
+# (`apps/web/.env.livekit-gate-probe` is covered by the `.env.*` rule above.)
+**/livekit-gate-probe.generated.ts
+**/livekit-gate-probe.generated.txt
+**/seam-usage-probe.generated.tsx

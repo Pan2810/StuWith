@@ -18,6 +18,7 @@ interface UserRow {
   role: string;
   plan: string;
   date_of_birth: string | null;
+  banned_at: Date | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -42,6 +43,11 @@ const PLAIN_USER_COLUMNS = [
   'avatar_url',
   'role',
   'plan',
+  // Story 2.2. A `timestamptz`, so it comes back as an instant with no zone
+  // question to answer — unlike `date_of_birth` below. It is in THIS list, and
+  // `roomAdmission` fails closed on `undefined`, so dropping it here would refuse
+  // every token rather than admit every banned person.
+  'banned_at',
   'created_at',
   'updated_at',
 ] as const;
@@ -82,6 +88,7 @@ function toUser(row: UserRow): User {
     role: row.role as GlobalUserRole,
     plan: row.plan as UserPlan,
     dateOfBirth: row.date_of_birth,
+    bannedAt: row.banned_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

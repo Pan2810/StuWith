@@ -1,6 +1,6 @@
 import * as contracts from '@stuwith/contracts';
 import { toOpenApiDocument } from '@stuwith/contracts';
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -85,12 +85,62 @@ const API_ROUTE_CONSTANTS = Object.entries(contracts)
   .map(([name]) => name);
 
 /**
- * How a file says it talks to `apps/api`: a `/v1` path written out, or one of the
- * route constants above.
+ * The route BUILDERS — Story 2.2, review round 1.
+ *
+ * A templated route is published twice by the contract: as the template the
+ * document is keyed on (`ROOM_TOKEN_PATH_TEMPLATE`, `/v1/rooms/{roomId}/token`)
+ * and as a FUNCTION that fills the slot (`roomTokenPath(id)`). A screen calls the
+ * function and never writes the template's name, so a rule over constants alone
+ * let `import { roomTokenPath }` walk straight past `mentionsApi` — the third
+ * spelling of "this screen talks to `/v1`", and the one every templated route
+ * from now on will use.
+ *
+ * Discovered the same way the constants are, from the document rather than from
+ * a list: an export whose name ends in `Path`, is a function, and — handed a probe
+ * string — answers a documented template with the probe in its `{param}` slot.
+ * Calling an arbitrary export with a string is safe here because a throw simply
+ * means "not a builder".
+ */
+const PROBE_PARAM = 'seam-usage-probe';
+
+/** The documented templates, each with how many `{param}` slots it has. */
+const TEMPLATES = [...API_ROUTE_VALUES]
+  .map((template) => ({ template, slots: (template.match(/\{[^}]+\}/g) ?? []).length }))
+  .filter(({ slots }) => slots > 0);
+
+function fillsDocumentedTemplate(value: unknown): boolean {
+  if (typeof value !== 'function') {
+    return false;
+  }
+  // Tried once per slot count the document has, so a builder for a two-parameter
+  // route is recognised the day one is published rather than escaping because it
+  // was handed one argument and returned a half-filled template.
+  return TEMPLATES.some(({ template, slots }) => {
+    let built: unknown;
+    try {
+      built = (value as (...parameters: string[]) => unknown)(
+        ...Array.from({ length: slots }, () => PROBE_PARAM),
+      );
+    } catch {
+      return false;
+    }
+    return typeof built === 'string' && template.replace(/\{[^}]+\}/g, PROBE_PARAM) === built;
+  });
+}
+
+const API_ROUTE_BUILDERS = Object.entries(contracts)
+  .filter(([name, value]) => /Path$/.test(name) && fillsDocumentedTemplate(value))
+  .map(([name]) => name);
+
+/**
+ * How a file says it talks to `apps/api`: a `/v1` path written out, one of the
+ * route constants above, or a call to one of the route builders.
  */
 function mentionsApi(source: string): boolean {
   return (
-    source.includes('/v1/') || API_ROUTE_CONSTANTS.some((name) => new RegExp(`\\b${name}\\b`).test(source))
+    source.includes('/v1/') ||
+    API_ROUTE_CONSTANTS.some((name) => new RegExp(`\\b${name}\\b`).test(source)) ||
+    API_ROUTE_BUILDERS.some((name) => new RegExp(`\\b${name}\\b`).test(source))
   );
 }
 
@@ -123,6 +173,30 @@ function withoutComments(source: string): string {
 
 /** A call to the global `fetch`. `authorizedFetch(` and `deps.fetchImpl(` are not. */
 const BARE_FETCH_CALL = /(?<![.\w])fetch\s*\(/;
+
+/**
+ * What the second half of the rule demands of a screen that talks to `/v1`, as a
+ * list of named violations — empty when the screen complies. ONE predicate, used
+ * by the sweep over real screens and by the planted-screen example, so the
+ * example proves the sweep would have failed the file rather than proving that
+ * a string the test wrote lacks a substring.
+ */
+function seamRuleViolations(rawSource: string): string[] {
+  const source = withoutComments(rawSource);
+  const violations: string[] = [];
+  if (!source.includes('useAuthorizedFetch()')) {
+    violations.push('does not call useAuthorizedFetch()');
+  }
+  if (!source.includes('useApiBaseUrl()')) {
+    violations.push('does not call useApiBaseUrl()');
+  }
+  // And it must not have gone back to reading the environment for itself — the
+  // root layout reads it once and hands it down.
+  if (source.includes('NEXT_PUBLIC_API_BASE_URL')) {
+    violations.push('reads NEXT_PUBLIC_API_BASE_URL for itself');
+  }
+  return violations;
+}
 
 describe('every authenticated call goes through the seam', () => {
   const files = sourceFiles(APP_ROOT);
@@ -185,17 +259,65 @@ describe('every authenticated call goes through the seam', () => {
     expect(mentionsApi('const p = AUTH_COOKIE_PATH;')).toBe(false);
     expect(mentionsApi('const p = AUTH_ME_PATH;')).toBe(true);
     // A future epic's route: not written out here, but the shape is what matters —
-    // any documented path makes its constant count, whatever its prefix.
-    expect(API_ROUTE_CONSTANTS.every((name) => name.endsWith('_PATH'))).toBe(true);
+    // any documented path makes its constant count, whatever its prefix. Two
+    // suffixes since Story 2.2: `_PATH` for a concrete route, `_PATH_TEMPLATE` for
+    // one the document keys with a `{param}` placeholder (`ROOM_TOKEN_PATH_TEMPLATE`
+    // is `/v1/rooms/{roomId}/token`). The template IS the documented path, so it
+    // counts; the name says it is not a string a client sends verbatim.
+    expect(API_ROUTE_CONSTANTS).toContain('ROOM_TOKEN_PATH_TEMPLATE');
+    expect(API_ROUTE_CONSTANTS.every((name) => /_PATH(?:_TEMPLATE)?$/.test(name))).toBe(true);
+  });
+
+  it('knows a route BUILDER from any other exported function', () => {
+    // The positive pin for the third spelling. A screen that imports
+    // `roomTokenPath` and never names the template is a screen that talks to
+    // `/v1/rooms/{roomId}/token`, and has to be held to the seam rule.
+    expect(API_ROUTE_BUILDERS).toContain('roomTokenPath');
+    expect(mentionsApi('const path = roomTokenPath(room.id);')).toBe(true);
+    // Other exported functions are not routes: `makeError` builds an envelope,
+    // `isRoomId` answers a predicate, and neither fills a documented template.
+    expect(API_ROUTE_BUILDERS).not.toContain('makeError');
+    expect(API_ROUTE_BUILDERS).not.toContain('isRoomId');
+    expect(mentionsApi('const ok = isRoomId(value);')).toBe(false);
+  });
+
+  it('would hold a planted screen that imports only the builder to the seam rule', () => {
+    // Planted through the SAME pipeline the sweep uses — the file walker, the
+    // comment stripper, `mentionsApi` — rather than asserted against a string, so
+    // this proves the sweep would have caught it and not only that the regex can.
+    const planted = join(APP_ROOT, 'seam-usage-probe.generated.tsx');
+    writeFileSync(
+      planted,
+      [
+        "import { roomTokenPath } from '@stuwith/contracts';",
+        'export function Probe({ id }: { id: string }) {',
+        '  return <a href={roomTokenPath(id)}>vào phòng</a>;',
+        '}',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    try {
+      const files = sourceFiles(APP_ROOT);
+      expect(files).toContain(planted);
+      const callers = files.filter((file) =>
+        mentionsApi(withoutComments(readFileSync(file, 'utf8'))),
+      );
+      expect(callers).toContain(planted);
+      // And the SAME rule the sweep applies to every caller, run on the planted
+      // screen: it would have FAILED the sweep, not merely joined the list. Not a
+      // check on a string this test wrote three lines up — the production
+      // predicate, with its findings named.
+      expect(seamRuleViolations(readFileSync(planted, 'utf8'))).toEqual([
+        'does not call useAuthorizedFetch()',
+        'does not call useApiBaseUrl()',
+      ]);
+    } finally {
+      rmSync(planted, { force: true });
+    }
   });
 
   it.each(apiCallers)('%s asks the provider for the seam and for the API origin', (file) => {
-    const source = withoutComments(readFileSync(join(APP_ROOT, file), 'utf8'));
-
-    expect(source).toContain('useAuthorizedFetch()');
-    expect(source).toContain('useApiBaseUrl()');
-    // And it must not have gone back to reading the environment for itself — the
-    // root layout reads it once and hands it down.
-    expect(source).not.toContain('NEXT_PUBLIC_API_BASE_URL');
+    expect(seamRuleViolations(readFileSync(join(APP_ROOT, file), 'utf8'))).toEqual([]);
   });
 });

@@ -13,6 +13,7 @@ import {
   IdentityInputError,
   RateLimitInputError,
   RoomInputError,
+  RoomReservationInputError,
   SessionInputError,
   type AuditEventInput,
   type AuditPort,
@@ -22,10 +23,14 @@ import {
   type ProviderIdentity,
   type RateLimitDecision,
   type RateLimitPort,
+  type ReserveSeatInput,
+  type ReserveSeatResult,
   type RoomPort,
+  type RoomReservationPort,
   type SessionGeneration,
   type SessionPort,
 } from '@stuwith/domain';
+import type { RoomStatus } from '@stuwith/contracts';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 
 /**
@@ -307,6 +312,26 @@ export function runIdentityPortContract(options: IdentityPortContractOptions): v
     it('starts a brand-new profile on the default plan, the same one in both stores', async () => {
       const created = await (await port()).findOrCreateByIdentity(googleIdentity(), t0);
       expect(created.user.plan).toBe(DEFAULT_USER_PLAN);
+    });
+
+    /**
+     * Story 2.2. A brand-new person is NOT banned, and the value is `null` —
+     * specifically not `undefined`.
+     *
+     * `roomAdmission` fails closed on anything that is not `null`, so an adapter
+     * whose select list lost `banned_at` would refuse every token, and an in-memory
+     * adapter that forgot the field would refuse every flow-suite token. Both would
+     * be loud; this example is what makes them loud HERE rather than one layer up.
+     * It also reads the user BACK, because the `RETURNING` list and the `SELECT`
+     * list are two strings.
+     */
+    it('starts a brand-new profile not banned, as null, on create AND on read', async () => {
+      const p = await port();
+      const created = await p.findOrCreateByIdentity(googleIdentity(), t0);
+      expect(created.user.bannedAt).toBeNull();
+
+      const read = await p.findUserById(created.user.id);
+      expect(read?.bannedAt).toBeNull();
     });
 
     it('maps a second login onto the SAME user and creates no second row', async () => {
@@ -2041,6 +2066,429 @@ export function runRoomPortContract(options: RoomPortContractOptions): void {
         // And specifically NOT the input-validation error, which would mean the
         // fault path was never actually exercised.
         expect(outcome.kind === 'rejected' && outcome.error).not.toBeInstanceOf(RoomInputError);
+      });
+    });
+  });
+}
+
+/* ------------------------------------------------------------------------- *
+ * RoomReservationPort — Story 2.2
+ * ------------------------------------------------------------------------- */
+
+export interface RoomReservationPortHarness {
+  readonly port: RoomReservationPort;
+  reset(): Promise<void>;
+  teardown?(): Promise<void>;
+  /**
+   * A room the store knows, with this cap and (optionally) this status. Returns
+   * its id.
+   *
+   * A harness method rather than a call on `RoomPort`, for two reasons. The PG
+   * pass needs a real `rooms` row owned by a real `users` row; the in-memory pass
+   * needs the same room visible to the reservation adapter's lookup. And a
+   * `closing` or `closed` room cannot be produced through any port — Story 4.8
+   * owns that write — so the harness plants it the way a DBA would.
+   */
+  createRoom(options: {
+    readonly maxParticipants: number;
+    readonly status?: RoomStatus;
+  }): Promise<string>;
+  /** A user id the store will accept: a real `users` row for Postgres, any UUID in memory. */
+  createUserId(): Promise<string>;
+  /**
+   * Rows for this room REGARDLESS of expiry.
+   *
+   * Not "live seats": that is the number the port itself computes, and asserting
+   * it back would test the adapter against its own arithmetic. This is what says
+   * an expired seat was really removed and a refused call really wrote nothing.
+   */
+  countRows(roomId: string): Promise<number>;
+  /**
+   * Seats still live as of `now`, read through a path that sees ONLY committed
+   * state — for Postgres, a connection of its own, never the adapter's pool.
+   *
+   * This is what the concurrency example samples while a burst is in flight. The
+   * port's docblock promises that at no instant do more than `max_participants`
+   * live rows exist; a count taken after `Promise.all` settles cannot tell "never
+   * more than the cap" from "more than the cap for a while, then reaped", and it
+   * is exactly the transient overshoot a missing lock produces.
+   */
+  countLive(roomId: string, now: Date): Promise<number>;
+  /** See HeartbeatPortHarness.createFaultingPort — same reasoning, same rule. */
+  createFaultingPort?(): Promise<RoomReservationPort>;
+}
+
+export interface RoomReservationPortContractOptions {
+  readonly label: string;
+  readonly createHarness: () => Promise<RoomReservationPortHarness>;
+  readonly skip?: boolean;
+  readonly hookTimeoutMs?: number;
+}
+
+/**
+ * AD-22 / TD-5 — `RoomReservationPort`, run once per adapter.
+ *
+ * The one example that earns this suite its two passes is the 130-concurrent one:
+ * the in-memory adapter satisfies it by having no `await` between count and write,
+ * the Postgres adapter by `FOR UPDATE` on the room's row, and removing either is
+ * green against the OTHER store. That is the whole reason the suite is shared.
+ */
+export function runRoomReservationPortContract(
+  options: RoomReservationPortContractOptions,
+): void {
+  const suite = options.skip === true ? describe.skip : describe;
+  const t0 = new Date('2026-09-12T09:00:00.000Z');
+  const HOLD = 120;
+  const later = (seconds: number): Date => new Date(t0.getTime() + seconds * 1_000);
+
+  /** A UUID no store will have minted, for the "unknown room" read. */
+  const ABSENT_ROOM_ID = '019200ff-0000-7000-8000-ffffffffffff';
+
+  suite(`RoomReservationPort contract — ${options.label}`, () => {
+    let harness: RoomReservationPortHarness | undefined;
+
+    const use = async (): Promise<RoomReservationPortHarness> => {
+      harness ??= await options.createHarness();
+      return harness;
+    };
+
+    const input = async (
+      roomId: string,
+      overrides: Partial<ReserveSeatInput> = {},
+    ): Promise<ReserveSeatInput> => ({
+      roomId,
+      userId: await (await use()).createUserId(),
+      holdForSeconds: HOLD,
+      ...overrides,
+    });
+
+    beforeEach(async () => {
+      harness ??= await options.createHarness();
+      await harness.reset();
+    }, options.hookTimeoutMs ?? 120_000);
+
+    afterAll(async () => {
+      await harness?.teardown?.();
+      harness = undefined;
+    }, options.hookTimeoutMs ?? 120_000);
+
+    it('reserves a seat in an open room, stamped with the instant it was handed', async () => {
+      const h = await use();
+      const roomId = await h.createRoom({ maxParticipants: 6 });
+      const request = await input(roomId);
+
+      const result = await h.port.reserveSeat(request, t0);
+
+      expect(result.kind).toBe('reserved');
+      if (result.kind !== 'reserved') return;
+      expect(result.renewed).toBe(false);
+      expect(result.reservation.roomId).toBe(roomId);
+      expect(result.reservation.userId).toBe(request.userId);
+      // ONE instant per request, and the expiry is that instant plus the hold —
+      // the same arithmetic the token's `exp` will be derived from.
+      expect(result.reservation.reservedAt.toISOString()).toBe(t0.toISOString());
+      expect(result.reservation.expiresAt.toISOString()).toBe(later(HOLD).toISOString());
+      expect(result.reservation.id).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+      );
+      expect(await h.countRows(roomId)).toBe(1);
+    });
+
+    it('answers no_room for a room nobody created, and writes nothing', async () => {
+      const h = await use();
+      expect(await h.port.reserveSeat(await input(ABSENT_ROOM_ID), t0)).toEqual({
+        kind: 'no_room',
+      });
+      expect(await h.countRows(ABSENT_ROOM_ID)).toBe(0);
+    });
+
+    it.each(['closing', 'closed'] as const)(
+      'answers closed for a %s room, and writes nothing',
+      async (status) => {
+        const h = await use();
+        const roomId = await h.createRoom({ maxParticipants: 6, status });
+
+        expect(await h.port.reserveSeat(await input(roomId), t0)).toEqual({ kind: 'closed' });
+        expect(await h.countRows(roomId)).toBe(0);
+      },
+    );
+
+    it('answers full once every seat under the cap is live, and writes nothing more', async () => {
+      const h = await use();
+      const roomId = await h.createRoom({ maxParticipants: 2 });
+
+      expect((await h.port.reserveSeat(await input(roomId), t0)).kind).toBe('reserved');
+      expect((await h.port.reserveSeat(await input(roomId), t0)).kind).toBe('reserved');
+      expect(await h.port.reserveSeat(await input(roomId), t0)).toEqual({ kind: 'full' });
+
+      expect(await h.countRows(roomId)).toBe(2);
+    });
+
+    it('stores the cap it was handed — a room of one admits exactly one', async () => {
+      // The smallest cap, so an off-by-one in the comparison shows as "admits two".
+      const h = await use();
+      const roomId = await h.createRoom({ maxParticipants: 1 });
+
+      expect((await h.port.reserveSeat(await input(roomId), t0)).kind).toBe('reserved');
+      expect((await h.port.reserveSeat(await input(roomId), t0)).kind).toBe('full');
+    });
+
+    /**
+     * The same person asking again is a RENEWAL: one seat, a later expiry, no
+     * second row. A "Vào phòng" button pressed twice, or a pre-join screen that
+     * re-asks after every device change, must not eat two of six places.
+     */
+    describe('asking again is renewing, not doubling', () => {
+      it('extends the same seat and reports it as renewed', async () => {
+        const h = await use();
+        const roomId = await h.createRoom({ maxParticipants: 6 });
+        const request = await input(roomId);
+
+        const first = await h.port.reserveSeat(request, t0);
+        const second = await h.port.reserveSeat(request, later(30));
+
+        expect(first.kind).toBe('reserved');
+        expect(second.kind).toBe('reserved');
+        if (first.kind !== 'reserved' || second.kind !== 'reserved') return;
+        expect(second.renewed).toBe(true);
+        expect(second.reservation.id).toBe(first.reservation.id);
+        expect(second.reservation.expiresAt.toISOString()).toBe(
+          later(30 + HOLD).toISOString(),
+        );
+        // The seat was taken the FIRST time; renewing does not rewrite history.
+        expect(second.reservation.reservedAt.toISOString()).toBe(t0.toISOString());
+        expect(await h.countRows(roomId)).toBe(1);
+      });
+
+      it('never moves the expiry BACKWARDS — a renewal with an earlier instant keeps the later expiry', async () => {
+        // `now` is the instant the session was resolved at, not the instant the
+        // statement runs, so two requests from one person can reach the store in
+        // the opposite order to their instants. The later expiry must win either
+        // way: a token already issued for `t0 + 30 + HOLD` must not outlive a seat
+        // that a straggling request just shortened to `t0 + 10 + HOLD`.
+        const h = await use();
+        const roomId = await h.createRoom({ maxParticipants: 6 });
+        const request = await input(roomId);
+
+        const first = await h.port.reserveSeat(request, later(30));
+        const straggler = await h.port.reserveSeat(request, later(10));
+
+        expect(first.kind).toBe('reserved');
+        expect(straggler.kind).toBe('reserved');
+        if (first.kind !== 'reserved' || straggler.kind !== 'reserved') return;
+        expect(straggler.renewed).toBe(true);
+        expect(straggler.reservation.id).toBe(first.reservation.id);
+        expect(straggler.reservation.expiresAt.toISOString()).toBe(
+          later(30 + HOLD).toISOString(),
+        );
+        expect(await h.countRows(roomId)).toBe(1);
+      });
+
+      it('lets the holder of the last seat renew it in a room that is otherwise full', async () => {
+        // The order inside the lock matters here: "is this a renewal" is asked
+        // BEFORE "is there room", or the person holding the last seat is told the
+        // room is full of — among others — themselves.
+        const h = await use();
+        const roomId = await h.createRoom({ maxParticipants: 1 });
+        const request = await input(roomId);
+
+        expect((await h.port.reserveSeat(request, t0)).kind).toBe('reserved');
+        const again = await h.port.reserveSeat(request, later(10));
+
+        expect(again.kind).toBe('reserved');
+        expect(again.kind === 'reserved' && again.renewed).toBe(true);
+        expect(await h.countRows(roomId)).toBe(1);
+      });
+    });
+
+    /**
+     * Expiry, judged against the instant handed in and nothing else.
+     *
+     * A seat is live while `now < expiresAt`. At the instant itself it is gone —
+     * the same `<=` in both stores — and the ROW is gone too, not merely uncounted:
+     * `apps/api` owns this table's housekeeping (AD-22) and does it here.
+     */
+    describe('an expired seat frees up, and its row is removed', () => {
+      it('admits a second person once the first seat has lapsed', async () => {
+        const h = await use();
+        const roomId = await h.createRoom({ maxParticipants: 1 });
+        const first = await input(roomId);
+
+        expect((await h.port.reserveSeat(first, t0)).kind).toBe('reserved');
+        // One second before expiry: still full.
+        expect((await h.port.reserveSeat(await input(roomId), later(HOLD - 1))).kind).toBe(
+          'full',
+        );
+        // At expiry exactly: free, and the lapsed row is gone.
+        const second = await h.port.reserveSeat(await input(roomId), later(HOLD));
+        expect(second.kind).toBe('reserved');
+        expect(await h.countRows(roomId)).toBe(1);
+      });
+
+      it('reaps only the room it was asked about', async () => {
+        // The delete is scoped by room. A reap that swept the whole table would be
+        // correct today and a full scan tomorrow, and nothing else would notice.
+        const h = await use();
+        const a = await h.createRoom({ maxParticipants: 1 });
+        const b = await h.createRoom({ maxParticipants: 1 });
+        expect((await h.port.reserveSeat(await input(a), t0)).kind).toBe('reserved');
+        expect((await h.port.reserveSeat(await input(b), t0)).kind).toBe('reserved');
+
+        // Long after both lapsed, touch only A.
+        await h.port.reserveSeat(await input(a), later(HOLD * 10));
+
+        expect(await h.countRows(a)).toBe(1);
+        expect(await h.countRows(b), 'B was not asked about and keeps its row').toBe(1);
+      });
+
+      it('a lapsed seat of one person does not block their own renewal', async () => {
+        const h = await use();
+        const roomId = await h.createRoom({ maxParticipants: 1 });
+        const request = await input(roomId);
+        expect((await h.port.reserveSeat(request, t0)).kind).toBe('reserved');
+
+        const back = await h.port.reserveSeat(request, later(HOLD * 2));
+
+        expect(back.kind).toBe('reserved');
+        // A NEW seat, not a renewal: the old one had lapsed and was reaped first.
+        expect(back.kind === 'reserved' && back.renewed).toBe(false);
+        expect(await h.countRows(roomId)).toBe(1);
+      });
+    });
+
+    it('keeps two rooms independent — one person may hold a seat in each', async () => {
+      const h = await use();
+      const a = await h.createRoom({ maxParticipants: 1 });
+      const b = await h.createRoom({ maxParticipants: 1 });
+      const userId = await h.createUserId();
+
+      expect(
+        (await h.port.reserveSeat({ roomId: a, userId, holdForSeconds: HOLD }, t0)).kind,
+      ).toBe('reserved');
+      expect(
+        (await h.port.reserveSeat({ roomId: b, userId, holdForSeconds: HOLD }, t0)).kind,
+      ).toBe('reserved');
+      expect(await h.countRows(a)).toBe(1);
+      expect(await h.countRows(b)).toBe(1);
+    });
+
+    /**
+     * THE example. 130 people, a cap of 100, one instant, `Promise.all`.
+     *
+     * Exactly 100 `reserved`, exactly 30 `full`, and never more than 100 rows. On
+     * Postgres this is `FOR UPDATE` doing its job; remove it and the count in step
+     * 4 becomes a read followed by a write with a window in it, and this goes red
+     * with more than 100 rows — measured. In memory it is the absence of an `await`
+     * between count and write; insert one and this goes red the same way. Neither
+     * store can stand in for the other on this example, which is why there are two.
+     *
+     * ## Sampled DURING the burst, not only counted after it
+     *
+     * The port promises "at no instant do more than 100 live rows exist". A count
+     * after `Promise.all` is a count of what SURVIVED, and would stay green for an
+     * adapter that overshot to 109 and then reaped its own excess. So a sampler
+     * reads `countLive` every few milliseconds while the burst is in flight —
+     * through a connection of its own on Postgres, so it sees committed rows only
+     * — and every sample has to be at or under the cap. The first sample is taken
+     * before the first `sleep`, so a store fast enough to finish the whole burst
+     * inside one tick still produces at least one reading.
+     */
+    it('admits exactly the cap under 130 concurrent requests for a room of 100', async () => {
+      const h = await use();
+      const roomId = await h.createRoom({ maxParticipants: 100 });
+      const people: string[] = [];
+      for (let i = 0; i < 130; i += 1) {
+        people.push(await h.createUserId());
+      }
+
+      const samples: number[] = [];
+      let burstSettled = false;
+      const sampler = (async () => {
+        do {
+          samples.push(await h.countLive(roomId, t0));
+          await new Promise((resolve) => setTimeout(resolve, 3));
+        } while (!burstSettled);
+      })();
+
+      let results: ReserveSeatResult[];
+      try {
+        results = await Promise.all(
+          people.map((userId) =>
+            h.port.reserveSeat({ roomId, userId, holdForSeconds: HOLD }, t0),
+          ),
+        );
+      } finally {
+        // Whatever the burst did, the sampler must stop: a rejected burst that
+        // left it polling would surface as a 120-second timeout, not as the fault.
+        burstSettled = true;
+      }
+      await sampler;
+
+      const reserved = results.filter((r) => r.kind === 'reserved').length;
+      const full = results.filter((r) => r.kind === 'full').length;
+      expect(reserved).toBe(100);
+      expect(full).toBe(30);
+      expect(reserved + full).toBe(130);
+      expect(await h.countRows(roomId)).toBe(100);
+
+      // The sampler really ran, and never once saw the cap exceeded.
+      expect(samples.length).toBeGreaterThanOrEqual(1);
+      const peak = Math.max(...samples);
+      expect(peak, `live seats peaked at ${String(peak)} during the burst`).toBeLessThanOrEqual(100);
+    }, 120_000);
+
+    describe('refuses what neither store could describe, identically', () => {
+      it.each<readonly [string, Partial<ReserveSeatInput>]>([
+        ['a room id that is not a UUID', { roomId: 'nope' }],
+        ['a user id that is not a UUID', { userId: 'nobody' }],
+        ['a hold of zero seconds', { holdForSeconds: 0 }],
+        ['a negative hold', { holdForSeconds: -1 }],
+        ['a fractional hold', { holdForSeconds: 1.5 }],
+        // A positive integer whose expiry is an Invalid Date: a driver fault in one
+        // store and a never-reaped NaN seat in the other, unless refused up front.
+        ['a hold that puts the expiry past the Date range', { holdForSeconds: Number.MAX_SAFE_INTEGER }],
+      ])('throws RoomReservationInputError for %s', async (_label, overrides) => {
+        const h = await use();
+        const roomId = await h.createRoom({ maxParticipants: 6 });
+        await expect(
+          h.port.reserveSeat(await input(roomId, overrides), t0),
+        ).rejects.toBeInstanceOf(RoomReservationInputError);
+        expect(await h.countRows(roomId)).toBe(0);
+      });
+
+      it('throws for an instant that is not a Date', async () => {
+        const h = await use();
+        const roomId = await h.createRoom({ maxParticipants: 6 });
+        await expect(
+          h.port.reserveSeat(await input(roomId), new Date('not-a-date')),
+        ).rejects.toBeInstanceOf(RoomReservationInputError);
+      });
+    });
+
+    /**
+     * A fault is not `full`. An adapter that answered `full` when its store was
+     * unreachable would tell a person the room is busy when the truth is that we
+     * are broken — the collapse `heartbeat-port.ts` forbids, with a screen on it.
+     */
+    describe('lets an infrastructure fault propagate', () => {
+      it('throws instead of answering full or reserved when the store is unreachable', async () => {
+        const create = harness?.createFaultingPort;
+        if (create === undefined) {
+          throw new Error(
+            `harness "${options.label}" must provide createFaultingPort(): an adapter that ` +
+              'turns an outage into "full" tells somebody the room is busy when we are broken.',
+          );
+        }
+        const faulting = await create.call(harness);
+        const outcome = await faulting.reserveSeat(await input(ABSENT_ROOM_ID), t0).then(
+          (value) => ({ kind: 'resolved' as const, value }),
+          (error: unknown) => ({ kind: 'rejected' as const, error }),
+        );
+
+        expect(outcome.kind).toBe('rejected');
+        expect(outcome.kind === 'rejected' && outcome.error).not.toBeInstanceOf(
+          RoomReservationInputError,
+        );
       });
     });
   });

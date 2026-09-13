@@ -84,9 +84,11 @@ export class AppModule {
         SessionAuthenticatorModule.forRuntime(config, runtime),
         MoneyModule,
         AuthModule.forConfig(config, runtime),
-        // Story 2.1. It takes the SAME runtime object, so `rooms` reaches Postgres
-        // through the one pool this process opens — see `AuthRuntime.rooms`.
-        RoomsModule.forRuntime(runtime),
+        // Story 2.1 / 2.2. It takes the SAME runtime object, so `rooms` and
+        // `reservations` reach Postgres through the one pool this process opens —
+        // see `AuthRuntime.rooms`. The config is the same validated object every
+        // other module gets; the token issuer reads the LiveKit key pair from it.
+        RoomsModule.forRuntime(config, runtime),
       ],
       controllers: [HealthController, ...(options.fixtureControllers ?? [])],
       providers: [

@@ -28,10 +28,61 @@ import { healthResponseSchema } from './health';
 import { toOpenApiDocument } from './openapi';
 import {
   MAX_ROOM_DESCRIPTION_LENGTH,
+  ROOM_TOKEN_PATH_TEMPLATE,
+  ROOM_TOKEN_TTL_SECONDS,
   ROOM_TOPICS,
   ROOM_VISIBILITIES,
   parseCreateRoomRequest,
+  roomTokenPath,
+  roomTokenResponseSchema,
 } from './rooms';
+
+describe('the room-token contract (Story 2.2)', () => {
+  it('turns the template into a concrete path for one room', () => {
+    const id = '019200f1-0000-7000-8000-000000000001';
+    expect(roomTokenPath(id)).toBe(`/v1/rooms/${id}/token`);
+    // And the template itself keeps the placeholder, so the document and the call
+    // cannot be the same string by accident.
+    expect(ROOM_TOKEN_PATH_TEMPLATE).toContain('{roomId}');
+  });
+
+  it('escapes a room id that is not a bare token, so a path cannot be rewritten', () => {
+    // A client that built the path by concatenation would let `../` walk the URL.
+    // Nothing valid is ever escaped, because a real id is a UUID; this is the
+    // negative control.
+    expect(roomTokenPath('a/b')).toBe('/v1/rooms/a%2Fb/token');
+  });
+
+  it('holds the TTL at the value the spec froze', () => {
+    // Changing it is an "Ask First" item. A test that pins the number is what makes
+    // that a conversation rather than a diff.
+    expect(ROOM_TOKEN_TTL_SECONDS).toBe(120);
+  });
+
+  it('accepts the four-key response and refuses one with a key missing', () => {
+    const body = {
+      token: 'eyJ.abc.def',
+      url: 'wss://livekit.example.vn',
+      expires_at: '2026-09-12T09:02:00.000Z',
+      room_id: '019200f1-0000-7000-8000-000000000001',
+    };
+    expect(roomTokenResponseSchema.safeParse(body).success).toBe(true);
+    for (const key of Object.keys(body)) {
+      const { [key]: _dropped, ...rest } = body as Record<string, unknown>;
+      expect(roomTokenResponseSchema.safeParse(rest).success, `${key} is required`).toBe(false);
+    }
+  });
+
+  it('refuses an empty token and a room id that is not a UUID', () => {
+    const body = {
+      token: '',
+      url: 'wss://livekit.example.vn',
+      expires_at: '2026-09-12T09:02:00.000Z',
+      room_id: 'room-1',
+    };
+    expect(roomTokenResponseSchema.safeParse(body).success).toBe(false);
+  });
+});
 
 describe('error envelope', () => {
   it('accepts the one shape the whole system is allowed to emit', () => {
@@ -179,6 +230,8 @@ describe('OpenAPI emission (AD-13)', () => {
     // the return-path parameter below was found in.
     'CreateRoomRequest',
     'Room',
+    // Story 2.2. The one body a client hands to a third party.
+    'RoomTokenResponse',
   ])('publishes %s', (name) => {
     expect(Object.keys(doc.components.schemas)).toContain(name);
   });
@@ -244,6 +297,78 @@ describe('OpenAPI emission (AD-13)', () => {
       const room = doc.components.schemas['Room'] as { properties: Record<string, unknown> };
       expect(Object.keys(request.properties)).not.toContain('max_participants');
       expect(Object.keys(room.properties)).toContain('max_participants');
+    });
+  });
+
+  /**
+   * `POST /v1/rooms/{roomId}/token`, read back out of the emitted document.
+   *
+   * Same posture as the create-room block: the route, the component and the
+   * parameter each fail on a different single-line deletion in `roomTokenPathItem()`,
+   * and a generated client reads THIS document rather than the NestJS decorator.
+   */
+  describe('the room-token endpoint', () => {
+    const tokenRoute = () => doc.paths[ROOM_TOKEN_PATH_TEMPLATE] as Record<string, unknown>;
+
+    it('is published under the template path, as a POST and nothing else', () => {
+      expect(tokenRoute()).toBeTruthy();
+      expect(Object.keys(tokenRoute())).toEqual(['post']);
+    });
+
+    it('never grows a delete — a token is not a resource anybody removes', () => {
+      expect(Object.keys(tokenRoute())).not.toContain('delete');
+    });
+
+    it('declares roomId as a required path parameter, in the same uuid format as Room.id', () => {
+      // A template path with no declared parameter is one a generator refuses or,
+      // worse, renders as a literal `{roomId}` in the URL it builds. And the
+      // parameter IS a room id: a bare `string` here would have a generated client
+      // accept what the server 404s, while `Room.id` and `room_id` say `uuid`.
+      const post = tokenRoute()['post'] as {
+        parameters?: ReadonlyArray<{ name: string; in: string; required?: boolean }>;
+      };
+      expect(post.parameters).toEqual([
+        { name: 'roomId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } },
+      ]);
+      const room = doc.components.schemas['Room'] as {
+        properties: Record<string, { format?: string }>;
+      };
+      expect(room.properties['id']?.format).toBe('uuid');
+    });
+
+    it('refs the response component and carries all four keys as REQUIRED', () => {
+      const post = tokenRoute()['post'] as {
+        requestBody?: unknown;
+        responses: Record<string, { content?: Record<string, { schema: { $ref?: string } }> }>;
+      };
+      // No body: the room is in the path and the person is in the cookie.
+      expect(post.requestBody).toBeUndefined();
+      expect(post.responses['201']?.content?.['application/json']?.schema.$ref).toBe(
+        '#/components/schemas/RoomTokenResponse',
+      );
+      const schema = doc.components.schemas['RoomTokenResponse'] as {
+        required?: readonly string[];
+        properties: Record<string, unknown>;
+      };
+      expect(Object.keys(schema.properties).sort()).toEqual([
+        'expires_at',
+        'room_id',
+        'token',
+        'url',
+      ]);
+      expect([...(schema.required ?? [])].sort()).toEqual([
+        'expires_at',
+        'room_id',
+        'token',
+        'url',
+      ]);
+    });
+
+    it('documents every refusal the service can answer, and no 400', () => {
+      // There is no body to validate, so a `400` here would describe an answer the
+      // route never gives; and a `409` with two meanings is documented as such.
+      const post = tokenRoute()['post'] as { responses: Record<string, unknown> };
+      expect(Object.keys(post.responses).sort()).toEqual(['201', '401', '403', '404', '409']);
     });
   });
 

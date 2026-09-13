@@ -625,6 +625,42 @@ required check is a silent pass, so both the workflow and
   variable. Serving the web client from a sub-path is not supported and needs a
   decision about which builder wins; it has no owner today.
 
+- **`LIVEKIT_URL` must be an absolute `ws(s)`/`http(s)` URL, and that is the
+  third breaking change to an existing `.env`.** It was validated as "non-empty"
+  while the wire contract it is handed to verbatim — `url` in the room-token
+  response — says `z.url()`. So `LIVEKIT_URL=livekit-host` booted green and every
+  `POST /v1/rooms/{roomId}/token` then answered `500` **after** the seat had
+  committed and a permanent audit row had been written. The schema now refuses
+  what the contract would refuse, before a port is opened, naming the variable.
+  Concretely: a `.env` that spelled the host without a scheme started yesterday
+  and exits non-zero today.
+
+- **`room_reservations` is the first table an application role may `DELETE`
+  from, and the reason is that a seat is a lifetime, not a record.** AD-22: the
+  process that writes a room's seats (`stuwith_api`) also reaps that room's
+  lapsed ones, inside the same transaction that counts them — so "seats somebody
+  can still use" is one number under one row lock. `stuwith_realtime` is refused
+  `42501` on all three verbs, proved by real statements in
+  `packages/db/src/room-reservations-migration.test.ts`. The "no role holds
+  `DELETE`" posture of `audit_events` and `sessions` is unchanged; this table is
+  the deliberate exception, and a fourth table wanting the same grant needs the
+  same argument.
+
+- **`users.banned_at` has a column and a reader, and NO writer until Story 4.7.**
+  The token endpoint reads it fail-closed from Story 2.2 (`roomAdmission` in
+  `packages/domain` is the ONLY reader, and `undefined` refuses like a timestamp
+  does), so the first ban ever written takes effect without anybody touching the
+  admission path. Nothing in the product can set it today; tests plant it through
+  the harness's `wrapIdentity`.
+
+- **A room token's seat stays held after a post-commit fault.** `issueRoomToken`
+  commits the seat, then mints, then writes the audit row. A throw in either of
+  the last two is a `500` with no token and no row — fail-closed — but the seat is
+  already committed and nothing releases it: it lapses after
+  `ROOM_TOKEN_TTL_SECONDS`, and the same person asking again inside that window
+  renews it rather than taking a second one. Compensation needs a release path on
+  `RoomReservationPort`, which Story 2.4 owns; `deferred-work.md` records it.
+
 - **A rate-limit outage logs ONCE, not once per request, and never logs the
   error's message.** `RateLimitHealth` holds the degraded state that the guard and
   `AuthService` share; the first failure writes the `error` line with the code

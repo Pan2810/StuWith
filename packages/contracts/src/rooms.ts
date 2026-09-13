@@ -330,3 +330,98 @@ export function parseCreateRoomRequest(body: unknown): CreateRoomRequest | null 
  */
 export const CREATE_ROOM_INVALID_MESSAGE =
   'Chưa tạo được phòng. Hãy kiểm tra lại tên, chủ đề và quyền xem rồi thử lại.';
+
+/* -------------------------------------------------------------------------- *
+ * Story 2.2 — the room token
+ * -------------------------------------------------------------------------- */
+
+/**
+ * How long a room token — and the seat it reserves — is good for, in seconds.
+ *
+ * One number for two things, on purpose. The token's `exp` and the row's
+ * `expires_at` are the same instant, so a token that LiveKit would still accept
+ * always has a seat behind it, and a seat that has lapsed never has a live token in
+ * front of it. Two constants would let the two drift and open exactly the gap the
+ * atomic reservation exists to close.
+ *
+ * 120 seconds is the pre-join budget: enough to pick a face mode and test a
+ * microphone (Story 2.3), short enough that a person who closed the tab frees the
+ * seat before anybody notices the room looked full. Changing it is an "Ask First"
+ * item in the story's spec.
+ */
+export const ROOM_TOKEN_TTL_SECONDS = 120;
+
+/**
+ * `POST /v1/rooms/{roomId}/token`, as the OpenAPI document spells it.
+ *
+ * The braces are OpenAPI's path-template syntax, which is why this constant is the
+ * one the document is keyed on and NOT the one a client calls. {@link roomTokenPath}
+ * produces the concrete path for a given room.
+ */
+export const ROOM_TOKEN_PATH_TEMPLATE = '/v1/rooms/{roomId}/token';
+
+/**
+ * Whether a value is the shape of a room id — the SAME rule `roomSchema.id`
+ * publishes, asked as a predicate.
+ *
+ * `apps/api` reads `{roomId}` out of the path as `unknown` and has to answer 404
+ * for "that is not a room id" with the same body as "no such room". The judgement
+ * is here rather than in a NestJS pipe because a pipe answers 400 and names the
+ * parameter, and the contract says there is ONE status for "there is no room
+ * here" whatever the reason — not because the format is secret (the OpenAPI
+ * document publishes `format: uuid` on the parameter), but because a client has
+ * nothing different to do for a malformed id than for an unknown one. And because
+ * a second spelling of "what is a room id" beside the schema is a second spelling
+ * that drifts.
+ */
+export function isRoomId(value: unknown): value is string {
+  return roomSchema.shape.id.safeParse(value).success;
+}
+
+/** The concrete path for one room, from the template above. */
+export function roomTokenPath(roomId: string): string {
+  return ROOM_TOKEN_PATH_TEMPLATE.replace('{roomId}', encodeURIComponent(roomId));
+}
+
+/**
+ * What a successful token request answers.
+ *
+ * `token` is a LiveKit access token signed by `apps/api` with the server's API
+ * secret, which never leaves that process — the client gets a token, never a
+ * credential. `url` is where to present it (the deployment's `LIVEKIT_URL`), so a
+ * client is not configured with a media endpoint of its own. `expires_at` is when
+ * both the token and the reserved seat lapse. `room_id` is echoed so a client that
+ * fired two requests can tell which answer belongs to which room — and it is the
+ * SAME string LiveKit knows the room by: the room's name on the media plane is
+ * `rooms.id`, with no mapping layer in between.
+ */
+export const roomTokenResponseSchema = z.object({
+  token: z.string().min(1),
+  url: z.url(),
+  expires_at: z.iso.datetime(),
+  room_id: z.uuid(),
+});
+
+export type RoomTokenResponse = z.infer<typeof roomTokenResponseSchema>;
+
+/**
+ * The four refusals a token request can end in, each as one sentence.
+ *
+ * Declared here for the reason `CREATE_ROOM_INVALID_MESSAGE` is: they cross the
+ * process boundary as the `message` of the error envelope, and `apps/web` will read
+ * the STATUS rather than the sentence — so nothing on screen depends on these being
+ * stable, but a mobile client reading the envelope gets one wording per refusal.
+ *
+ * None of them says which condition was checked in what order, and the not-found
+ * sentence is used for BOTH "no such room" and "that is not a room id": one status
+ * and one sentence for "there is no room here", whatever the reason, because a
+ * client has nothing different to do in the two cases (the id format itself is
+ * public — the OpenAPI document says `uuid`).
+ */
+export const ROOM_FULL_MESSAGE = 'Phòng đã đủ người. Hãy thử lại sau hoặc chọn phòng khác.';
+
+export const ROOM_CLOSED_MESSAGE = 'Phòng này đã đóng. Hãy chọn phòng khác.';
+
+export const ROOM_NOT_FOUND_MESSAGE = 'Không tìm thấy phòng này.';
+
+export const ROOM_ADMISSION_FORBIDDEN_MESSAGE = 'Bạn không thể vào phòng học lúc này.';

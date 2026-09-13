@@ -88,6 +88,31 @@ export interface User {
    * there is unremovable for ever.
    */
   readonly dateOfBirth: string | null;
+  /**
+   * When this person was banned, or `null` for "not banned" (Story 2.2).
+   *
+   * ## A timestamp, not a boolean
+   *
+   * "Since when" is the first question of every investigation, and a `boolean`
+   * needs a second column the moment somebody asks it. `null` is the only
+   * not-banned state; any instant is banned, whatever the instant.
+   *
+   * ## Nobody writes it yet, and the gate that reads it fails closed anyway
+   *
+   * Story 4.7 owns moderation and is the first writer. That is a human decision
+   * (2026-09-12): the token endpoint reads this column from day one so that the
+   * day a ban is written, it takes effect without anybody touching the admission
+   * path. `roomAdmission` in `policies/room-admission.ts` is the ONE reader, and
+   * it treats anything that is not `null` — including `undefined` from a select
+   * list that lost the column — as banned. The same posture `readStoredDateOfBirth`
+   * takes with its column: a control must not read its own ignorance as
+   * permission.
+   *
+   * Like `dateOfBirth`, it does not leave `apps/api`: `CurrentUser` has no such
+   * field, and a ban is not something the banned person's client is told the
+   * timestamp of.
+   */
+  readonly bannedAt: Date | null;
   readonly createdAt: Date;
   readonly updatedAt: Date;
 }

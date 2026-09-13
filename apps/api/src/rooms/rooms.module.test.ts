@@ -1,5 +1,7 @@
-import type { RoomPort } from '@stuwith/domain';
+import type { AuditPort, RoomPort, RoomReservationPort } from '@stuwith/domain';
 import { describe, expect, it } from 'vitest';
+import { testApiEnv } from '../__testing__/api-env';
+import { APP_CONFIG } from '../config.token';
 import { RoomsModule } from './rooms.module';
 import { ROOMS_RUNTIME, type RoomsRuntime } from './rooms.runtime';
 import { RoomsService } from './rooms.service';
@@ -19,9 +21,12 @@ import { RoomsService } from './rooms.service';
  * `src/**\/*.test.ts`, so an `AuthRuntime` object literal written in a test file is
  * typechecked by nothing at all, including one that annotates itself. So the
  * examples have to be able to spell what the type system says is unspellable.
+ *
+ * Story 2.2 added two members, so the shapes below cover three ports.
  */
+const config = testApiEnv();
 
-const usablePort = (): RoomPort =>
+const usableRooms = (): RoomPort =>
   ({
     createRoom: () => {
       throw new Error('no example here calls the port');
@@ -31,75 +36,208 @@ const usablePort = (): RoomPort =>
     },
   }) as unknown as RoomPort;
 
+const usableReservations = (): RoomReservationPort =>
+  ({
+    reserveSeat: () => {
+      throw new Error('no example here calls the port');
+    },
+  }) as unknown as RoomReservationPort;
+
+const usableAudit = (): AuditPort =>
+  ({
+    append: () => {
+      throw new Error('no example here calls the port');
+    },
+  }) as unknown as AuditPort;
+
+const complete = (): RoomsRuntime => ({
+  rooms: usableRooms(),
+  reservations: usableReservations(),
+  audit: usableAudit(),
+});
+
 /** Every shape that is NOT a usable runtime, including the two that are not objects. */
-const UNUSABLE: ReadonlyArray<readonly [string, unknown]> = [
-  ['undefined', undefined],
-  ['null', null],
-  ['a runtime with no `rooms` member at all', {}],
-  ['a runtime whose `rooms` is undefined', { rooms: undefined }],
+const UNUSABLE: ReadonlyArray<readonly [string, unknown, RegExp]> = [
+  ['undefined', undefined, /no usable RoomPort/],
+  ['null', null, /no usable RoomPort/],
+  ['a runtime with no `rooms` member at all', {}, /no usable RoomPort/],
+  ['a runtime whose `rooms` is undefined', { rooms: undefined }, /no usable RoomPort/],
   // The disjunct that used to be written by hand as `port === null`. It is covered
   // by the one `typeof` condition, and this row is what says so — delete the check
   // and this goes red with the rest.
-  ['a runtime whose `rooms` is null', { rooms: null }],
-  ['a runtime whose `rooms` is an object with no `createRoom`', { rooms: {} }],
-  ['a runtime whose `createRoom` is not callable', { rooms: { createRoom: 'yes' } }],
+  ['a runtime whose `rooms` is null', { rooms: null }, /no usable RoomPort/],
+  ['a runtime whose `rooms` is an object with no `createRoom`', { rooms: {} }, /no usable RoomPort/],
+  [
+    'a runtime whose `createRoom` is not callable',
+    { rooms: { createRoom: 'yes' } },
+    /no usable RoomPort/,
+  ],
   // Every method of the port, not just the one this story calls. A `rooms` carrying
   // only `createRoom` builds, boots, serves a create and throws on the first READ —
   // the same "green until a request arrives" failure, one level in.
   [
     'a runtime whose `rooms` has createRoom but no findRoomById',
     { rooms: { createRoom: () => undefined } },
+    /no usable RoomPort/,
+  ],
+  // Story 2.2's two members. A runtime complete for 2.1 and missing either is the
+  // EXACT shape every `AuthRuntime` literal written before this story has.
+  [
+    'a runtime complete for Story 2.1 but with no `reservations`',
+    { ...complete(), reservations: undefined },
+    /no usable RoomReservationPort/,
+  ],
+  [
+    'a runtime whose `reservations` has no reserveSeat',
+    { ...complete(), reservations: {} },
+    /no usable RoomReservationPort/,
+  ],
+  [
+    'a runtime complete but with no `audit`',
+    { ...complete(), audit: undefined },
+    /no usable AuditPort/,
+  ],
+  [
+    'a runtime whose `audit` has no append',
+    { ...complete(), audit: { append: 'later' } },
+    /no usable AuditPort/,
   ],
 ];
 
 describe('RoomsModule.forRuntime refuses a runtime it cannot serve requests with', () => {
-  it.each(UNUSABLE)('throws for %s', (_label, runtime) => {
-    expect(() => RoomsModule.forRuntime(runtime as RoomsRuntime)).toThrow(/no usable RoomPort/);
+  it.each(UNUSABLE)('throws for %s', (_label, runtime, message) => {
+    expect(() => RoomsModule.forRuntime(config, runtime as RoomsRuntime)).toThrow(message);
   });
 
   it('names the METHOD that is missing, not only the member', () => {
     // "your runtime is wrong" sends somebody reading the stack into the framework.
     // "your rooms port has no findRoomById" is one line from the fix.
     expect(() =>
-      RoomsModule.forRuntime({ rooms: { createRoom: () => undefined } } as unknown as RoomsRuntime),
+      RoomsModule.forRuntime(config, {
+        ...complete(),
+        rooms: { createRoom: () => undefined },
+      } as unknown as RoomsRuntime),
     ).toThrow(/findRoomById/);
+    expect(() =>
+      RoomsModule.forRuntime(config, { ...complete(), reservations: {} } as unknown as RoomsRuntime),
+    ).toThrow(/reserveSeat/);
   });
 
   it('names the member that is missing, so the message is actionable', () => {
     // A fail-closed check whose message does not say WHAT is missing sends somebody
     // reading the stack into the framework instead of into their own runtime
     // literal — the posture `packages/config` takes with a missing variable.
-    expect(() => RoomsModule.forRuntime({} as RoomsRuntime)).toThrow(/`rooms` member/);
+    expect(() => RoomsModule.forRuntime(config, {} as RoomsRuntime)).toThrow(/`rooms` member/);
+    expect(() =>
+      RoomsModule.forRuntime(config, { ...complete(), audit: undefined } as unknown as RoomsRuntime),
+    ).toThrow(/`audit` member/);
   });
 });
 
-describe('RoomsModule.forRuntime wires the module when the port is usable', () => {
-  const runtime = { rooms: usablePort() } satisfies RoomsRuntime;
+/**
+ * The config half of the same guard. `config` is typed `ApiEnv`, and every shape
+ * below is one the type system says cannot arrive — which is exactly why each is
+ * spelled `as never`: a test file is typechecked by nothing, and
+ * `forRuntime(undefined as never, runtime)` booted green and answered 500 to the
+ * first token request before this check existed.
+ *
+ * `as never`, and NOT a cast to the config type: `config-cast-ban.test.ts` bans
+ * `as ApiEnv` because a test that casts INTO a config skips the schema while
+ * claiming to stand in for a deployment. These shapes claim the opposite — that
+ * they are NOT a config — and the module is what has to say so.
+ */
+describe('RoomsModule.forRuntime refuses a config the token issuer cannot read', () => {
+  const runtime = complete();
+
+  it.each([
+    ['undefined', undefined],
+    ['null', null],
+    ['an empty object', {}],
+  ])('throws for %s as the config, naming all three variables', (_label, shape) => {
+    expect(() => RoomsModule.forRuntime(shape as never, runtime)).toThrow(
+      /LIVEKIT_URL and LIVEKIT_API_KEY and LIVEKIT_API_SECRET/,
+    );
+  });
+
+  it.each(['LIVEKIT_URL', 'LIVEKIT_API_KEY', 'LIVEKIT_API_SECRET'] as const)(
+    'names %s when it alone is missing, and does not name the other two',
+    (variable) => {
+      const others = (['LIVEKIT_URL', 'LIVEKIT_API_KEY', 'LIVEKIT_API_SECRET'] as const).filter(
+        (name) => name !== variable,
+      );
+      const missing = { ...config, [variable]: undefined };
+      const empty = { ...config, [variable]: '' };
+
+      for (const shape of [missing, empty]) {
+        let caught: unknown;
+        try {
+          RoomsModule.forRuntime(shape as never, runtime);
+        } catch (error) {
+          caught = error;
+        }
+        expect(caught).toBeInstanceOf(Error);
+        const message = (caught as Error).message;
+        expect(message).toContain(variable);
+        for (const other of others) {
+          expect(message).not.toContain(other);
+        }
+      }
+    },
+  );
+
+  it('checks the config BEFORE the ports, so one message names the first thing to fix', () => {
+    // Both halves wrong: the config is what is reported. Somebody who reads the
+    // message, fixes the config and re-runs is then told about the runtime.
+    expect(() => RoomsModule.forRuntime(undefined as never, {} as RoomsRuntime)).toThrow(
+      /LIVEKIT_URL/,
+    );
+  });
+});
+
+describe('RoomsModule.forRuntime wires the module when every port is usable', () => {
+  const runtime = complete();
 
   it('returns a dynamic module for this class', () => {
     // The positive control. Every refusal above is satisfied perfectly by a method
     // that throws unconditionally, so without this the suite would pass against a
     // module that can never be built at all.
-    expect(RoomsModule.forRuntime(runtime).module).toBe(RoomsModule);
+    expect(RoomsModule.forRuntime(config, runtime).module).toBe(RoomsModule);
   });
 
-  it('hands the WHOLE runtime through as the provider value, not a copy of the port', () => {
+  it('hands the WHOLE runtime through as the provider value, not a copy of the ports', () => {
     /**
      * `ROOMS_RUNTIME` resolves to the object `AppModule.forConfig` built, which is
      * what keeps ONE `pg` pool for the process. A provider that rebuilt a narrow
      * `{ rooms }` object here would pass every other example in this file and open a
-     * second store the moment `RoomsRuntime` grows a second member.
+     * second store the moment `RoomsRuntime` grows a member — which it just did.
      */
-    const provider = RoomsModule.forRuntime(runtime).providers?.find(
+    const provider = RoomsModule.forRuntime(config, runtime).providers?.find(
       (candidate): candidate is { provide: symbol; useValue: unknown } =>
-        typeof candidate === 'object' && candidate !== null && 'provide' in candidate,
+        typeof candidate === 'object' &&
+        candidate !== null &&
+        'provide' in candidate &&
+        candidate.provide === ROOMS_RUNTIME,
     );
 
-    expect(provider?.provide).toBe(ROOMS_RUNTIME);
     expect(provider?.useValue).toBe(runtime);
   });
 
+  it('provides the config it was handed UNDER APP_CONFIG, so the token issuer can read the LiveKit pair', () => {
+    // Found by TOKEN, not by value: a provider that carried the right object under
+    // the wrong token would satisfy "some provider has this useValue" while
+    // `RoomsService`'s `@Inject(APP_CONFIG)` resolved nothing.
+    const provider = RoomsModule.forRuntime(config, runtime).providers?.find(
+      (candidate): candidate is { provide: symbol; useValue: unknown } =>
+        typeof candidate === 'object' &&
+        candidate !== null &&
+        'provide' in candidate &&
+        candidate.provide === APP_CONFIG,
+    );
+    expect(provider).toBeDefined();
+    expect(provider?.useValue).toBe(config);
+  });
+
   it('provides the service, so the controller has something to inject', () => {
-    expect(RoomsModule.forRuntime(runtime).providers).toContain(RoomsService);
+    expect(RoomsModule.forRuntime(config, runtime).providers).toContain(RoomsService);
   });
 });

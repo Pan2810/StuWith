@@ -1,15 +1,10 @@
 import { Controller, Get, Inject, Param, Post, Req, Res } from '@nestjs/common';
-import {
-  REQUEST_ID_HEADER,
-  compileTrustedProxies,
-  resolveRequestId,
-  type TrustedProxyTrust,
-} from '@stuwith/config';
+import { compileTrustedProxies, type TrustedProxyTrust } from '@stuwith/config';
 import { SIGN_IN_RETURN_PATH_QUERY_PARAM } from '@stuwith/contracts';
 import type { RateLimitSubject } from '@stuwith/domain';
 import type { FastifyReply, FastifyRequest } from 'fastify';
-import { randomUUID } from 'node:crypto';
 import { APP_CONFIG, type AppConfig } from '../config.token';
+import { requestIdOf } from '../request-id';
 import { RateLimited } from '../rate-limit/rate-limit.decorator';
 import { rateLimitSubjectOf } from '../rate-limit/request-identity';
 import { AuthService, type AuthOutcome } from './auth.service';
@@ -213,28 +208,6 @@ export class AuthController {
   private subjectOf(request: FastifyRequest): RateLimitSubject {
     return rateLimitSubjectOf(request, this.trust, this.config.SESSION_COOKIE_SECRET);
   }
-}
-
-/**
- * The id that is already on every log line for this request.
- *
- * The logger's `genReqId` stamps it on the raw response as `x-request-id` before
- * anything else runs, so reading it back here is what makes an audit row and its
- * log lines join up. The fallbacks exist because an audit row without a request id
- * is not an audit row — `AuditPort` rejects one — and a login must not fail
- * because the logging middleware was not wired.
- */
-function requestIdOf(request: FastifyRequest, reply: FastifyReply): string {
-  const stamped = reply.raw.getHeader(REQUEST_ID_HEADER);
-  if (typeof stamped === 'string' && stamped.length > 0) {
-    return stamped;
-  }
-  const onRaw = (request.raw as unknown as { id?: unknown }).id;
-  if (typeof onRaw === 'string' && onRaw.length > 0) {
-    return onRaw;
-  }
-  // Last resort: derive one the same way the logger would have.
-  return resolveRequestId(request.headers[REQUEST_ID_HEADER], randomUUID);
 }
 
 function send(reply: FastifyReply, outcome: AuthOutcome): void {

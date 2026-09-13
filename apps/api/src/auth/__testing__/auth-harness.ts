@@ -8,9 +8,17 @@ import {
   InMemoryIdentityAdapter,
   InMemoryRateLimitAdapter,
   InMemoryRoomAdapter,
+  InMemoryRoomReservationAdapter,
   InMemorySessionAdapter,
 } from '@stuwith/db';
-import { FixedClock, type ClockPort, type IdentityPort, type RateLimitPort } from '@stuwith/domain';
+import {
+  FixedClock,
+  type AuditPort,
+  type ClockPort,
+  type IdentityPort,
+  type RateLimitPort,
+  type RoomReservationPort,
+} from '@stuwith/domain';
 import { generateKeyPairSync } from 'node:crypto';
 import { Logger as PinoLogger } from 'nestjs-pino';
 import net from 'node:net';
@@ -219,10 +227,34 @@ export interface HarnessOptions {
    * `users` row disappeared between authenticating the session and writing to it,
    * and reaching that state needs the login to have worked first.
    *
-   * `harness.identity` still points at the wrapped adapter, so the assertions about
-   * stored state read the same object either way.
+   * `harness.identity` points at the BASE adapter underneath the wrapper, so the
+   * assertions about stored state read the same object either way.
    */
   readonly wrapIdentity?: (base: IdentityPort) => IdentityPort;
+
+  /**
+   * Wrap the in-memory reservation adapter, the way `wrapIdentity` wraps identity.
+   *
+   * Story 2.2's matrix has a "store lỗi giữa chừng" row — the pool dies inside the
+   * reservation — and the only honest way to reach it over real HTTP is a port
+   * that throws on the one call under test while the login that had to happen
+   * first still happened for real. `harness.reservations` points at the BASE
+   * adapter underneath the wrapper — the store the wrapper delegates to — so the
+   * assertion "nothing was written" reads the same rows the process wrote.
+   */
+  readonly wrapReservations?: (base: RoomReservationPort) => RoomReservationPort;
+
+  /**
+   * Wrap the in-memory audit adapter, the way the two above wrap theirs.
+   *
+   * Story 2.2's token route writes its audit row AFTER the seat has committed, so
+   * "the audit append throws" is a fault with a state of its own: `500`, no token,
+   * no row — and one seat still held. Only a port that throws on `append` while
+   * the login and the reservation before it ran for real can reach that branch
+   * over HTTP. `harness.audit` points at the BASE adapter underneath the wrapper,
+   * so "no row was written" reads the same store the process wrote to.
+   */
+  readonly wrapAudit?: (base: AuditPort) => AuditPort;
 
   /**
    * Extra controllers to mount on the real application.
@@ -262,6 +294,11 @@ export interface AuthHarness {
    * and a count is the only assertion that says it.
    */
   readonly rooms: InMemoryRoomAdapter;
+  /**
+   * Story 2.2's store. Exposed so the flow suite can count rows for a room —
+   * "the seat count did not move" is the assertion behind three matrix rows.
+   */
+  readonly reservations: InMemoryRoomReservationAdapter;
   readonly sessions: InMemorySessionAdapter;
   readonly audit: InMemoryAuditAdapter;
   /**
@@ -385,6 +422,9 @@ export async function createAuthHarness(options: HarnessOptions = {}): Promise<A
 
   const identity = new InMemoryIdentityAdapter();
   const rooms = new InMemoryRoomAdapter();
+  // Reads rooms from the SAME in-memory store the create endpoint writes, so a
+  // room created over HTTP in one example is the room a token is asked for next.
+  const reservations = new InMemoryRoomReservationAdapter(rooms);
   const sessions = new InMemorySessionAdapter();
   const audit = new InMemoryAuditAdapter();
   const clock = options.clock ?? new FixedClock(new Date('2026-09-04T09:00:00.000Z'));
@@ -410,8 +450,12 @@ export async function createAuthHarness(options: HarnessOptions = {}): Promise<A
         // not override, so the login that has to happen first still happens.
         identity: options.wrapIdentity === undefined ? identity : options.wrapIdentity(identity),
         rooms,
+        reservations:
+          options.wrapReservations === undefined
+            ? reservations
+            : options.wrapReservations(reservations),
         sessions,
-        audit,
+        audit: options.wrapAudit === undefined ? audit : options.wrapAudit(audit),
         clock,
         rateLimit,
         // The production registry, built from the production config — only
@@ -525,6 +569,7 @@ export async function createAuthHarness(options: HarnessOptions = {}): Promise<A
     fake,
     identity,
     rooms,
+    reservations,
     sessions,
     audit,
     clock,

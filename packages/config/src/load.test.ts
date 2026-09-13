@@ -384,6 +384,59 @@ describe('the redirect origins', () => {
 });
 
 /**
+ * `LIVEKIT_URL` — Story 2.2, review round 1.
+ *
+ * The value is handed to clients verbatim as `url` in the room-token response,
+ * where `packages/contracts` says `z.url()`. Until this block existed the schema
+ * said only "non-empty", so `LIVEKIT_URL=livekit-host` booted green and every
+ * token request answered 500 — after the seat had committed and a permanent
+ * audit row had been written. The two ends of one seam have to refuse the same
+ * strings, and the refusal has to happen before a port is opened (AD-14).
+ */
+describe('LIVEKIT_URL is a URL a media client can open, not merely a non-empty string', () => {
+  it.each([
+    ['a bare host', 'livekit-host'],
+    ['a host and port with no scheme', 'localhost:7880'],
+    ['a scheme no media client dials', 'ftp://livekit.example.vn'],
+    ['a scheme with nothing after it', 'wss://'],
+    ['a value with whitespace inside', 'wss://live kit'],
+    // The value is handed verbatim to every client in the token response, so
+    // userinfo here is a credential published to the browser.
+    ['embedded credentials', 'wss://user:pass@livekit.example.vn'],
+    ['an embedded username alone', 'wss://user@livekit.example.vn'],
+  ])('rejects %s, naming the variable', (_label, value) => {
+    const result = parseApiEnv({ ...completeApiEnv, LIVEKIT_URL: value });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.problems).toContainEqual(
+        expect.objectContaining({ kind: 'invalid', variable: 'LIVEKIT_URL' }),
+      );
+    }
+  });
+
+  it.each([
+    ['the local compose stack', 'ws://localhost:7880'],
+    ['a TLS deployment', 'wss://livekit.example.vn'],
+    ['a deployment behind a path prefix', 'wss://edge.example.vn/livekit'],
+    ['an http spelling, which LiveKit tooling accepts', 'http://127.0.0.1:7880'],
+    ['an https spelling', 'https://livekit.example.vn'],
+  ])('accepts %s', (_label, value) => {
+    expect(parseApiEnv({ ...completeApiEnv, LIVEKIT_URL: value }).ok).toBe(true);
+  });
+
+  it('is still required — an absent value is reported as missing, not as invalid', () => {
+    const env: Record<string, string> = { ...completeApiEnv };
+    delete env['LIVEKIT_URL'];
+    const result = parseApiEnv(env);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.problems).toContainEqual({ kind: 'missing', variable: 'LIVEKIT_URL' });
+    }
+  });
+});
+
+/**
  * `TRUSTED_PROXY_ADDRESSES` — the only knob in this schema that is treated like a
  * secret, and the reason is worth restating where the test can be read.
  *

@@ -22,10 +22,13 @@ import {
   MAX_ROOM_NAME_LENGTH,
   PLAN_PARTICIPANT_LIMITS,
   ROOMS_PATH,
+  ROOM_TOKEN_PATH_TEMPLATE,
+  ROOM_TOKEN_TTL_SECONDS,
   ROOM_TOPICS,
   ROOM_VISIBILITIES,
   createRoomRequestSchema,
   roomSchema,
+  roomTokenResponseSchema,
 } from './rooms';
 
 /**
@@ -58,6 +61,11 @@ const REGISTERED_SCHEMAS = {
   // its own request body was an oversight.
   CreateRoomRequest: createRoomRequestSchema,
   Room: roomSchema,
+  // Story 2.2. The token response is the one body a client hands to a THIRD party
+  // (LiveKit), so its four keys are the contract a mobile client's media layer is
+  // written against — and `url` being in it is what keeps a media endpoint out of
+  // every client's own configuration.
+  RoomTokenResponse: roomTokenResponseSchema,
   // Published as a component rather than only described in prose: a client
   // reading this document has to be able to DISCOVER that `that-bai` and
   // `da-huy` are the whole set. A closed enum that only exists in a sentence is
@@ -487,12 +495,104 @@ function roomsPath(): Record<string, unknown> {
   };
 }
 
+/**
+ * `POST /v1/rooms/{roomId}/token` — Story 2.2, the one admission decision.
+ *
+ * Four things the document has to say that a schema cannot, and each is a question
+ * an integrator would otherwise answer by experiment:
+ *
+ * - the token is the WHOLE of the admission decision. There is no static client
+ *   credential for LiveKit and there never will be; a client that cannot get a
+ *   token from here cannot reach the media plane at all;
+ * - asking reserves a seat, atomically with the capacity check, for exactly as long
+ *   as the token lives. A `201` means a seat is held; a `409` full means the count
+ *   was made under a lock and nothing was written;
+ * - asking AGAIN for the same room renews the same seat rather than taking a
+ *   second one — so a pre-join screen may call this every time the person changes
+ *   their mind about a device, without eating the room;
+ * - the room's name on LiveKit IS `room_id`. There is no slug and no mapping.
+ *
+ * `404` covers both "no such room" and "that is not a room id", with one body. Not
+ * because the id format is a secret — this document publishes it, as `format:
+ * uuid` on the parameter and on every `room_id` — but because there is ONE status
+ * for "there is no room here", whatever the reason: a client has nothing different
+ * to do for a malformed id than for an unknown one, and a second status would be a
+ * second branch for every client to write and get wrong.
+ */
+function roomTokenPathItem(): Record<string, unknown> {
+  const envelope = {
+    'application/json': { schema: { $ref: '#/components/schemas/ErrorEnvelope' } },
+  } as const;
+
+  return {
+    post: {
+      summary: 'Issue a short-lived LiveKit token for one room, reserving a seat atomically',
+      description:
+        'Checks the admission conditions in one place — signed in, not banned, ' +
+        'a seat left under the room cap — and issues a token only when all of them ' +
+        'hold. Age is judged at the same gate and, today, every age is admitted: ' +
+        'entering a room has no age floor (the money rules that will need one ' +
+        'arrive with Epic 3 and are added at that gate, not beside it). ' +
+        'The seat is reserved in the same transaction as the count, so two ' +
+        'people racing for the last seat cannot both get a token. The token is ' +
+        `valid for ${String(ROOM_TOKEN_TTL_SECONDS)} seconds, names exactly this room ` +
+        '(`video.room` is the room id) and grants join, publish and subscribe only: ' +
+        'no room creation, administration or listing. Asking again for the same room ' +
+        'while the seat is live renews it and returns a fresh token rather than ' +
+        'taking a second seat. No request body.',
+      parameters: [
+        {
+          name: 'roomId',
+          in: 'path',
+          required: true,
+          // `format: uuid`, the same as `Room.id` and `room_id` in the response: the
+          // parameter is the same thing those two are, and a document that typed one
+          // as a bare string would have a generated client accept what the server
+          // will 404.
+          schema: { type: 'string', format: 'uuid' },
+        },
+      ],
+      responses: {
+        '201': {
+          description:
+            'A seat is reserved and a token issued. Present `token` to `url`; both ' +
+            'lapse at `expires_at`.',
+          content: {
+            'application/json': { schema: { $ref: '#/components/schemas/RoomTokenResponse' } },
+          },
+        },
+        '401': unauthenticated,
+        '403': {
+          description: 'The caller may not enter rooms. No seat is reserved.',
+          content: envelope,
+        },
+        '404': {
+          description:
+            'No such room — whether the id names nothing or is not a room id at all. ' +
+            'One status and one body for both, because a client has nothing ' +
+            'different to do in the two cases.',
+          content: envelope,
+        },
+        '409': {
+          description:
+            'The room is closing or closed, or it is full. The message says which; ' +
+            'in either case no seat is reserved and nothing is written.',
+          content: envelope,
+        },
+      },
+    },
+  };
+}
+
 export function toOpenApiDocument(): Record<string, unknown> {
   return {
     openapi: '3.0.3',
     info: { title: 'StuWith API', version: CONTRACT_VERSION },
     paths: {
       [ROOMS_PATH]: roomsPath(),
+      // `...PathItem`, not `roomTokenPath`: that name is the exported URL builder
+      // in `rooms.ts`, and one name for two meanings in one package is a trap.
+      [ROOM_TOKEN_PATH_TEMPLATE]: roomTokenPathItem(),
       '/healthz': {
         get: {
           summary: 'Liveness probe',

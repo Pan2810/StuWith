@@ -5,6 +5,7 @@ import {
   InMemoryIdentityAdapter,
   InMemoryRateLimitAdapter,
   InMemoryRoomAdapter,
+  InMemoryRoomReservationAdapter,
   InMemorySessionAdapter,
 } from '@stuwith/db';
 import { FixedClock } from '@stuwith/domain';
@@ -31,12 +32,16 @@ import { createProviderRegistry } from './auth/providers/registry';
 function runtimeThatRecordsClose(closed: { count: number }): AuthRuntime {
   const clock = new FixedClock(new Date('2026-09-04T09:00:00.000Z'));
   const config = testApiEnv();
+  const rooms = new InMemoryRoomAdapter();
   return {
     identity: new InMemoryIdentityAdapter(),
     sessions: new InMemorySessionAdapter(),
     audit: new InMemoryAuditAdapter(),
     rateLimit: new InMemoryRateLimitAdapter(clock),
-    rooms: new InMemoryRoomAdapter(),
+    rooms,
+    // Story 2.2. `RoomsModule.forRuntime` refuses a runtime without it, which is
+    // the fail-closed check this very file's omission of `rooms` once motivated.
+    reservations: new InMemoryRoomReservationAdapter(rooms),
     clock,
     registry: createProviderRegistry(config, fetch),
     close: async () => {

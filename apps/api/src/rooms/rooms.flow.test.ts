@@ -447,13 +447,17 @@ describe('the route as Nest actually mounts it', () => {
     expect(Reflect.getMetadata(METHOD_METADATA, handler)).toBe(RequestMethod.POST);
   });
 
-  it('mounts exactly one route, so no DELETE or PATCH sits beside it', () => {
+  it('mounts only POST routes, so no DELETE or PATCH sits beside them', () => {
     /**
      * The framework-level half of AC5. `tests/gates/no-hard-delete-rooms.test.ts`
      * reads the SOURCE for a `@Delete`; this reads what Nest actually registered,
      * which is the thing that would serve the request. Two mechanisms, because they
      * fail differently: a decorator imported under another name defeats the text
      * scan, and a controller nobody mounted defeats this one.
+     *
+     * Two routes since Story 2.2 (`create` and `issueToken`), both POST. The
+     * assertion is over the SET of methods rather than the count of routes, so a
+     * third POST is not a failure here and a first DELETE is.
      */
     const methods = Object.getOwnPropertyNames(RoomsController.prototype)
       .filter((name) => name !== 'constructor')
@@ -463,7 +467,9 @@ describe('the route as Nest actually mounts it', () => {
       })
       .filter((method): method is number => method !== undefined);
 
-    expect(methods).toEqual([RequestMethod.POST]);
+    expect(methods.length).toBeGreaterThan(0);
+    expect(new Set(methods)).toEqual(new Set([RequestMethod.POST]));
     expect(methods).not.toContain(RequestMethod.DELETE);
+    expect(methods).not.toContain(RequestMethod.PATCH);
   });
 });
