@@ -920,17 +920,73 @@ a {
   `room-status` bọc chip trên một dòng riêng vì nó là `role="status"`: vùng live
   đọc cái vừa ĐỔI, nên nó phải ôm đúng chip chứ không ôm cả thẻ.
 */
+/*
+  HAI chip trên một dòng từ Story 2.5: chip pha kết nối và chip chất lượng mạng.
+  `flex` + `wrap` là nửa reflow 320px — chuỗi tiếng Việt dài hơn tiếng Anh 15–25%,
+  nên "Đang ở trong phòng" cạnh "Mạng yếu" phải xuống dòng chứ không bị cắt
+  (WCAG 1.4.10). Không khai `color` ở đây: chip tự mang cặp màu của nó, và mỗi
+  cặp mới là một hàng nữa phải có tên trong bảng COMPOSED của `contrast.test.ts`.
+*/
 .room-status {
   margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--spacing-2);
 }
 
+/* ===================== thang suy giảm mạng (Story 2.5) ===================== */
+
+/*
+  Container của banner bậc 3 và bậc 4, và của lời mời bật lại camera.
+
+  Nó KHÔNG tô gì cả: `.notice` / `.notice-alert` đã mang nền, viền và chữ, và một
+  cặp màu thứ hai cho cùng một khối là một cặp nữa có thể trôi khỏi bảng COMPOSED.
+  Ở đây chỉ có bố cục — câu, đồng hồ đếm ngược, và nút, trên một dòng khi còn chỗ
+  và xuống dòng khi hết.
+
+  `min-height` 48px là sàn mục tiêu chạm của `DESIGN.md`: khối này chứa nút duy
+  nhất mà người dùng có để thoát khỏi bậc 3, nên nó không được mỏng hơn nút.
+*/
+.room-network {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--spacing-2) var(--spacing-3);
+  min-height: var(--spacing-12);
+}
+
+/*
+  Lưới ĐÓNG BĂNG ở bậc 4.
+
+  Nét đứt, không phải màu mờ: `opacity` là thứ `contrast.test.ts` cấm quanh mọi
+  cặp đã đo, vì nó pha chữ với nền và biến một tỉ lệ đã tính thành một tỉ lệ
+  không ai tính được. Nét đứt nói "cái này đang tạm dừng" mà không đụng vào một
+  pixel chữ nào — và dù sao nó cũng chỉ là kênh thứ hai: câu `room.gridFrozen`
+  ngay phía trên mới là thứ nói ra điều đó.
+*/
+.participant-list-frozen {
+  border-color: var(--border-ink);
+}
+
+/*
+  Viền và padding khai Ở ĐÂY chứ không chỉ ở biến thể đóng băng, và viền lúc
+  thường là `transparent`.
+
+  Chỗ đã được giữ sẵn: nếu chỉ `.participant-list-frozen` mới thêm viền 2px và
+  padding, thì cả danh sách nhảy một nhịp đúng lúc vào bậc 4 và nhảy lại lúc hồi
+  phục — một cú giật bố cục ngay giữa khoảnh khắc người dùng đang cố đọc xem
+  chuyện gì xảy ra. Bậc 4 chỉ đổi MÀU của một viền đã có sẵn chỗ.
+*/
 .participant-list {
   list-style: none;
   margin: 0;
-  padding: 0;
   display: flex;
   flex-direction: column;
   gap: var(--spacing-2);
+  border: 2px dashed transparent;
+  border-radius: var(--rounded-md);
+  padding: var(--spacing-2);
 }
 
 /*

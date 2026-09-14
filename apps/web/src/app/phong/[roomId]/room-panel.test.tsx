@@ -3,11 +3,22 @@ import { describe, expect, it } from 'vitest';
 import { LOCALES, type Locale } from '../../i18n/locale';
 import { VI_TRANSLATE, translatorFor } from '../../i18n/messages';
 import { I18nProvider } from '../../i18n/use-t';
-import type { JoinPhase, MediaDecision, MediaFaceMode, ParticipantRow } from './room-media';
+import type {
+  JoinPhase,
+  MediaDecision,
+  MediaFaceMode,
+  NetworkRung,
+  ParticipantRow,
+} from './room-media';
 import {
   ROOM_COUNT_ID,
   ROOM_FACE_MODE_LEGEND_ID,
+  ROOM_GRID_FROZEN_ID,
   ROOM_HEADING_ID,
+  ROOM_NETWORK_BANNER_ID,
+  ROOM_NETWORK_CHIP_ID,
+  ROOM_NETWORK_COUNTDOWN_ID,
+  ROOM_NETWORK_RESTART_ID,
   ROOM_PARTICIPANTS_ID,
   ROOM_SELF_PREVIEW_ID,
   ROOM_STATUS_ID,
@@ -76,6 +87,16 @@ function render(
     readonly micNoticeKey?: Parameters<typeof RoomPanel>[0]['micNoticeKey'];
     readonly videoNoticeKey?: Parameters<typeof RoomPanel>[0]['videoNoticeKey'];
     readonly audioBlocked?: boolean;
+    /**
+     * Story 2.5. The default is bậc 1 with no clock and nothing taken, which is
+     * a healthy room — so every case written before this story goes on rendering
+     * exactly the markup it was written against.
+     */
+    readonly networkRung?: NetworkRung;
+    /** Defaults to the live rung: a settled chip is the ordinary case. */
+    readonly networkChipRung?: NetworkRung;
+    readonly networkRetrySeconds?: number | null;
+    readonly networkTookCamera?: boolean;
     readonly locale?: Locale;
   } = {},
 ): string {
@@ -94,10 +115,15 @@ function render(
       micNoticeKey={options.micNoticeKey ?? null}
       videoNoticeKey={options.videoNoticeKey ?? null}
       audioBlocked={options.audioBlocked ?? false}
+      networkRung={options.networkRung ?? 1}
+      networkChipRung={options.networkChipRung ?? options.networkRung ?? 1}
+      networkRetrySeconds={options.networkRetrySeconds ?? null}
+      networkTookCamera={options.networkTookCamera ?? false}
       onLeave={() => undefined}
       onEnableAudio={() => undefined}
       onBackToPreJoin={() => undefined}
       onChangeFaceMode={() => undefined}
+      onRestartCamera={() => undefined}
     />
   );
   return renderToStaticMarkup(
@@ -310,7 +336,18 @@ describe('the six refusals of the matrix', () => {
   });
 
   it('says nothing when nothing has gone wrong', () => {
-    expect(render('connected')).not.toContain('role="alert"');
+    /**
+     * Read as "no alert with anything IN it" rather than "no alert element".
+     *
+     * Story 2.5's ladder banner is a persistent `role="alert"` region — a live
+     * region inserted together with its content is commonly missed by assistive
+     * technology, so it has to exist before the text arrives. Empty it collapses
+     * to `.sr` and announces nothing, which is what this case has always meant.
+     * `notice-alert` is the class every VISIBLE alert on this screen carries.
+     */
+    const html = render('connected');
+    expect(html).not.toContain('notice-alert');
+    expect(html).toContain(`<p id="${ROOM_NETWORK_BANNER_ID}" class="sr" role="alert"></p>`);
   });
 });
 
@@ -566,5 +603,335 @@ describe('the camera’s bad news is its own sentence', () => {
     const html = render('connected', { rows: [row()] });
     expect(html).not.toContain(VI_TRANSLATE('room.errorCameraEnded'));
     expect(html).not.toContain(VI_TRANSLATE('room.errorVideoRefused'));
+  });
+});
+
+/* -------------------------------------------------------------------------- *
+ * Story 2.5 — the ladder, as markup
+ * -------------------------------------------------------------------------- */
+
+/**
+ * Every visible half of the four rungs, in real HTML, in both locales.
+ *
+ * The decisions themselves are in `room-media.test.ts`; what these cases add is
+ * the thing only a render can say — that bậc 2 puts NOTHING on the screen, that
+ * the two chips never contradict each other, and that the one button out of bậc 3
+ * is absent everywhere it must not be offered.
+ */
+
+describe('the network chip stands beside the phase chip, never instead of it', () => {
+  it.each([
+    [1, 'room.networkOk', 'chip-status ok'],
+    [2, 'room.networkOk', 'chip-status ok'],
+    [3, 'room.networkWeak', 'chip-status warn'],
+  ] as ReadonlyArray<readonly [NetworkRung, Parameters<typeof VI_TRANSLATE>[0], string]>)(
+    'bậc %i renders %s with the %s tone',
+    (networkRung, key, tone) => {
+      const html = render('connected', { networkRung });
+      expect(html).toContain(
+        `<span id="${ROOM_NETWORK_CHIP_ID}" class="${tone}">${VI_TRANSLATE(key)}</span>`,
+      );
+      // And the phase chip is still there, saying its own different thing.
+      expect(html).toContain(VI_TRANSLATE('room.statusConnected'));
+    },
+  );
+
+  it('renders NO network chip at bậc 4, where the two would contradict each other', () => {
+    /**
+     * The spec's question answered in markup: side by side, and bậc 4 is the rung
+     * where a second chip would either repeat "Đang nối lại…" or deny it. The
+     * banner — an `alert` — is what speaks there instead.
+     */
+    const html = render('reconnecting', { networkRung: 4, networkRetrySeconds: 12 });
+    expect(html).not.toContain(`id="${ROOM_NETWORK_CHIP_ID}"`);
+    expect(html).toContain(VI_TRANSLATE('room.statusReconnecting'));
+  });
+
+  it('says nothing about the line while the handshake is still running', () => {
+    /**
+     * Caught by an existing case rather than by inspection, and it was a real
+     * defect: gated on `IN_ROOM`, the ladder rendered "Mạng tốt" beside
+     * "Đang vào phòng…" — a claim about the quality of a line nobody had
+     * measured, made by the one element on the screen whose job is to be
+     * trustworthy about the connection. `NETWORK_SPEAKS` is what fixed it.
+     */
+    const html = render('connecting', { networkRung: 1 });
+    expect(html).not.toContain(`id="${ROOM_NETWORK_CHIP_ID}"`);
+    expect(html).not.toContain(VI_TRANSLATE('room.networkOk'));
+    // The phase chip still owns the screen there, exactly as it did before.
+    expect(html).toContain(VI_TRANSLATE('room.statusConnecting'));
+  });
+
+  it.each(['failed', 'expired', 'left'] as readonly JoinPhase[])(
+    'says nothing about the line on the %s screen, where the person is OUT',
+    (phase) => {
+      // "Mạng tốt" beside "Đã rời phòng" is the contradiction in its plainest
+      // form: a chip about a room nobody is in.
+      const html = render(phase, { networkRung: 1 });
+      expect(html).not.toContain(`id="${ROOM_NETWORK_CHIP_ID}"`);
+      expect(html).toContain(`<p id="${ROOM_NETWORK_BANNER_ID}" class="sr" role="alert"></p>`);
+      expect(html).not.toContain(VI_TRANSLATE('room.restartCamera'));
+    },
+  );
+});
+
+describe('bậc 2 is silent, and the render is where that is provable', () => {
+  it.each([1, 2] as readonly NetworkRung[])('bậc %i puts no banner on the screen', (networkRung) => {
+    /**
+     * The mutation `Verification` names — make bậc 2 produce a banner key and this
+     * goes red. Read as "no alert at all" rather than "not this sentence", because
+     * the failure to catch is any announcement, whichever words it used.
+     */
+    const html = render('connected', { networkRung });
+    // The alert REGION is always mounted (a live region inserted together with
+    // its content is commonly missed by AT), so "absent" is "empty and
+    // screen-reader-only" rather than "not in the document" — and the emptiness
+    // is what is checked, or this would be the weaker claim it looks like.
+    expect(html).toContain(`<p id="${ROOM_NETWORK_BANNER_ID}" class="sr" role="alert"></p>`);
+    expect(html).not.toContain('notice-alert');
+  });
+
+  it('bậc 1 and bậc 2 are the same screen, so nothing announces a silent drop', () => {
+    expect(render('connected', { networkRung: 2 })).toBe(render('connected', { networkRung: 1 }));
+  });
+});
+
+describe('bậc 3 says what happened and what it bought', () => {
+  it('renders the banner as an alert', () => {
+    const html = render('connected', { networkRung: 3 });
+    expect(html).toContain(`id="${ROOM_NETWORK_BANNER_ID}"`);
+    expect(html).toContain('role="alert"');
+    expect(html).toContain(VI_TRANSLATE('room.networkWeakBanner'));
+  });
+
+  it('describes the room as it IS, never as the debounced chip still says', () => {
+    /**
+     * The invariant, in the one place a render can see it. While the chip is
+     * still holding at bậc 1, the banner must already be telling the truth — the
+     * camera has gone off, and a screen that waits three seconds to say why is
+     * three seconds of somebody wondering what broke.
+     */
+    const html = render('connected', { networkRung: 3, networkChipRung: 1 });
+    expect(html).toContain(VI_TRANSLATE('room.networkWeakBanner'));
+    // And the chip really is still on the old value, so this is not one fact
+    // asserted twice.
+    expect(html).toContain(
+      `<span id="${ROOM_NETWORK_CHIP_ID}" class="chip-status ok">${VI_TRANSLATE('room.networkOk')}</span>`,
+    );
+  });
+
+  it('freezes the list from the live rung, not from the chip', () => {
+    const html = render('reconnecting', {
+      networkRung: 4,
+      networkChipRung: 1,
+      networkRetrySeconds: 12,
+      rows: [row({ isSelf: true })],
+    });
+    expect(html).toContain(VI_TRANSLATE('room.gridFrozen'));
+    expect(html).toContain('class="participant-list participant-list-frozen"');
+  });
+
+  it('offers no camera button at bậc 3 itself — the offer belongs to the recovery', () => {
+    // Pressing it here would publish into the conditions the ladder just refused.
+    expect(render('connected', { networkRung: 3, networkTookCamera: true })).not.toContain(
+      VI_TRANSLATE('room.restartCamera'),
+    );
+  });
+
+  it('does not freeze the list at bậc 3: the room is still carrying everybody', () => {
+    const html = render('connected', { networkRung: 3, rows: [row({ isSelf: true })] });
+    expect(html).toContain(`<p id="${ROOM_GRID_FROZEN_ID}" class="sr" role="status"></p>`);
+    expect(html).toContain('class="participant-list"');
+    expect(html).not.toContain('participant-list-frozen');
+  });
+});
+
+describe('bậc 4 freezes the list and says so IN WORDS', () => {
+  it('says the list is frozen even when there is no list to freeze', () => {
+    /**
+     * The case the sentence matters MOST in, and the one that used to render
+     * nothing: gated inside `listsPeople && rows.length > 0`, a bậc 4 screen
+     * whose rows had not arrived froze in complete silence. A reader with no list
+     * and no words has nothing at all to go on.
+     */
+    const html = render('reconnecting', { networkRung: 4, networkRetrySeconds: 9, rows: [] });
+    expect(html).toContain(VI_TRANSLATE('room.gridFrozen'));
+  });
+
+  it('names the freeze above the list it describes', () => {
+    /**
+     * A list that has stopped changing looks exactly like a list with nothing
+     * happening in it. The class is the second channel; this sentence is the
+     * first, which is Epic 2's rule rather than a preference.
+     */
+    const html = render('reconnecting', {
+      networkRung: 4,
+      networkRetrySeconds: 9,
+      rows: [row({ isSelf: true })],
+    });
+    expect(html).toContain(`id="${ROOM_GRID_FROZEN_ID}"`);
+    expect(html).toContain(VI_TRANSLATE('room.gridFrozen'));
+    expect(html).toContain('class="participant-list participant-list-frozen"');
+  });
+
+  it('counts down while the room is still trying', () => {
+    const html = render('reconnecting', { networkRung: 4, networkRetrySeconds: 9 });
+    expect(html).toContain(VI_TRANSLATE('room.networkLostBanner'));
+    expect(html).toContain(VI_TRANSLATE.plural('countdown.retryIn', 9, { seconds: 9 }));
+    /**
+     * The countdown lives OUTSIDE the alert, in a region with no live role at
+     * all. It rewrites itself once a second, and most screen readers re-announce
+     * a whole `role="alert"` on every mutation — thirty interruptions for one
+     * piece of news.
+     */
+    expect(html).toContain(`<p id="${ROOM_NETWORK_COUNTDOWN_ID}" class="meta notice-countdown">`);
+    /**
+     * Asserted on what the alert CONTAINS, not on how far apart the two are. The
+     * first spelling allowed 200 characters between them and failed on two
+     * adjacent siblings — a measure of proximity where the claim is about
+     * ancestry, which would also have passed a countdown nested in a long alert.
+     */
+    const alertBody = new RegExp(`<p id="${ROOM_NETWORK_BANNER_ID}"[^>]*>([\\s\\S]*?)</p>`).exec(html);
+    expect(alertBody, 'the alert region must be in the markup at all').not.toBeNull();
+    expect(alertBody?.[1]).not.toContain(ROOM_NETWORK_COUNTDOWN_ID);
+    expect(alertBody?.[1]).toContain(VI_TRANSLATE('room.networkLostBanner'));
+    /**
+     * And no way out offered yet: the room really is still trying, and inviting
+     * somebody to abandon a session that is about to come back is the wrong
+     * offer. Asserted on the BUTTON rather than on the word, because a bare
+     * substring is satisfied by any sentence that happens to contain it.
+     */
+    expect(html).not.toContain(`>${VI_TRANSLATE('room.backToPreJoin')}</button>`);
+  });
+
+  it('stops promising when the clock reaches zero, and offers the way out', () => {
+    const html = render('reconnecting', { networkRung: 4, networkRetrySeconds: 0 });
+    expect(html).toContain(VI_TRANSLATE('room.networkGaveUp'));
+    expect(html).not.toContain(VI_TRANSLATE('room.networkLostBanner'));
+    /**
+     * `0` is not `null`: it is the clock having run out, which is what turns the
+     * sentence from a promise into an exit.
+     *
+     * The label is `room.backToPreJoin` and not `preJoin.retryJoin`. The sentence
+     * above it says to go back to the setup screen; a button reading "Thử lại"
+     * under that instruction names a different action from the one just given.
+     */
+    expect(html).toContain(`>${VI_TRANSLATE('room.backToPreJoin')}</button>`);
+  });
+
+  it('offers no camera button at bậc 4 — there is no room to publish into', () => {
+    expect(
+      render('reconnecting', { networkRung: 4, networkRetrySeconds: 3, networkTookCamera: true }),
+    ).not.toContain(VI_TRANSLATE('room.restartCamera'));
+  });
+});
+
+describe('the one way back from bậc 3 is a press, and it is offered exactly once', () => {
+  it('appears on recovery, with the reason beside it', () => {
+    /**
+     * The matrix row "hồi phục 3 → 1": the chip is back to "Mạng tốt" in silence
+     * and this is the only thing left saying that something happened. `status`
+     * rather than `alert` — going up a rung does not sound an alarm — but it still
+     * has to be announced, because a button nobody is told about is a button a
+     * screen-reader user never finds.
+     */
+    const html = render('connected', { networkRung: 1, networkTookCamera: true });
+    expect(html).toContain(VI_TRANSLATE('room.restartCamera'));
+    /**
+     * PAST tense, and its own key. Reusing bậc 3's present-tense sentence put a
+     * claim that the line is weak beside a chip reading "Mạng tốt" — the same
+     * two-elements-contradicting-each-other failure the chip design exists to
+     * prevent, one element further down the page.
+     */
+    expect(html).toContain(VI_TRANSLATE('room.networkVideoWasOff'));
+    expect(html).not.toContain(VI_TRANSLATE('room.networkWeakBanner'));
+    expect(html).toContain(`id="${ROOM_NETWORK_RESTART_ID}" class="notice room-network"`);
+  });
+
+  it('never appears when the ladder took no picture', () => {
+    // Somebody who joined hidden has nothing to restore, and a button implying
+    // they lost something would be a lie about their own session.
+    const html = render('connected', { networkRung: 1, networkTookCamera: false });
+    expect(html).not.toContain(VI_TRANSLATE('room.restartCamera'));
+    // The region is still there and empty — which is what makes it observable
+    // when it does fill. See the panel's docblock.
+    expect(html).toContain(`<p id="${ROOM_NETWORK_RESTART_ID}" class="sr" role="status"></p>`);
+  });
+
+  it('never appears to somebody who chose to hide, even after the ladder took their picture', () => {
+    /**
+     * `epic-2-context.md`'s hardest rule, in markup: their press outranks the
+     * network's. Offering the button here would be the product asking somebody to
+     * undo a decision they made about their own face.
+     */
+    const html = render('connected', {
+      networkRung: 1,
+      networkTookCamera: true,
+      faceMode: 'hide',
+    });
+    expect(html).not.toContain(VI_TRANSLATE('room.restartCamera'));
+    expect(html).toContain(VI_TRANSLATE('room.faceHide'));
+  });
+
+  it('never appears twice: the banner and the invitation cannot both be on screen', () => {
+    // They are mutually exclusive by construction — the offer only exists below
+    // bậc 3 and the banner only from bậc 3 up — so a run that produced both would
+    // mean one of those two rules had stopped being true.
+    for (const networkRung of [1, 2, 3, 4] as readonly NetworkRung[]) {
+      const html = render('connected', { networkRung, networkTookCamera: true, networkRetrySeconds: 5 });
+      const offers = html.includes(VI_TRANSLATE('room.restartCamera'));
+      const banners = html.includes('notice-alert room-network');
+      expect(offers && banners).toBe(false);
+    }
+  });
+});
+
+describe('the ladder speaks English too', () => {
+  it.each([
+    [1, 'room.networkOk'],
+    [3, 'room.networkWeak'],
+  ] as ReadonlyArray<readonly [NetworkRung, Parameters<typeof VI_TRANSLATE>[0]]>)(
+    'bậc %i reads from the English catalogue under the en locale',
+    (networkRung, key) => {
+      const html = render('connected', { networkRung, locale: 'en' });
+      expect(html).toContain(translatorFor('en')(key));
+      // And not the Vietnamese one, which is how a key that fell back would hide.
+      expect(html).not.toContain(VI_TRANSLATE(key));
+    },
+  );
+
+  it('renders bậc 3, bậc 4 and the invitation in every locale', () => {
+    for (const locale of LOCALES) {
+      const t = translatorFor(locale);
+      expect(render('connected', { networkRung: 3, locale })).toContain(t('room.networkWeakBanner'));
+      expect(
+        render('reconnecting', { networkRung: 4, networkRetrySeconds: 4, locale }),
+      ).toContain(t('room.networkLostBanner'));
+      expect(render('reconnecting', { networkRung: 4, networkRetrySeconds: 0, locale })).toContain(
+        t('room.networkGaveUp'),
+      );
+      expect(
+        render('connected', { networkRung: 1, networkTookCamera: true, locale }),
+      ).toContain(t('room.restartCamera'));
+      expect(
+        render('reconnecting', {
+          networkRung: 4,
+          networkRetrySeconds: 4,
+          rows: [row({ isSelf: true })],
+          locale,
+        }),
+      ).toContain(t('room.gridFrozen'));
+    }
+  });
+
+  it('counts down in the locale’s own plural, which is where English differs', () => {
+    // Vietnamese has one plural category and English two, so `1` is the value that
+    // separates a catalogue that is really being consulted from one that is not.
+    expect(
+      render('reconnecting', { networkRung: 4, networkRetrySeconds: 1, locale: 'en' }),
+    ).toContain('Retry in 1 second.');
+    expect(
+      render('reconnecting', { networkRung: 4, networkRetrySeconds: 2, locale: 'en' }),
+    ).toContain('Retry in 2 seconds.');
   });
 });

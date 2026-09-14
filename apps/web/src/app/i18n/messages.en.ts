@@ -264,6 +264,17 @@ export const EN_MESSAGES = {
   'room.errorVideoPause': 'Your picture stopped when you left the tab, but the room was not told.',
   'room.errorVideoStop': 'Your picture could not be removed from the room. Leave and rejoin if people still see it.',
 
+  /** Story 2.5 — the four-rung network ladder, in words. */
+  'room.networkOk': 'Connection good',
+  'room.networkWeak': 'Connection weak',
+  'room.networkWeakBanner': 'The connection is weak, so your video was turned off to protect the sound.',
+  'room.networkLostBanner': 'Connection lost — retrying.',
+  'room.networkGaveUp': 'The connection did not come back. Go back to the setup screen and join again.',
+  'room.restartCamera': 'Turn my camera back on',
+  'room.gridFrozen': 'The list is frozen until the connection comes back.',
+  'room.networkVideoWasOff': 'Your video was turned off while the connection was weak.',
+  'room.backToPreJoin': 'Back to the setup screen',
+
   'error.rateLimited': 'You have tried too many times. Please wait a moment, then try again.',
   'error.dateOfBirthInvalid':
     'That date of birth is not valid. Choose your date of birth again, then try once more.',

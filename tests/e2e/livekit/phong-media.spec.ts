@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import { expect, test, type BrowserContext, type Page } from '@playwright/test';
 import { LIVEKIT_HANDOFF_FILE, WEB_BASE_URL } from '../../../playwright.config';
 import { roomPathname, scenario } from '../support/scenario';
+import { startLiveKitContainer, stopLiveKitContainer } from './livekit-container';
 
 /**
  * **Boundary probe — a real browser, a real `livekit-server`, and real audio.**
@@ -69,6 +70,13 @@ const ROOM_HIDDEN = roomPathname('019200f1-0000-7000-8000-0000000004a6');
 const ROOM_HIDDEN_TAB = roomPathname('019200f1-0000-7000-8000-0000000004a7');
 const ROOM_CAMERA_GONE = roomPathname('019200f1-0000-7000-8000-0000000004a8');
 const ROOM_NO_CAMERA_GRANT = roomPathname('019200f1-0000-7000-8000-0000000004a9');
+/** Story 2.5. One room per case, for the reason ROOM_ID_MIC's docblock gives. */
+const ROOM_NETWORK_FLAP = roomPathname('019200f1-0000-7000-8000-0000000004b1');
+const ROOM_NETWORK_WEAK = roomPathname('019200f1-0000-7000-8000-0000000004b2');
+const ROOM_NETWORK_LOST = roomPathname('019200f1-0000-7000-8000-0000000004b3');
+const ROOM_SIMULCAST = roomPathname('019200f1-0000-7000-8000-0000000004b4');
+const ROOM_NETWORK_HIDDEN = roomPathname('019200f1-0000-7000-8000-0000000004b5');
+const ROOM_NETWORK_FILTER = roomPathname('019200f1-0000-7000-8000-0000000004b6');
 
 /**
  * Two people PER TEST, so a `sub` is never shared across tests.
@@ -499,6 +507,378 @@ function endLocalCamera(page: Page): Promise<void> {
   });
 }
 
+/* -------------------------------------------------------------------------- *
+ * Story 2.5 — the ladder, and the two halves of how it is driven
+ * -------------------------------------------------------------------------- */
+
+/**
+ * `livekit.ConnectionQuality` as the wire numbers, from
+ * `@livekit/protocol`'s `livekit_models_pb.js`. Written out rather than imported
+ * for the reason every other constant in this suite is: the package is not a
+ * dependency of `tests/`, and a spec that reached into `node_modules` for an enum
+ * would be a spec that stops compiling on a version bump for no product reason.
+ */
+const QUALITY_POOR = 0;
+const QUALITY_EXCELLENT = 2;
+/**
+ * `LOST` is how bậc 4 is reached INSIDE a debounce window.
+ *
+ * The container-stop case is the real far-side stimulus for bậc 4 and stays
+ * that; it cannot be used here because stopping a server takes seconds and the
+ * window is three. `networkRungFor('lost', 'connected')` is bậc 4 by the same
+ * table, reached in one injected frame.
+ */
+const QUALITY_LOST = 3;
+
+/**
+ * **The in-browser seam for rungs 1–3, declared as a seam rather than a probe.**
+ *
+ * The spec says this half is NOT the boundary probe and says why: `ConnectionQuality`
+ * is LiveKit's own measurement of the line, and there is no verified way to force
+ * a real one from outside. Playwright 1.62.1 has `newCDPSession`, but whether
+ * `Network.emulateNetworkConditions` throttles UDP/SRTP at all lives in Chromium's
+ * C++ and cannot be read off this repository — a measured unknown, not a guess.
+ * So bậc 4, the one rung with a real far-side stimulus, is driven by stopping the
+ * container; rungs 1–3 are driven here, in the browser, at the SDK's own input.
+ *
+ * It is the same class of seam as `refuseDevices` and {@link setTabHidden}: it
+ * changes what the page is TOLD, never what the product does with it. Everything
+ * downstream — the reconciler, the unpublish, the `RTCRtpSender` going away, the
+ * far side losing a tile — is the product running for real, and the assertions
+ * are read off the OTHER browser wherever they can be.
+ *
+ * **Installed per case, not by `joinAs`.** It used to be one of the four wrappers
+ * every context in this file got, which put a `WebSocket` proxy in front of the
+ * Story 2.4 and 2.7 cases that have nothing to do with the ladder — cost and risk
+ * bought for nothing. The ladder's own cases ask for it by name.
+ *
+ * ## How it works, because "inject a protobuf" deserves an explanation
+ *
+ * `livekit-client` learns a participant's quality from a `SignalResponse` on the
+ * signalling socket whose `connection_quality` field (number 12) carries a
+ * `ConnectionQualityUpdate`. Each entry is matched by `participant_sid` — which
+ * nothing outside the page knows — so this does not BUILD a message, it takes the
+ * server's own next one and rewrites one varint in it: field 2 of a chosen
+ * `ConnectionQualityInfo`. Every sid, every length and the whole framing are the
+ * server's; only the quality value is ours.
+ *
+ * **One entry at a time, which is what makes the local-participant filter
+ * testable.** The first version overwrote every entry by construction, so both
+ * participants always went poor together and a build with no filter at all was
+ * indistinguishable from one with it. Targeting by INDEX needs no knowledge of
+ * which sid is local: exactly one of the entries must be able to take this
+ * browser's camera off, and that is a sharper claim than "the filter exists".
+ *
+ * Two details are load-bearing:
+ *
+ * - the listener is installed in the `construct` trap, which is BEFORE
+ *   `livekit-client` assigns `ws.onmessage` (it does so inside `ws.onopen`). A
+ *   property handler participates as an ordinary listener at the position it was
+ *   assigned, so ours runs first and `stopImmediatePropagation()` can hold a
+ *   frame back;
+ * - a real update is REWRITTEN rather than dropped while a quality is forced.
+ *   The server goes on sending the truth every few seconds, and without this the
+ *   forced value would be undone about two seconds later — the assertions below
+ *   would then be racing a heartbeat rather than testing a ladder. The SDK still
+ *   receives a well-formed update on the cadence it expects.
+ */
+async function interceptSignalQuality(context: BrowserContext): Promise<void> {
+  await context.addInitScript(() => {
+    /** SignalResponse field 12, wire type 2 — the only tag a quality frame opens with. */
+    const QUALITY_TAG = 0x62;
+
+    const sockets: WebSocket[] = [];
+    let template: Uint8Array | null = null;
+    let forced: { index: number; quality: number } | null = null;
+    let injecting = false;
+
+    const readVarint = (bytes: Uint8Array, at: number): readonly [number, number] => {
+      let result = 0;
+      let shift = 0;
+      let index = at;
+      let byte = 0;
+      do {
+        byte = bytes[index] ?? 0;
+        index += 1;
+        result += (byte & 0x7f) * 2 ** shift;
+        shift += 7;
+      } while ((byte & 0x80) !== 0 && shift < 64);
+      return [result, index] as const;
+    };
+
+    /**
+     * Walk a quality frame, rewriting `quality` on the chosen entry — or on every
+     * entry when `target` is negative. Answers the number of entries it saw, or
+     * `null` on anything it does not recognise: a protocol change then shows up
+     * as "the seam could not drive it" rather than as a product bug.
+     */
+    const walk = (bytes: Uint8Array, quality: number | null, target: number): number | null => {
+      const [tag, afterTag] = readVarint(bytes, 0);
+      if (tag !== QUALITY_TAG) {
+        return null;
+      }
+      const [updateLength, updateStart] = readVarint(bytes, afterTag);
+      const updateEnd = updateStart + updateLength;
+      let cursor = updateStart;
+      let seen = 0;
+      while (cursor < updateEnd) {
+        const [entryTag, afterEntryTag] = readVarint(bytes, cursor);
+        if ((entryTag & 7) !== 2) {
+          return null;
+        }
+        const [entryLength, entryStart] = readVarint(bytes, afterEntryTag);
+        const entryEnd = entryStart + entryLength;
+        // `updates` is field 1; anything else inside this message is unknown to us.
+        if (entryTag >> 3 === 1) {
+          const chosen = quality !== null && (target < 0 || target === seen);
+          seen += 1;
+          let field = entryStart;
+          while (field < entryEnd) {
+            const [fieldTag, afterFieldTag] = readVarint(bytes, field);
+            const number = fieldTag >> 3;
+            const wire = fieldTag & 7;
+            if (number === 2 && wire === 0) {
+              // POOR..LOST are 0..3, so both the value there and the one going in
+              // are a single byte and the frame's length prefixes stay true.
+              if (((bytes[afterFieldTag] ?? 0) & 0x80) !== 0) {
+                return null;
+              }
+              if (chosen) {
+                bytes[afterFieldTag] = quality;
+              }
+              field = afterFieldTag + 1;
+            } else if (wire === 0) {
+              const [, next] = readVarint(bytes, afterFieldTag);
+              field = next;
+            } else if (wire === 2) {
+              const [length, next] = readVarint(bytes, afterFieldTag);
+              field = next + length;
+            } else if (wire === 5) {
+              field = afterFieldTag + 4;
+            } else if (wire === 1) {
+              field = afterFieldTag + 8;
+            } else {
+              return null;
+            }
+          }
+        }
+        cursor = entryEnd;
+      }
+      return seen;
+    };
+
+    const dispatch = (bytes: Uint8Array): void => {
+      injecting = true;
+      try {
+        for (const socket of sockets) {
+          if (socket.readyState === WebSocket.OPEN) {
+            socket.dispatchEvent(new MessageEvent('message', { data: bytes.buffer }));
+          }
+        }
+      } finally {
+        injecting = false;
+      }
+    };
+
+    const state = window as unknown as {
+      __stuwithForceQuality: (quality: number | null, index?: number) => boolean;
+      __stuwithQualityEntries: () => number;
+    };
+
+    state.__stuwithQualityEntries = () =>
+      template === null ? 0 : (walk(template.slice(), null, -1) ?? 0);
+
+    state.__stuwithForceQuality = (quality: number | null, index = -1) => {
+      forced = quality === null ? null : { index, quality };
+      if (quality === null || template === null) {
+        return false;
+      }
+      const bytes = template.slice();
+      if (walk(bytes, quality, index) === null) {
+        return false;
+      }
+      dispatch(bytes);
+      return true;
+    };
+
+    const Original = window.WebSocket;
+    window.WebSocket = new Proxy(Original, {
+      construct(target, args, newTarget) {
+        const socket = Reflect.construct(target, args, newTarget) as WebSocket;
+        sockets.push(socket);
+        // Pruned, or a long session accumulates every socket it ever opened —
+        // and `dispatch` would walk a list that only ever grows.
+        const forget = (): void => {
+          const at = sockets.indexOf(socket);
+          if (at >= 0) {
+            sockets.splice(at, 1);
+          }
+        };
+        socket.addEventListener('close', forget);
+        socket.addEventListener('error', forget);
+        socket.addEventListener('message', (event: MessageEvent) => {
+          if (injecting || !(event.data instanceof ArrayBuffer)) {
+            return;
+          }
+          const bytes = new Uint8Array(event.data);
+          if (bytes.length === 0 || bytes[0] !== QUALITY_TAG) {
+            return;
+          }
+          // The server's own frame is the template: every sid and every length in
+          // it is the server's, which is what makes the rewrite honest.
+          template = bytes.slice();
+          if (forced === null) {
+            return;
+          }
+          const rewritten = bytes.slice();
+          if (walk(rewritten, forced.quality, forced.index) === null) {
+            return;
+          }
+          event.stopImmediatePropagation();
+          dispatch(rewritten);
+        });
+        return socket;
+      },
+    });
+  });
+}
+
+/**
+ * Force a quality on ONE page and wait until the injection really happened.
+ *
+ * The `expect.poll` is not politeness: the seam needs the server's own next
+ * quality frame as a template, and until one has arrived there is nothing to
+ * rewrite. Without the poll a spec would force a value into the void and then
+ * assert about a ladder that was never told anything — green for a product that
+ * does nothing, which is the exact failure `AGENTS.md` §4 is about.
+ *
+ * `index` defaults to "every participant in the frame", which is what the cases
+ * about THIS browser's own line want. A non-negative index targets one entry —
+ * see the local-participant filter case.
+ */
+async function forceQuality(page: Page, quality: number, index = -1): Promise<void> {
+  await expect
+    .poll(
+      () =>
+        page.evaluate(
+          ([value, at]: readonly [number, number]) =>
+            (
+              window as unknown as {
+                __stuwithForceQuality: (q: number | null, i?: number) => boolean;
+              }
+            ).__stuwithForceQuality(value, at),
+          [quality, index] as const,
+        ),
+      { timeout: 30_000 },
+    )
+    .toBe(true);
+}
+
+/**
+ * Wait until the server has sent a quality frame naming at least two people.
+ *
+ * The seam rewrites the server's OWN frame, so the entries it can target are
+ * whatever that frame happens to carry. A case about "somebody else's line"
+ * cannot begin until a frame exists that has a somebody else in it, and asserting
+ * on a one-entry frame would be asserting about a room with one person in it.
+ */
+async function waitForQualityEntries(page: Page, atLeast: number): Promise<number> {
+  await expect
+    .poll(() => qualityEntryCount(page), { timeout: 30_000 })
+    .toBeGreaterThanOrEqual(atLeast);
+  return qualityEntryCount(page);
+}
+
+/** How many participants the server's own quality frame carries. */
+function qualityEntryCount(page: Page): Promise<number> {
+  return page.evaluate(
+    () => (window as unknown as { __stuwithQualityEntries: () => number }).__stuwithQualityEntries(),
+  );
+}
+
+/**
+ * Every ladder-driven fact on the screen, read in ONE round trip.
+ *
+ * The point is the single instant. The invariant under test is that two props
+ * carry DIFFERENT rungs at the same moment — the chip still holding its old
+ * value while the banner and the frozen list already describe the new one — and
+ * four separate `expect` calls cannot say that: each retries on its own clock,
+ * so a banner arriving three seconds late still satisfies one written with the
+ * default timeout. Reading all four together makes the claim about a state
+ * rather than about a sequence.
+ *
+ * `restart` is the BUTTON's presence rather than the region's text, because the
+ * region is always mounted (empty when there is nothing to offer).
+ */
+function ladderSnapshot(page: Page): Promise<{
+  chip: string | null;
+  banner: string;
+  frozen: boolean;
+  restart: boolean;
+}> {
+  return page.evaluate(() => ({
+    chip: document.querySelector('#phong-mang')?.textContent ?? null,
+    banner: document.querySelector('#phong-mang-thong-bao')?.textContent ?? '',
+    frozen:
+      document.querySelector('#phong-nguoi-tham-gia')?.classList.contains('participant-list-frozen') ??
+      false,
+    restart: document.querySelector('#phong-mang-bat-lai button') !== null,
+  }));
+}
+
+/**
+ * How long a paired assertion may wait — deliberately SHORTER than the debounce.
+ *
+ * `--motion-network-chip-debounce` is three seconds, and every assertion below
+ * has to land while the two rungs still disagree. Playwright's five-second
+ * default is longer than the window, so a consequence that arrived late would
+ * still satisfy it — which is exactly the hole these cases exist to close. Two
+ * seconds is comfortably longer than the milliseconds a correct build needs and
+ * comfortably shorter than the window a broken one would need.
+ */
+const INSIDE_THE_WINDOW = 2_000;
+
+/** The network chip, which is a different element from the phase chip beside it. */
+const networkChip = (page: Page) => page.locator('#phong-mang');
+
+/**
+ * The simulcast layers this page is really offering, off its own local SDP.
+ *
+ * `negotiatedDescriptions` joins the local and remote descriptions together,
+ * which is right for reading back what the SERVER answered about audio. Simulcast
+ * is the opposite direction — it is what the publisher's own offer declares — so
+ * this reads `currentLocalDescription` alone, and only the `m=video` sections of
+ * it.
+ */
+function videoSimulcast(page: Page): Promise<{ rids: string[]; simulcastLines: number }> {
+  return page.evaluate(() => {
+    const rids: string[] = [];
+    let simulcastLines = 0;
+    for (const connection of (window as unknown as { __stuwithPeers: RTCPeerConnection[] }).__stuwithPeers) {
+      const sdp = connection.currentLocalDescription?.sdp ?? '';
+      if (sdp === '') {
+        continue;
+      }
+      for (const section of sdp.split(/^m=/m).slice(1)) {
+        if (!section.startsWith('video')) {
+          continue;
+        }
+        for (const raw of section.split('\n')) {
+          const line = raw.trim();
+          const rid = /^a=rid:([^ ]+) send/.exec(line);
+          if (rid?.[1] !== undefined) {
+            rids.push(rid[1]);
+          }
+          if (line.startsWith('a=simulcast:send')) {
+            simulcastLines += 1;
+          }
+        }
+      }
+    }
+    return { rids, simulcastLines };
+  });
+}
+
 /**
  * Serial, and for a reason stronger than tidiness: every case here drives two
  * browser contexts through one `livekit-server` on one 1:1-bound UDP port, and the
@@ -584,8 +964,26 @@ test.describe('phòng — browser ↔ LiveKit', () => {
        * registration entirely, left the whole suite green. The Chromium fake
        * microphone is a continuous tone, so LiveKit's speaker detection fires on
        * its own — no gesture, no fixture.
+       *
+       * **Scoped to A's ROW, and that is a correction rather than a narrowing.**
+       * The document-wide spelling was `pageB.getByText('Đang nói')`, which is a
+       * STRICT locator: it fails when two elements match. Both fake microphones
+       * emit a continuous tone, so both people really are speaking, and LiveKit
+       * puts both in `activeSpeakers` whenever its observer happens to sample
+       * them together — at which point the page renders "Đang nói" on two rows
+       * and the assertion failed BECAUSE the product was right. Measured on
+       * 2026-09-14: twice in seven consecutive runs of this project, always this
+       * line, always "resolved to 2 elements".
+       *
+       * "Not the first row" is `remoteVideos`' own rule and it is exactly what
+       * this case means to claim: the person on the OTHER side is shown as
+       * speaking. `participantRowsFor` pins the reader to the top, so the second
+       * row is A's — a sharper claim than "somebody somewhere on this page", and
+       * one that is true however many people are talking at once.
        */
-      await expect(pageB.getByText('Đang nói')).toBeVisible({ timeout: 30_000 });
+      await expect(
+        pageB.locator('#phong-nguoi-tham-gia li:not(:first-child)').getByText('Đang nói'),
+      ).toBeVisible({ timeout: 30_000 });
 
       /**
        * "Rời phòng" really disconnects: the other side loses the row, and the
@@ -617,7 +1015,11 @@ test.describe('phòng — browser ↔ LiveKit', () => {
       // Scoped to `main`: Next.js renders its own route announcer as a
       // `role="alert"` outside the page content, so a document-wide locator is
       // never zero and the assertion would be about the framework.
-      await expect(pageA.locator('main [role="alert"]')).toHaveCount(0);
+      // `:not(:empty)` because Story 2.5's ladder banner is a PERSISTENT
+      // `role="alert"` region — a live region inserted together with its content
+      // is commonly missed by AT, so it exists empty and fills. "No alert" has
+      // always meant "nothing announced", which is what an empty region does.
+      await expect(pageA.locator('main [role="alert"]:not(:empty)')).toHaveCount(0);
       await expect(peopleCount(pageB)).toHaveText('Có 1 người trong phòng.', { timeout: 30_000 });
     } finally {
       await contextA.close();
@@ -895,7 +1297,11 @@ test.describe('phòng — browser ↔ LiveKit', () => {
        * sees it. Scoped to `main`, because Next renders its own route announcer as
        * a `role="alert"` outside the page content.
        */
-      await expect(pageA.locator('main [role="alert"]')).toHaveCount(0);
+      // `:not(:empty)` because Story 2.5's ladder banner is a PERSISTENT
+      // `role="alert"` region — a live region inserted together with its content
+      // is commonly missed by AT, so it exists empty and fills. "No alert" has
+      // always meant "nothing announced", which is what an empty region does.
+      await expect(pageA.locator('main [role="alert"]:not(:empty)')).toHaveCount(0);
 
       await roomModeGroup(pageA).getByRole('radio', { name: 'Để nguyên' }).check();
       await expect(pageA.getByText('Đây là hình mọi người đang thấy.')).toBeVisible({
@@ -1169,6 +1575,660 @@ test.describe('phòng — browser ↔ LiveKit', () => {
        * read from B, off a real `inbound-rtp`, because our own state cannot say it.
        */
       await expect.poll(() => inboundAudioBytes(pageB), { timeout: 30_000 }).toBeGreaterThan(0);
+    } finally {
+      await contextA.close();
+      await contextB.close();
+    }
+  });
+
+  test('a line that wobbles moves the chip once, after the token’s own delay', async ({ browser }) => {
+    /**
+     * The matrix row "mạng dao động liên tục", and it now observes the three
+     * things the first version of this case could not.
+     *
+     * 1. **The hold itself.** Reading only the settled state meant deleting
+     *    `chipTimer` and calling `setChipRung` synchronously left everything
+     *    green — the case asserted where the chip ENDED, which is the same either
+     *    way. So the chip is read INSIDE the window, immediately after a drop,
+     *    where a debounced chip still says "Mạng tốt" and an undebounced one has
+     *    already moved.
+     * 2. **That the chip still changes during a sustained wobble.** A window
+     *    restarted on every change is pushed forward for ever by a line that
+     *    keeps moving, so the chip changes ZERO times while the matrix promises
+     *    exactly one. The loop below holds the rung at bậc 3 for most of every
+     *    second and flicks it away twice a second, which a restarting timer never
+     *    survives — and a fixed window commits on schedule, every time.
+     * 3. **That the token is readable under the name the product uses.**
+     *    `NETWORK_CHIP_DEBOUNCE_FALLBACK_MS` is numerically identical to the
+     *    token, so mistyping the custom property at the `getComputedStyle` call
+     *    would make the product behave correctly for the wrong reason, for ever.
+     *    Reading the same property here turns a renamed token into a red run
+     *    instead of a silent fallback.
+     *
+     * One browser: this case is about a chip. The LADDER still acts at once,
+     * which is the point — the picture really does come off the wire here, and
+     * only the chip waits.
+     */
+    const contextA = await browser.newContext(CONTEXT_OPTIONS);
+    await interceptSignalQuality(contextA);
+
+    try {
+      const pageA = await joinAs(contextA, identities('10').a, ROOM_NETWORK_FLAP);
+      await expect(pageA.getByText('Đang ở trong phòng')).toBeVisible({ timeout: 30_000 });
+      await expect(networkChip(pageA)).toHaveText('Mạng tốt', { timeout: 30_000 });
+
+      /* -- 3. The token, read from the page under the product's own name. -- */
+
+      const token = await pageA.evaluate(() =>
+        getComputedStyle(document.documentElement)
+          .getPropertyValue('--motion-network-chip-debounce')
+          .trim(),
+      );
+      expect(
+        token,
+        'the product reads --motion-network-chip-debounce by this exact name; an empty ' +
+          'value means the token was renamed and the shell has been falling back ever since',
+      ).not.toBe('');
+      expect(token, 'the token must be a CSS time the shell can parse').toMatch(/^\d*\.?\d+(ms|s)$/);
+
+      /* -- 1. Inside the window: the chip has NOT moved. -- */
+
+      // The list has to be on screen before the frozen half below can mean
+      // anything: a missing `<ul>` reports "not frozen" just as a live one does.
+      await expect(pageA.locator('#phong-nguoi-tham-gia')).toHaveCount(1);
+
+      await forceQuality(pageA, QUALITY_POOR);
+
+      /**
+       * **BOTH HALVES OF THE INVARIANT, AGAINST ONE INSTANT.**
+       *
+       * The chip is still holding "Mạng tốt" — that is the debounce doing its
+       * job — AND the banner is already there, because the ladder does not wait
+       * three seconds to say why a camera went off. Only a build whose two props
+       * carry different rungs at this moment can satisfy both at once:
+       *
+       * - point the banner at the DEBOUNCED rung and `banner` is empty here,
+       *   which is the defect this whole split exists to prevent;
+       * - point the chip at the LIVE rung and `chip` already reads "Mạng yếu".
+       *
+       * Asserted as one object rather than as four `expect`s, because four
+       * assertions retry on four clocks and a late banner satisfies one written
+       * with the default timeout. See {@link INSIDE_THE_WINDOW}.
+       */
+      await expect
+        .poll(() => ladderSnapshot(pageA), { timeout: INSIDE_THE_WINDOW })
+        .toEqual({
+          chip: 'Mạng tốt',
+          banner: 'Mạng yếu nên video đã tắt để giữ tiếng.',
+          frozen: false,
+          restart: false,
+        });
+
+      /**
+       * And bậc 4's half, still inside the SAME window the drop above opened.
+       *
+       * The list freezes from the live rung, so the pair here is a chip that has
+       * not moved at all beside a list that already has. `LOST` reaches bậc 4 in
+       * one frame; the container-stop case remains the real far-side stimulus
+       * for that rung and is untouched.
+       */
+      await forceQuality(pageA, QUALITY_LOST);
+      await expect
+        .poll(() => ladderSnapshot(pageA), { timeout: INSIDE_THE_WINDOW })
+        .toMatchObject({ chip: 'Mạng tốt', frozen: true });
+
+      await forceQuality(pageA, QUALITY_EXCELLENT);
+
+      /* -- 2. A sustained wobble still moves the chip. -- */
+
+      let sawWeak = false;
+      for (let pass = 0; pass < 12; pass += 1) {
+        // Two changes back to back, then most of a second at bậc 3: the rung is
+        // almost always poor, and it CHANGES twice a second — faster than the
+        // window, which is the shape that defeats a restarting timer.
+        await forceQuality(pageA, QUALITY_EXCELLENT);
+        await forceQuality(pageA, QUALITY_POOR);
+        await pageA.waitForTimeout(900);
+        if ((await networkChip(pageA).textContent()) === 'Mạng yếu') {
+          sawWeak = true;
+        }
+      }
+      expect(
+        sawWeak,
+        'a chip whose window restarts on every change never updates at all while a line ' +
+          'keeps moving — the matrix promises exactly one change, not zero',
+      ).toBe(true);
+
+      /* -- and it settles on the LAST value once the line stops moving -- */
+
+      await forceQuality(pageA, QUALITY_EXCELLENT);
+      await expect(networkChip(pageA)).toHaveText('Mạng tốt', { timeout: 30_000 });
+
+      /**
+       * And the ladder never waited for any of that. `Poor` reached the
+       * reconciler immediately, so the picture is off the wire — and it stays off
+       * even though the line recovered, because only a press may put it back.
+       */
+      expect(await videoSenderCount(pageA)).toBe(0);
+      await expect(pageA.getByRole('button', { name: 'Bật lại camera' })).toBeVisible();
+    } finally {
+      await contextA.close();
+    }
+  });
+
+  test('bậc 3 takes the picture off the wire, keeps the sound, and never restores it by itself', async ({
+    browser,
+  }) => {
+    /**
+     * **The rung the whole story is built around.** Three claims, and the third is
+     * the one `epic-2-context.md` ranks above everything else:
+     *
+     * 1. the sender really goes — not a muted track, which is still a track that
+     *    left the machine — and the far side really loses the tile;
+     * 2. the SOUND keeps moving while it happens. Read off B's own `inbound-rtp`,
+     *    because our state cannot say it: video may be sacrificed, tiếng thì
+     *    không;
+     * 3. recovery restores NOTHING. The chip goes quietly back to "Mạng tốt", no
+     *    sender appears, and the only thing that changes is that a button is
+     *    offered. A build that republished on recovery would pass 1 and 2 and
+     *    fail here, which is why this half is in the same test rather than
+     *    trusted to a unit assertion.
+     */
+    const people = identities('11');
+    const contextA = await browser.newContext(CONTEXT_OPTIONS);
+    const contextB = await browser.newContext(CONTEXT_OPTIONS);
+    await interceptSignalQuality(contextA);
+
+    try {
+      const pageA = await joinAs(contextA, people.a, ROOM_NETWORK_WEAK);
+      await expect(pageA.getByText('Đang ở trong phòng')).toBeVisible({ timeout: 30_000 });
+      const pageB = await joinAs(contextB, people.b, ROOM_NETWORK_WEAK);
+      await expect(pageB.getByText('Đang ở trong phòng')).toBeVisible({ timeout: 30_000 });
+
+      // B is really seeing AND hearing A before anything is taken away. Without
+      // this every assertion below would pass on a room that never worked.
+      await expect(remoteVideos(pageB)).toHaveCount(1, { timeout: 30_000 });
+      await expect.poll(() => inboundAudioBytes(pageB), { timeout: 30_000 }).toBeGreaterThan(0);
+      const audioBefore = await inboundAudioBytes(pageB);
+
+      await forceQuality(pageA, QUALITY_POOR);
+
+      /* -- 1. The sender goes, and the far side loses the tile. -- */
+
+      await expect.poll(() => videoSenderCount(pageA), { timeout: 30_000 }).toBe(0);
+      await expect(remoteVideos(pageB)).toHaveCount(0, { timeout: 30_000 });
+      // And the camera itself is off — the light a person can check without
+      // trusting us. Bậc 3 is "vắng mặt", not a paused picture.
+      await expect.poll(() => localVideoTrackStates(pageA), { timeout: 30_000 }).not.toContain('live');
+
+      // In words, both of them: the chip after its delay, and the banner that
+      // says what the trade bought.
+      await expect(networkChip(pageA)).toHaveText('Mạng yếu', { timeout: 30_000 });
+      await expect(pageA.getByText('Mạng yếu nên video đã tắt để giữ tiếng.')).toBeVisible();
+      // The person is still IN the room, and their MODE has not been touched.
+      await expect(pageA.getByText('Đang ở trong phòng')).toBeVisible();
+      await expect(pageA.getByText('Bạn đang để nguyên khuôn mặt.')).toBeVisible();
+
+      /* -- 2. And the sound never stopped. -- */
+
+      await expect
+        .poll(() => inboundAudioBytes(pageB), { timeout: 30_000 })
+        .toBeGreaterThan(audioBefore);
+      await expect.poll(() => subscribedAudioTracks(pageB), { timeout: 30_000 }).toBeGreaterThan(0);
+
+      /* -- 3. Recovery restores nothing, and offers instead. -- */
+
+      await forceQuality(pageA, QUALITY_EXCELLENT);
+
+      /**
+       * **The invitation is on the live rung too, and this is what says so.**
+       *
+       * The mirror of the banner appearing three seconds late is the way OUT
+       * appearing three seconds late — somebody looking at a recovered room with
+       * no picture and nothing offering it back. `offersCameraRestart` reads the
+       * live rung, and until this line nothing observed that: every other
+       * assertion about the button runs after the window has closed, by which
+       * time both props agree and reading either one passes.
+       *
+       * The chip is still on "Mạng yếu" here — it committed that value during
+       * the bậc 3 stretch above — so the pair can only hold while the two props
+       * disagree.
+       */
+      await expect
+        .poll(() => ladderSnapshot(pageA), { timeout: INSIDE_THE_WINDOW })
+        .toMatchObject({ chip: 'Mạng yếu', restart: true });
+
+      await expect(networkChip(pageA)).toHaveText('Mạng tốt', { timeout: 30_000 });
+      // The alert has gone — going up a rung is silent.
+      await expect(pageA.getByText('Mất kết nối — đang thử lại.')).toHaveCount(0);
+      // Long enough for a build that was going to republish to have done so.
+      await pageA.waitForTimeout(3_000);
+      expect(await videoSenderCount(pageA), 'recovery must never republish by itself').toBe(0);
+      await expect(remoteVideos(pageB)).toHaveCount(0);
+
+      const restart = pageA.getByRole('button', { name: 'Bật lại camera' });
+      await expect(restart).toBeVisible();
+
+      /* -- and the press really works, through Story 2.7's own path -- */
+
+      await restart.click();
+      await expect(pageA.getByText('Đây là hình mọi người đang thấy.')).toBeVisible({
+        timeout: 30_000,
+      });
+      await expect(remoteVideos(pageB)).toHaveCount(1, { timeout: 30_000 });
+      // The republished track is a CANVAS track, on this path as on every other.
+      const canvasIds = await canvasTrackIds(pageA);
+      const cameraIds = await cameraTrackIds(pageA);
+      const senderIds = await videoSenderTrackIds(pageA);
+      expect(senderIds.length, 'there must be a video track being sent').toBeGreaterThan(0);
+      expect.soft(senderIds.filter((id) => !canvasIds.includes(id))).toEqual([]);
+      expect.soft(senderIds.filter((id) => cameraIds.includes(id))).toEqual([]);
+      // The offer is gone once it has been taken.
+      await expect(restart).toHaveCount(0);
+
+      /* ---- and the matrix row "bậc 3 rồi rời phòng": leaving FROM bậc 3 ---- */
+
+      /**
+       * Back down to bậc 3 first, and that step is the case rather than a
+       * preamble.
+       *
+       * The risk here is the opposite of a leak. `disableVideo` has already run
+       * by the time somebody presses "Rời phòng" at bậc 3, so `leave`'s own
+       * camera teardown is a no-op — and a no-op cannot tell you whether the path
+       * it stands on still exists. Leaving from a room where video is UP would
+       * exercise the ordinary teardown and say nothing about this row at all,
+       * which is why the quality is dropped again instead of leaving from the
+       * recovered state above.
+       *
+       * What this row really asks is whether any LADDER state outlives the room,
+       * and that is the half nothing else in this file reaches: `leave` does not
+       * unmount, so the effect's cleanup never runs on this path and the chip's
+       * debounce, the rung and the "a picture was taken" memory are all cleared by
+       * hand or not at all.
+       *
+       * Said plainly about what this does NOT cover: bậc 4's thirty-second clock
+       * is not running here, because bậc 4 is not this row. `leave` stops both
+       * clocks through one call, and the container-stop case is where a clock is
+       * ever ticking.
+       */
+      await forceQuality(pageA, QUALITY_POOR);
+      await expect.poll(() => videoSenderCount(pageA), { timeout: 30_000 }).toBe(0);
+      await expect(pageA.getByText('Mạng yếu nên video đã tắt để giữ tiếng.')).toBeVisible({
+        timeout: 30_000,
+      });
+
+      await pageA.getByRole('button', { name: 'Rời phòng' }).click();
+
+      // The ordinary teardown, in full — the same claims the clean-leave case at
+      // the top of this file makes, now from a room the ladder had already
+      // stripped of video.
+      await expect(pageA.getByText('Đã rời phòng', { exact: true })).toBeVisible();
+      await expect(pageA.getByRole('button', { name: 'Thử lại', exact: true })).toBeVisible();
+      expect(await localAudioTrackStates(pageA)).not.toContain('live');
+      expect(await localVideoTrackStates(pageA)).not.toContain('live');
+      expect(await videoSenderCount(pageA)).toBe(0);
+
+      /**
+       * And NO ladder state survives. Three things, because three different
+       * mechanisms could have left one behind: the chip is a rung held in state,
+       * the banner is a rung plus a clock, and the invitation is the remembered
+       * fact that a picture was taken. All three are gone with the room.
+       */
+      await expect(networkChip(pageA)).toHaveCount(0);
+      // The alert REGION is always mounted so that AT can observe it fill; what
+      // must not survive is anything IN it.
+      await expect(pageA.locator('#phong-mang-thong-bao')).toBeEmpty();
+      await expect(pageA.locator('#phong-mang-bat-lai')).toBeEmpty();
+      await expect(pageA.getByRole('button', { name: 'Bật lại camera' })).toHaveCount(0);
+      // Scoped to `main`, because Next renders its own route announcer as a
+      // `role="alert"` outside the page content. A clean leave is silent about
+      // faults, and the ladder must not be the thing that breaks that.
+      // `:not(:empty)` because Story 2.5's ladder banner is a PERSISTENT
+      // `role="alert"` region — a live region inserted together with its content
+      // is commonly missed by AT, so it exists empty and fills. "No alert" has
+      // always meant "nothing announced", which is what an empty region does.
+      await expect(pageA.locator('main [role="alert"]:not(:empty)')).toHaveCount(0);
+
+      // The far side loses the row, which is how we know the room really ended
+      // rather than the screen merely repainting.
+      await expect(peopleCount(pageB)).toHaveText('Có 1 người trong phòng.', { timeout: 30_000 });
+      await expect(remoteVideos(pageB)).toHaveCount(0);
+    } finally {
+      await contextA.close();
+      await contextB.close();
+    }
+  });
+
+  test('a tab hidden AND a line at bậc 3 agree, and unhiding alone puts nothing back', async ({
+    browser,
+  }) => {
+    /**
+     * **Two independent "wanted" dimensions aimed at one piece of media.**
+     *
+     * This is the shape that cost Story 2.7 a loopback, so it gets a case of its
+     * own rather than a line inside another. `handle.videoPaused` is what the TAB
+     * wants; `handle.networkVideoOff` plus the live rung is what the LADDER wants;
+     * `faceModeRef` is what the PERSON wants. Neither of the first two ever says
+     * "yes, publish" — they can only refuse — so they cannot contradict each
+     * other. What they CAN do is clear at different times, and that is the whole
+     * risk: the dimension that clears first must not be read as permission.
+     *
+     * The sequence walks exactly that. Video is up; the tab goes away (dimension
+     * one refuses); the line falls to bậc 3 while it is still away (dimension two
+     * refuses as well); then the tab comes back — one refusal lifts, and the
+     * other is still standing. A build that treated the unhide as "resume what we
+     * had" would republish into a line the ladder had already ruled out, and
+     * would do it without anybody pressing anything, which is the rule
+     * `epic-2-context.md` puts above the rest.
+     *
+     * Read from B wherever it can be: a tile that never comes back is a fact
+     * about the far side, not about our own state.
+     *
+     * **The mutation:** in `applyVisibility`, make the unhide path ignore the
+     * rung — clear `handle.networkVideoOff` and force `handle.wantedRung` back to
+     * 1 when the tab becomes visible. That is "the unhide republishes
+     * unconditionally" in two lines, and it leaves the plain bậc 3 case above
+     * untouched (it never hides a tab), so this case is the one that goes red.
+     */
+    const people = identities('14');
+    const contextA = await browser.newContext(CONTEXT_OPTIONS);
+    const contextB = await browser.newContext(CONTEXT_OPTIONS);
+    await interceptSignalQuality(contextA);
+
+    try {
+      const pageA = await joinAs(contextA, people.a, ROOM_NETWORK_HIDDEN);
+      await expect(pageA.getByText('Đang ở trong phòng')).toBeVisible({ timeout: 30_000 });
+      const pageB = await joinAs(contextB, people.b, ROOM_NETWORK_HIDDEN);
+      await expect(pageB.getByText('Đang ở trong phòng')).toBeVisible({ timeout: 30_000 });
+
+      // Bậc 1 with a picture really on the wire. Everything below is about taking
+      // it away twice and giving it back once.
+      await expect(remoteVideos(pageB)).toHaveCount(1, { timeout: 30_000 });
+
+      /* -- 1. The TAB refuses. The publication is muted; the ladder is untouched. -- */
+
+      await setTabHidden(pageA, true);
+      await expect(remoteVideos(pageB)).toHaveCount(0, { timeout: 30_000 });
+
+      /* -- 2. And now the LADDER refuses too, while the tab is still away. -- */
+
+      await forceQuality(pageA, QUALITY_POOR);
+      await expect.poll(() => videoSenderCount(pageA), { timeout: 30_000 }).toBe(0);
+      await expect(remoteVideos(pageB)).toHaveCount(0);
+      /**
+       * The camera itself is off, which separates the two dimensions from each
+       * other: a hidden tab MUTES a publication and leaves the device open, while
+       * bậc 3 ends it. Without this line "no tile at the far end" would be
+       * satisfied by the tab alone and the ladder could have done nothing at all.
+       */
+      await expect.poll(() => localVideoTrackStates(pageA), { timeout: 30_000 }).not.toContain('live');
+
+      /* -- 3. The tab comes back. ONE refusal lifts; the other still stands. -- */
+
+      await setTabHidden(pageA, false);
+      // Long enough for a build that was going to republish to have done so — the
+      // whole round trip is camera, pipeline, publish, and it is seconds at most.
+      await pageA.waitForTimeout(3_000);
+      expect(await videoSenderCount(pageA), 'unhiding alone must not publish anything').toBe(0);
+      await expect(remoteVideos(pageB)).toHaveCount(0);
+      await expect.poll(() => localVideoTrackStates(pageA), { timeout: 30_000 }).not.toContain('live');
+      // No system event has moved anybody's mode, in either direction.
+      await expect(pageA.getByText('Bạn đang để nguyên khuôn mặt.')).toBeVisible();
+      // And the sound was never part of this.
+      await expect.poll(() => subscribedAudioTracks(pageB), { timeout: 30_000 }).toBeGreaterThan(0);
+
+      /**
+       * There is no invitation YET, and that is the design rather than a gap: at
+       * bậc 3 the button would publish straight into the conditions the ladder
+       * just refused. The way back is a press, and the press is only offered once
+       * the line can carry a picture again.
+       */
+      await expect(pageA.getByRole('button', { name: 'Bật lại camera' })).toHaveCount(0);
+      await expect(pageA.getByText('Mạng yếu nên video đã tắt để giữ tiếng.')).toBeVisible();
+
+      /* -- 4. The line recovers. Still nothing comes back on its own. -- */
+
+      await forceQuality(pageA, QUALITY_EXCELLENT);
+      const restart = pageA.getByRole('button', { name: 'Bật lại camera' });
+      await expect(restart).toBeVisible({ timeout: 30_000 });
+      expect(await videoSenderCount(pageA), 'recovery must never republish by itself').toBe(0);
+      await expect(remoteVideos(pageB)).toHaveCount(0);
+
+      /* -- 5. The PRESS is what offers the way back, and it works. -- */
+
+      await restart.click();
+      await expect(pageA.getByText('Đây là hình mọi người đang thấy.')).toBeVisible({
+        timeout: 30_000,
+      });
+      await expect(remoteVideos(pageB)).toHaveCount(1, { timeout: 30_000 });
+      // And the picture is really moving, which a track restored from a stopped
+      // pipeline could not do.
+      await expect
+        .poll(() => inboundVideo(pageB).then((stats) => stats.framesDecoded), { timeout: 30_000 })
+        .toBeGreaterThan(0);
+    } finally {
+      await contextA.close();
+      await contextB.close();
+    }
+  });
+
+  test('one person’s bad line never takes anybody else’s camera off', async ({ browser }) => {
+    /**
+     * **The one line stopping a train passenger from hiding four other faces.**
+     *
+     * `ConnectionQualityChanged` fires for EVERY participant, ours and everybody
+     * else's (`room/events.d.ts:222`, `(quality, participant)`). The listener
+     * keeps only the local participant's, and without that filter one person on
+     * bad wifi would take the camera off every other person in the room — a
+     * failure that reads, from the inside, as the product randomly hiding people.
+     *
+     * Until now nothing could turn that line red. The seam overwrote every entry
+     * in a quality frame by construction, so both participants always went poor
+     * together and a build with no filter at all produced identical output.
+     *
+     * **The shape of the assertion, and why it needs no knowledge of which sid is
+     * which.** The frame names two people. Exactly ONE of them may be able to
+     * take this browser's camera off. Delete the filter and both can, so the
+     * count is two; filter on the wrong participant and the count is still one,
+     * but the OTHER assertion in the loop — that B's tile never goes — is what
+     * catches that. Neither spelling requires us to know which entry is local,
+     * which is knowledge the page does not expose and a test has no business
+     * reconstructing.
+     */
+    const people = identities('15');
+    const contextA = await browser.newContext(CONTEXT_OPTIONS);
+    const contextB = await browser.newContext(CONTEXT_OPTIONS);
+    await interceptSignalQuality(contextA);
+
+    try {
+      const pageA = await joinAs(contextA, people.a, ROOM_NETWORK_FILTER);
+      await expect(pageA.getByText('Đang ở trong phòng')).toBeVisible({ timeout: 30_000 });
+      const pageB = await joinAs(contextB, people.b, ROOM_NETWORK_FILTER);
+      await expect(pageB.getByText('Đang ở trong phòng')).toBeVisible({ timeout: 30_000 });
+
+      // Both cameras really are on the wire before anything is injected.
+      await expect.poll(() => videoSenderCount(pageA), { timeout: 30_000 }).toBeGreaterThan(0);
+      await expect(remoteVideos(pageA)).toHaveCount(1, { timeout: 30_000 });
+      await expect(remoteVideos(pageB)).toHaveCount(1, { timeout: 30_000 });
+
+      const entries = await waitForQualityEntries(pageA, 2);
+
+      const tookTheCamera: boolean[] = [];
+      for (let index = 0; index < entries; index += 1) {
+        await forceQuality(pageA, QUALITY_POOR, index);
+        // Long enough for a ladder that was going to act to have acted: the whole
+        // teardown is an unpublish and a stopped capture.
+        await pageA.waitForTimeout(3_000);
+        const gone = (await videoSenderCount(pageA)) === 0;
+        tookTheCamera.push(gone);
+
+        /**
+         * B's tile is read every pass, and it is the half that says the filter
+         * kept the RIGHT participant. Nothing injected into A's page may change
+         * what B publishes — B's own line was never touched — so a pass that
+         * blanked it would mean A had acted on somebody else's quality.
+         */
+        await expect(remoteVideos(pageA)).toHaveCount(1);
+
+        await forceQuality(pageA, QUALITY_EXCELLENT, index);
+        if (gone) {
+          // Put the room back the way the next pass needs it — and through the
+          // product's own way back, never by waiting for a republish nobody
+          // asked for.
+          await pageA.getByRole('button', { name: 'Bật lại camera' }).click();
+          await expect(pageA.getByText('Đây là hình mọi người đang thấy.')).toBeVisible({
+            timeout: 30_000,
+          });
+          await expect.poll(() => videoSenderCount(pageA), { timeout: 30_000 }).toBeGreaterThan(0);
+        }
+      }
+
+      expect(
+        tookTheCamera.filter(Boolean).length,
+        `exactly one of the ${entries} people in this frame may control this browser's camera; ` +
+          'two means the local-participant filter is gone, zero means the ladder stopped ' +
+          'listening at all',
+      ).toBe(1);
+    } finally {
+      await contextA.close();
+      await contextB.close();
+    }
+  });
+
+  test('stopping the real livekit-server puts the screen on bậc 4 and freezes the list', async ({
+    browser,
+  }) => {
+    /**
+     * **The far-side stimulus, and the only one this story has.**
+     *
+     * `AGENTS.md` §4: the mutation lives on the other side of the boundary. For
+     * "mất kết nối" there is no honest way to do that from inside the page — a
+     * wrapped `WebSocket` is a mutation on OUR side, which is exactly what
+     * `deferred-work.md` recorded Story 2.3 as unable to escape. So the container
+     * is stopped: the server, in the medium where it lives, goes away mid-session.
+     *
+     * It is also the mutation for this case. Leave the container running and
+     * bậc 4 never arrives; delete the `ConnectionStateChanged` half of `applyRung`
+     * and the screen sits on "Mạng tốt" over a room that has stopped existing.
+     */
+    const people = identities('12');
+    const contextA = await browser.newContext(CONTEXT_OPTIONS);
+    const contextB = await browser.newContext(CONTEXT_OPTIONS);
+
+    try {
+      const pageA = await joinAs(contextA, people.a, ROOM_NETWORK_LOST);
+      await expect(pageA.getByText('Đang ở trong phòng')).toBeVisible({ timeout: 30_000 });
+      const pageB = await joinAs(contextB, people.b, ROOM_NETWORK_LOST);
+      await expect(pageB.getByText('Đang ở trong phòng')).toBeVisible({ timeout: 30_000 });
+      await expect(peopleCount(pageA)).toHaveText('Có 2 người trong phòng.', { timeout: 30_000 });
+      // The room really is carrying sound before it is taken away.
+      await expect.poll(() => inboundAudioBytes(pageA), { timeout: 30_000 }).toBeGreaterThan(0);
+
+      try {
+        await stopLiveKitContainer();
+
+        // The screen says it, in words, and the list says it is frozen.
+        await expect(pageA.getByText('Mất kết nối — đang thử lại.')).toBeVisible({ timeout: 60_000 });
+        await expect(pageA.getByText('Lưới đang đóng băng cho tới khi nối lại được.')).toBeVisible();
+        /**
+         * The thirty-second clock is RUNNING, and this is the line that says so.
+         *
+         * Making `armRetryClock` a no-op leaves `networkRetrySeconds` null for
+         * ever — the banner then renders the same sentence every other assertion
+         * here reads, and the whole case stays green over a dead clock. The
+         * countdown is the only thing on screen that a stopped clock cannot
+         * produce, and it is asserted by shape rather than by value so this does
+         * not have to wait the window out.
+         */
+        await expect(pageA.getByText(/Thử lại sau \d+ giây\./)).toBeVisible({ timeout: 30_000 });
+        await expect(pageA.locator('#phong-nguoi-tham-gia.participant-list-frozen')).toHaveCount(1);
+        // No network chip at bậc 4 — the phase chip owns the state there, and two
+        // chips telling one story is the contradiction the panel refuses.
+        await expect(networkChip(pageA)).toHaveCount(0);
+
+        /**
+         * And the sound really has gone. This is the half that separates "the
+         * screen noticed" from "the screen guessed": with the server stopped no
+         * RTP can arrive, so `bytesReceived` stops moving — measured over a
+         * window rather than asserted as a number, because the total is whatever
+         * the session had already carried.
+         */
+        await pageA.waitForTimeout(3_000);
+        const settled = await inboundAudioBytes(pageA);
+        await pageA.waitForTimeout(5_000);
+        expect(await inboundAudioBytes(pageA), 'no audio may arrive from a server that is gone').toBe(
+          settled,
+        );
+      } finally {
+        // Started again before anything else, so a later case — and the global
+        // teardown — still find a container where they left one.
+        await startLiveKitContainer();
+      }
+    } finally {
+      await contextA.close();
+      await contextB.close();
+    }
+  });
+
+  test('simulcast really reaches the wire, which is what bậc 1 and bậc 2 stand on', async ({
+    browser,
+  }) => {
+    /**
+     * **Bậc 1 stated as a measurement.**
+     *
+     * Without simulcast there is nothing between "the whole picture" and "no
+     * picture", so bậc 2 — the rung that tụt lặng lẽ — would not exist. That the
+     * ladder HAS a middle is therefore a claim about the SDP rather than about a
+     * boolean in a config object, and `videoPublishOptions().simulcast` being
+     * `true` is satisfied just as well by a build the SDK ignored.
+     *
+     * `a=rid:` and `a=simulcast:send` are what Chromium writes when the publisher
+     * was given more than one `sendEncoding`. TWO rather than three is the right
+     * number and is not a weakening: `computeVideoEncodings` adds a third layer
+     * only above a 960px long edge, and `pipelineSizeFor` caps the canvas at
+     * 640×480.
+     *
+     * **The mutation, and it must be RUN:** set `simulcast: false` in
+     * `videoPublishOptions()` and re-run. `computeVideoEncodings` then returns a
+     * single encoding, Chromium writes no rid and no simulcast line, and this case
+     * goes red while every other case in this file stays green. The field is typed
+     * `boolean` rather than literal `true` for exactly that reason — a mutation
+     * that cannot be run is a mutation nobody has ever run.
+     *
+     * LAST in the file on purpose. The project is `serial`, so a failure skips
+     * everything after it; anywhere earlier, this mutation would leave the other
+     * three ladder cases SKIPPED rather than green, and a skipped case proves
+     * nothing.
+     */
+    const people = identities('13');
+    const contextA = await browser.newContext(CONTEXT_OPTIONS);
+    const contextB = await browser.newContext(CONTEXT_OPTIONS);
+
+    try {
+      const pageA = await joinAs(contextA, people.a, ROOM_SIMULCAST);
+      await expect(pageA.getByText('Đang ở trong phòng')).toBeVisible({ timeout: 30_000 });
+      const pageB = await joinAs(contextB, people.b, ROOM_SIMULCAST);
+      await expect(pageB.getByText('Đang ở trong phòng')).toBeVisible({ timeout: 30_000 });
+
+      // A is really publishing a face, and B is really decoding it — otherwise
+      // the SDP below would be an assertion about a negotiation nobody used.
+      await expect(pageA.getByText('Đây là hình mọi người đang thấy.')).toBeVisible({
+        timeout: 30_000,
+      });
+      await expect(remoteVideos(pageB)).toHaveCount(1, { timeout: 30_000 });
+      await expect
+        .poll(() => inboundVideo(pageB).then((stats) => stats.framesDecoded), { timeout: 30_000 })
+        .toBeGreaterThan(0);
+
+      const layers = await videoSimulcast(pageA);
+      expect(
+        layers.simulcastLines,
+        'the publisher must declare simulcast on its video m-line',
+      ).toBeGreaterThan(0);
+      expect(
+        [...new Set(layers.rids)].length,
+        'the ladder needs more than one encoding to fall down through',
+      ).toBeGreaterThanOrEqual(2);
     } finally {
       await contextA.close();
       await contextB.close();
