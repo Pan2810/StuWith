@@ -127,6 +127,23 @@ export interface Scenario {
    * it is aimed.
    */
   readonly roomTokenUrl?: string;
+  /**
+   * Story 2.7. Hand back a real LiveKit token whose grant permits ONLY the
+   * microphone — `canPublishSources: ['microphone']` — so the server refuses the
+   * video publish while every line of `apps/web` stays exactly as it ships.
+   *
+   * It exists because `room.errorVideoRefused` is otherwise a branch with nothing
+   * executing it: the product's own grant allows the camera, so "the room said no
+   * to my picture" cannot happen in a suite that uses the product's own token. The
+   * knob does NOT re-implement signing — `mintRoomToken` mints the token, this
+   * narrows one claim in the decoded payload, and `jose` (resolved from
+   * `apps/api`'s own tree) signs it again with the same secret. A grant shape that
+   * drifts in `room-token.ts` therefore drifts here too, which a hand-built token
+   * would quietly not.
+   *
+   * Ignored without a container: there is no real server to refuse anything.
+   */
+  readonly roomTokenWithoutCameraSource?: boolean;
 }
 
 export async function scenario(page: Page, state: Scenario): Promise<void> {

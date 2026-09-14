@@ -272,9 +272,11 @@ const VI_MESSAGES = {
   'room.audioMic': 'Micro của bạn đang bật.',
   'room.audioListenOnly': 'Bạn vào chỉ để nghe.',
   /**
-   * Filter is disabled at pre-join today and Story 2.7 enables it. The sentence
-   * exists now because the panel maps all three modes through a `Record`, so 2.7
-   * cannot ship a room that tells a filtered face it is showing plainly.
+   * Filter is disabled at pre-join AND in the room, and Story 2.7 did NOT enable
+   * it — the ML pipeline is a separate deliverable (`deferred-work.md`). The
+   * sentence exists because the panel maps all three modes through a `Record`, so
+   * whichever story turns Filter on cannot ship a room that tells a filtered face
+   * it is showing plainly.
    */
   'room.faceFilter': 'Bạn đang dùng filter cho khuôn mặt.',
   'room.notRecorded': 'Buổi học này không được ghi lại.',
@@ -350,6 +352,54 @@ const VI_MESSAGES = {
   'room.errorExpired': 'Chờ quá lâu, hãy vào lại.',
   'room.errorConnect': 'Không vào được phòng.',
   'room.errorDisconnected': 'Mất kết nối tới phòng.',
+
+  /**
+   * Story 2.7 — chọn chế độ khuôn mặt NGAY TRONG PHÒNG, và những gì có thể hỏng
+   * khi hình bắt đầu rời máy.
+   *
+   * Nhãn nhóm ở đây KHÁC `preJoin.modeLegend` một cách có chủ ý, và không phải vì
+   * văn phong: `tests/e2e/web/phong.spec.ts` tìm nhóm của pre-join theo tên khả
+   * truy cập để khẳng định pre-join đã biến mất, và Playwright khớp tên theo
+   * chuỗi con — hai nhóm cùng tên thì phép khẳng định ấy im lặng ngừng nói về
+   * pre-join. Ba nhãn thì là của riêng phòng vì Story 2.6 sẽ dời nhóm này vào một
+   * popover và được phép đặt lại chữ mà không đụng tới màn chuẩn bị.
+   *
+   * `room.selfPreview` là câu dưới ô xem trước của chính mình, và nó là một LỜI
+   * KHẲNG ĐỊNH: nó chỉ được vẽ khi track canvas đã thật sự publish. Vòng review 1
+   * của story này bắt đúng trạng thái ngược lại — ô xem trước sống dưới dòng chữ
+   * ấy trong khi radio "Ẩn mặt" đang được chọn.
+   *
+   * TÁM câu lỗi cho tám thứ khác nhau có thể hỏng, và năm trong số đó kết thúc
+   * bằng "bạn đang ở chế độ ẩn mặt" chứ không phải bằng một lần thử lại: bật
+   * camera là quyết định của người dùng, và `epic-2-context.md` cấm mọi sự kiện
+   * hệ thống đưa ai về Để nguyên.
+   *
+   * Ba câu KHÔNG kết thúc như thế, và đó là điều phải đọc đúng:
+   * `errorCameraBusy` nói thiết bị đang bị ứng dụng khác giữ — bảo người ta đi sửa
+   * một quyền vốn đã đúng là lời khuyên sai; `errorVideoPause` là lúc `mute()`
+   * hỏng khi rời tab, nên hình đã dừng (track bị `enabled = false`) nhưng đầu kia
+   * chưa được báo, và chế độ thì KHÔNG đổi; `errorVideoStop` là lúc gỡ track khỏi
+   * phòng thất bại, nơi cách chữa duy nhất người dùng có là rời phòng rồi vào lại.
+   *
+   * Khối này thêm 14 khoá và KHÔNG thêm khoá số nhiều hay khoá nội suy nào, nên
+   * hai con số ở docblock đầu tệp (3 và 7) vẫn đúng — rule 5 của
+   * `tests/gates/i18n-catalogue.test.ts` là thứ chứng minh điều đó, không phải câu
+   * này.
+   */
+  'room.faceModeLegend': 'Khuôn mặt của bạn trong phòng',
+  'room.modeShow': 'Để nguyên',
+  'room.modeHide': 'Ẩn mặt',
+  'room.modeFilter': 'Filter',
+  'room.comingSoon': 'Sắp có',
+  'room.selfPreview': 'Đây là hình mọi người đang thấy.',
+  'room.errorCameraDenied': 'Không mở được camera. Bạn đang ở chế độ ẩn mặt.',
+  'room.errorCameraMissing': 'Không thấy camera. Ẩn mặt là lựa chọn duy nhất.',
+  'room.errorCameraEnded': 'Camera đã ngừng hoạt động. Bạn đang ở chế độ ẩn mặt.',
+  'room.errorVideoPipeline': 'Không dựng được hình để gửi đi. Bạn đang ở chế độ ẩn mặt.',
+  'room.errorVideoRefused': 'Phòng không nhận hình của bạn. Bạn vẫn nghe được mọi người.',
+  'room.errorCameraBusy': 'Một ứng dụng khác đang dùng camera. Bạn đang ở chế độ ẩn mặt.',
+  'room.errorVideoPause': 'Hình của bạn đã dừng khi bạn rời tab, nhưng phòng chưa nhận được báo.',
+  'room.errorVideoStop': 'Chưa gỡ được hình khỏi phòng. Hãy rời phòng rồi vào lại nếu người khác vẫn thấy.',
 
   /**
    * The ten sentences `packages/contracts` owns, IMPORTED rather than retyped.

@@ -249,6 +249,21 @@ export const EN_MESSAGES = {
   'room.errorConnect': 'The room could not be joined.',
   'room.errorDisconnected': 'The connection to the room was lost.',
 
+  'room.faceModeLegend': 'Your face in this room',
+  'room.modeShow': 'Show my face',
+  'room.modeHide': 'Hide my face',
+  'room.modeFilter': 'Face filter',
+  'room.comingSoon': 'Coming soon',
+  'room.selfPreview': 'This is what everybody can see.',
+  'room.errorCameraDenied': 'Your camera could not be opened. Your face stays hidden.',
+  'room.errorCameraMissing': 'No camera found. Hiding your face is the only option.',
+  'room.errorCameraEnded': 'Your camera has stopped. Your face stays hidden.',
+  'room.errorVideoPipeline': 'The picture to send could not be built. Your face stays hidden.',
+  'room.errorVideoRefused': 'The room did not accept your picture. You can still hear everybody.',
+  'room.errorCameraBusy': 'Another application is using the camera. Your face stays hidden.',
+  'room.errorVideoPause': 'Your picture stopped when you left the tab, but the room was not told.',
+  'room.errorVideoStop': 'Your picture could not be removed from the room. Leave and rejoin if people still see it.',
+
   'error.rateLimited': 'You have tried too many times. Please wait a moment, then try again.',
   'error.dateOfBirthInvalid':
     'That date of birth is not valid. Choose your date of birth again, then try once more.',

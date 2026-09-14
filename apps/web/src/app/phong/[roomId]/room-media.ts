@@ -1,3 +1,4 @@
+import { PIPELINE_FPS } from './frame-pipeline';
 import type { MessageKey } from '../../i18n/messages';
 
 /**
@@ -68,6 +69,77 @@ export function audioPublishOptions(): AudioPublishOptions {
 }
 
 /**
+ * What the CANVAS track is published with — spelled out, never inherited.
+ *
+ * Story 2.7. Every field is a decision this story owns rather than a default the
+ * SDK happens to hold today:
+ *
+ * - `source: 'camera'` — LiveKit's own word for "a face", and the ONLY source the
+ *   token's `canPublishSources` allows besides the microphone. Written as the raw
+ *   wire value for the reason the file docblock gives: importing `Track.Source`
+ *   would drag a browser SDK into this module's graph. `RoomShell` re-states it
+ *   with the SDK's enum, whose runtime value is this same string.
+ *
+ *   **Nó KHÔNG cưỡng chế được luật (b).** LiveKit thấy track canvas và track
+ *   camera là cùng một `camera` source, nên không có gì ở server phân biệt được
+ *   khung hình đã xử lý với khung hình thô. Cái chặn là `frame-pipeline.ts` và
+ *   phép đo ở `RTCRtpSender.track.id`;
+ * - `simulcast: false` — ba lớp độ phân giải là thang suy giảm mạng, và thang đó
+ *   là Story 2.5. Bật nó ở đây có nghĩa là 2.5 phát hiện ra nó đã bật thay vì
+ *   quyết định bật;
+ * - `degradationPreference: 'maintain-framerate'` — khi băng thông hẹp thì giữ
+ *   nhịp và hạ độ phân giải. Một khuôn mặt giật là thứ khó đọc hơn một khuôn mặt
+ *   mờ, và `epic-2-context.md` cho phép video tụt bậc;
+ * - `videoEncoding` — bitrate và FPS ghim tường minh, `priority: 'low'`. Chữ
+ *   `low` là nửa còn lại của `priority: 'high'` trên {@link audioPublishOptions}:
+ *   khi trình duyệt phải chọn giữa hai luồng, epic đã nói thứ nào nhường.
+ *
+ * `maxFramerate` ĐỌC `PIPELINE_FPS` chứ không chép lại con số. Hai literal ở hai
+ * tệp là hai thứ trôi khỏi nhau trong im lặng: canvas bắt 24 hình/giây trong khi
+ * encoder được bảo 30 thì bitrate đã tính cho một nhịp không tồn tại, và không có
+ * gì đỏ lên. Một nguồn, một con số.
+ */
+export interface VideoPublishOptions {
+  readonly source: 'camera';
+  readonly simulcast: false;
+  readonly degradationPreference: 'maintain-framerate';
+  readonly videoEncoding: {
+    readonly maxBitrate: number;
+    readonly maxFramerate: number;
+    readonly priority: 'low';
+  };
+}
+
+/**
+ * The ceiling the canvas track is encoded at, in bits per second.
+ *
+ * 500 kbps for 640×480 at {@link PIPELINE_FPS}: enough for a face in a study room
+ * and small enough to leave Opus its 24 kbps on the 4G connection `epic-2-context.md`
+ * is written for. Named rather than inline so the test can pin the NUMBER — "greater
+ * than zero" was the first spelling and it agrees with every value anybody could
+ * typo, which is not what a docblock claiming an explicit decision may rest on.
+ */
+export const VIDEO_MAX_BITRATE = 500_000;
+
+export function videoPublishOptions(): VideoPublishOptions {
+  return {
+    source: 'camera',
+    simulcast: false,
+    degradationPreference: 'maintain-framerate',
+    videoEncoding: { maxBitrate: VIDEO_MAX_BITRATE, maxFramerate: PIPELINE_FPS, priority: 'low' },
+  };
+}
+
+/**
+ * The three modes, as the ONE list every other spelling is derived from.
+ *
+ * `FACE_MODES` in `room-shell.tsx` is this array — not a copy of it — so a fourth
+ * mode cannot arrive on one side of the graph and not the other. It lives here
+ * because this file is the one nothing imports back (see the docblock above).
+ */
+export const MEDIA_FACE_MODES = ['show', 'hide', 'filter'] as const;
+
+/**
  * The half of a `RoomDecision` the media plane and the panel read.
  *
  * Declared here rather than imported, for the cycle the file docblock explains —
@@ -76,7 +148,7 @@ export function audioPublishOptions(): AudioPublishOptions {
  * `RoomDecision` satisfies it structurally, and only `RoomShell` holds the whole
  * thing.
  */
-export type MediaFaceMode = 'show' | 'hide' | 'filter';
+export type MediaFaceMode = (typeof MEDIA_FACE_MODES)[number];
 
 export interface MediaDecision {
   readonly faceMode: MediaFaceMode;
@@ -84,12 +156,119 @@ export interface MediaDecision {
 }
 
 /**
+ * Whether a mode may open the camera at all — the ONE place that decides it.
+ *
+ * `filter` answers `false`, and that is not a placeholder: the ML pipeline is a
+ * separate deliverable (`deferred-work.md`), so a room that opened a camera for
+ * `filter` today would publish an UNFILTERED face under a label promising a
+ * filter. Refusing here means the worst a half-built mode can do is show an
+ * avatar.
+ *
+ * Every asynchronous step in `RoomShell` reads this through `faceModeRef`, never
+ * through `decision.faceMode`: the decision is a snapshot of the moment pre-join
+ * ended, and the group in the room can change the answer during any `await`.
+ */
+export function faceModeAllowsVideo(faceMode: MediaFaceMode): boolean {
+  return faceMode === 'show';
+}
+
+/**
+ * Whether a person may PUT the room in this mode — the structural half of the
+ * panel disabling the radio.
+ *
+ * `filter` is refused here as well as in the markup, and that is the point rather
+ * than a belt: `faceModeRef` is described as the one source of truth for the whole
+ * video machine, so a mode that reaches it is a mode the machine will act on. A
+ * defence that lives only in a `disabled` attribute is a defence that a second
+ * caller — Story 2.6's popover, a keyboard path, a test — walks straight past.
+ */
+export function faceModeSelectable(faceMode: MediaFaceMode): boolean {
+  return faceMode !== 'filter';
+}
+
+/**
+ * The mode the room STARTS in, given whatever the admission carried.
+ *
+ * Pre-join cannot produce `filter` today, so this is a guard against a state the
+ * product cannot currently reach — which is exactly when a guard is cheap. Without
+ * it a `filter` admission renders a radio that is both checked and disabled, and
+ * seeds the machine with a mode {@link faceModeAllowsVideo} will never satisfy.
+ * `hide` is the floor every other mode falls back to.
+ */
+export function initialFaceModeFor(faceMode: MediaFaceMode): MediaFaceMode {
+  return faceModeSelectable(faceMode) ? faceMode : 'hide';
+}
+
+/* -------------------------------------------------------------------------- *
+ * What a camera refusal MEANS
+ * -------------------------------------------------------------------------- */
+
+/**
+ * The error names the two families of refusal go by — the ONE declaration.
+ *
+ * `pre-join.tsx` owned these and the shell classified error names inline beside
+ * it, which is two readings of one browser vocabulary: the shell's copy had no
+ * `DevicesNotFoundError` (the spelling an older Chromium still uses) and no
+ * `PermissionDeniedError`, so the same unplugged camera produced "no camera" on
+ * one screen and "you refused" on the other. They live here because this is the
+ * module both sides already import and nothing imports back.
+ *
+ * `NotAllowedError` is the standard name; `PermissionDeniedError` is what an older
+ * Chromium spelled it; `SecurityError` is "this page is not allowed to ask" (an
+ * insecure context, a `Permissions-Policy`), which for the person is the same wall
+ * with the same way round it. `NotFoundError` and its old spelling say "no such
+ * device"; `OverconstrainedError` with `video: true` can only mean the same.
+ */
+export const BLOCKED_DEVICE_ERRORS: ReadonlySet<string> = new Set([
+  'NotAllowedError',
+  'PermissionDeniedError',
+  'SecurityError',
+]);
+
+export const MISSING_DEVICE_ERRORS: ReadonlySet<string> = new Set([
+  'NotFoundError',
+  'DevicesNotFoundError',
+  'OverconstrainedError',
+]);
+
+/**
+ * Which of three different things went wrong with a camera, as one word.
+ *
+ * The third word is why this function exists. `NotReadableError` and `AbortError`
+ * mean the device is THERE and somebody else has it — another application, another
+ * tab, the OS — and calling that a refusal tells a person to go and change a
+ * permission setting that is already correct. `SecurityError` is genuinely a wall
+ * (it lives in {@link BLOCKED_DEVICE_ERRORS}), so the split is not "standard names
+ * versus the rest".
+ */
+export type CameraProblem = 'missing' | 'blocked' | 'busy';
+
+export function cameraProblemFor(errorName: string): CameraProblem {
+  if (MISSING_DEVICE_ERRORS.has(errorName)) {
+    return 'missing';
+  }
+  return BLOCKED_DEVICE_ERRORS.has(errorName) ? 'blocked' : 'busy';
+}
+
+/**
  * The options `new Room(...)` is built with.
  *
- * `adaptiveStream` and `dynacast` are both about VIDEO layers, and Story 2.4
- * publishes no video at all — they are set to `false` rather than left out so
- * that Story 2.5, which owns the degradation ladder, turns them on deliberately
- * instead of discovering they were already on.
+ * `adaptiveStream` and `dynacast` are both about VIDEO layers. Story 2.4 set them
+ * to `false` because it published no video; Story 2.7 publishes video and KEEPS
+ * them `false`, which is a decision rather than an inheritance:
+ *
+ * - `adaptiveStream` sizes a subscription to the `<video>` element showing it and
+ *   pauses one that is off screen. The element it measures is the participant
+ *   tile, and the tile is Story 2.6's — until the grid exists there is nothing
+ *   stable to measure, and a subscription paused because a tile had not been laid
+ *   out yet is a black square nobody can explain;
+ * - `dynacast` stops publishing layers nobody subscribes to, which is a saving
+ *   over SIMULCAST layers. `videoPublishOptions()` publishes one layer, so it has
+ *   nothing to switch off here and everything to do once Story 2.5 turns
+ *   simulcast on.
+ *
+ * Both are the ladder's knobs and the ladder is 2.5. `deferred-work.md` carries
+ * the debt so the next story decides them instead of finding them.
  *
  * `publishDefaults` is present for `mic` and ABSENT for `listen-only`, and that
  * absence is the point rather than a saving: a listen-only room has nothing to
@@ -308,6 +487,55 @@ export function identityInitialsFor(identity: string): string {
 }
 
 /**
+ * One video publication, reduced to the three facts that decide whether to draw it.
+ *
+ * Structural, so a test can build one without a `Room` — which is the point:
+ * {@link videoKeyFor} is the subtlest decision in Story 2.7 and it was previously
+ * written inline in `room-shell.tsx`, where nothing in the DOM-less `web` project
+ * could execute it.
+ */
+export interface MediaVideoPublication {
+  readonly trackSid: string;
+  readonly subscribed: boolean;
+  readonly muted: boolean;
+  readonly hasTrack: boolean;
+}
+
+/**
+ * WHICH of somebody's video publications a tile should draw, as a stable key —
+ * `identity:trackSid` — or `null` for the letters.
+ *
+ * ## Why a key and not a boolean
+ *
+ * A participant may hold more than one video publication, and the first version of
+ * this filed every remote track under the IDENTITY alone. Two consequences, both
+ * silent: a second publication overwrote the first, and ONE unsubscribe blanked a
+ * tile whose other track was still live. Keying by the publication's own `trackSid`
+ * makes both impossible — a track is stored, found and removed under the thing that
+ * identifies it.
+ *
+ * ## Why all three conditions
+ *
+ * Each is a way the answer is "draw nothing" while a `<video>` would still mount,
+ * and each is reachable: an UNSUBSCRIBED publication carries no frames; a MUTED one
+ * is what a hidden tab and the instant before an unpublish both look like; and a
+ * publication with no `track` is one there is nothing to attach. A tile that draws
+ * for any of them is a black rectangle where an avatar belongs.
+ *
+ * The FIRST match wins rather than the last, so a tile does not swap between two
+ * live publications every time the map is rebuilt.
+ */
+export function videoKeyFor(
+  identity: string,
+  publications: readonly MediaVideoPublication[],
+): string | null {
+  const showable = publications.find(
+    (publication) => publication.subscribed && !publication.muted && publication.hasTrack,
+  );
+  return showable === undefined ? null : `${identity}:${showable.trackSid}`;
+}
+
+/**
  * A participant as the media plane sees one: who they are, and whether their
  * microphone is travelling.
  *
@@ -319,6 +547,12 @@ export interface MediaParticipant {
   /** The display name LiveKit carries, when there is one. */
   readonly name?: string;
   readonly micOn: boolean;
+  /**
+   * WHICH picture of theirs to draw, or `null` for the letters — Story 2.7.
+   *
+   * A key rather than a boolean, and that is {@link videoKeyFor}'s whole reason.
+   */
+  readonly videoKey: string | null;
 }
 
 /**
@@ -345,6 +579,8 @@ export interface ParticipantRow {
   readonly initials: string;
   readonly speaking: boolean;
   readonly micOn: boolean;
+  /** Draw a `<video>` for this row, or the letters. See {@link videoKeyFor}. */
+  readonly videoKey: string | null;
   readonly isSelf: boolean;
 }
 
@@ -379,6 +615,7 @@ export function participantRowsFor(
       initials: name.length > 0 ? avatarInitialsFor(name) : identityInitialsFor(participant.identity),
       speaking: speaking.has(participant.identity) && participant.micOn,
       micOn: participant.micOn,
+      videoKey: participant.videoKey,
       isSelf,
     };
   };

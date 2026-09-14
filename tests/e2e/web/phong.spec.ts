@@ -47,6 +47,15 @@ interface MediaPlaneProbe {
   /** Every ICE server URL an `RTCPeerConnection` was CONFIGURED with. Story 2.4. */
   readonly iceServerUrls: () => Promise<string[]>;
   readonly videoTrackStates: () => Promise<string[]>;
+  /**
+   * How many `getUserMedia` calls asked for VIDEO — Story 2.7.
+   *
+   * The plain call count cannot answer "did the room ever open a camera", because
+   * the shell asks for a microphone on the same happy path. This one can, and it
+   * is what makes "Ẩn mặt never asks for a camera" a measurement rather than a
+   * reading of the source.
+   */
+  readonly videoRequests: () => Promise<number>;
   readonly audioTrackStates: () => Promise<string[]>;
   readonly getUserMediaCalls: () => Promise<number>;
 }
@@ -83,6 +92,7 @@ async function guardMediaPlane(page: Page): Promise<MediaPlaneProbe> {
       peerConnections: 0,
       webSockets: 0,
       getUserMediaCalls: 0,
+      videoRequests: 0,
       streams: [] as MediaStream[],
       webSocketUrls: [] as string[],
       iceServerUrls: [] as string[],
@@ -130,6 +140,9 @@ async function guardMediaPlane(page: Page): Promise<MediaPlaneProbe> {
       const original = devices.getUserMedia.bind(devices);
       devices.getUserMedia = async (constraints?: MediaStreamConstraints) => {
         probe.getUserMediaCalls += 1;
+        if (constraints?.video !== undefined && constraints.video !== false) {
+          probe.videoRequests += 1;
+        }
         const stream = await original(constraints);
         probe.streams.push(stream);
         return stream;
@@ -168,6 +181,10 @@ async function guardMediaPlane(page: Page): Promise<MediaPlaneProbe> {
     getUserMediaCalls: () =>
       page.evaluate(
         () => (window as unknown as { __stuwithProbe: { getUserMediaCalls: number } }).__stuwithProbe.getUserMediaCalls,
+      ),
+    videoRequests: () =>
+      page.evaluate(
+        () => (window as unknown as { __stuwithProbe: { videoRequests: number } }).__stuwithProbe.videoRequests,
       ),
   };
 }
@@ -267,10 +284,18 @@ async function refuseDevices(page: Page, name: string, onlyVideo = false): Promi
           // Counted here as well: `guardMediaPlane`'s wrapper sits UNDER this one
           // and is never reached on the refusing branch, and "Thử lại quyền asks
           // again" is a claim about the product's call, not about the answer.
-          const probe = (window as unknown as { __stuwithProbe?: { getUserMediaCalls: number } })
-            .__stuwithProbe;
+          const probe = (window as unknown as {
+            __stuwithProbe?: { getUserMediaCalls: number; videoRequests: number };
+          }).__stuwithProbe;
           if (probe !== undefined) {
             probe.getUserMediaCalls += 1;
+            // `videoRequests` as well, and that matters the moment this helper is
+            // combined with another: counting only half of what the wrapper under
+            // it counts makes the video tally read LOW, which is the direction
+            // that turns "the room never asked for a camera" green when it did.
+            if (constraints?.video !== undefined && constraints.video !== false) {
+              probe.videoRequests += 1;
+            }
           }
           return Promise.reject(new DOMException('refused by the spec', errorName));
         }
@@ -312,7 +337,68 @@ async function refuseAudioOnlyDevices(page: Page): Promise<void> {
   });
 }
 
+/**
+ * Refuse ONLY a video-only `getUserMedia` — which, on the happy path, is exactly
+ * the one `RoomShell` makes for the face pipeline.
+ *
+ * `pre-join.tsx` asks for `{video, audio}` together, so a filter on "has a video
+ * constraint and no audio constraint" separates the SHELL's request from the
+ * screen's without either of them knowing. That separation is what makes
+ * `room.errorCameraDenied` reachable at all: a refusal AT pre-join leaves the
+ * person on "Ẩn mặt" before the room starts, so "wanted a face and could not have
+ * one" would exist in the code and nowhere else — the same hole
+ * {@link refuseAudioOnlyDevices} was written to close for the microphone.
+ *
+ * A seam inside the browser, like `refuseDevices` above — see the file docblock.
+ */
+async function refuseVideoOnlyDevices(page: Page, errorName = 'NotAllowedError'): Promise<void> {
+  await page.addInitScript((name: string) => {
+    const devices = navigator.mediaDevices;
+    const original = devices.getUserMedia.bind(devices);
+    devices.getUserMedia = (constraints?: MediaStreamConstraints) => {
+      const wantsVideo = constraints?.video !== undefined && constraints.video !== false;
+      const wantsAudio = constraints?.audio !== undefined && constraints.audio !== false;
+      if (!wantsVideo || wantsAudio) {
+        return original(constraints);
+      }
+      // Counted here as well: `guardMediaPlane`'s wrapper sits UNDER this one and
+      // is never reached on the refusing branch, so without this the shell's
+      // request would be invisible to the very probe that asks whether it was made.
+      const probe = (window as unknown as { __stuwithProbe?: { getUserMediaCalls: number; videoRequests: number } })
+        .__stuwithProbe;
+      if (probe !== undefined) {
+        probe.getUserMediaCalls += 1;
+        probe.videoRequests += 1;
+      }
+      return Promise.reject(new DOMException('refused by the spec', name));
+    };
+  }, errorName);
+}
+
+/**
+ * A camera that yields a track and then never produces a frame.
+ *
+ * `videoWidth` is what the draw loop reads to decide a frame has arrived, so
+ * pinning it to `0` is a source that never paints — a real failure (a driver that
+ * hangs, a virtual camera that never starts) and the one BẤT BIẾN 2 exists for.
+ * A seam inside the browser, like the refusals above: there is nothing of ours on
+ * the far side of `HTMLVideoElement` to mutate.
+ *
+ * It applies to every `<video>` in the page, pre-join's preview included, so a
+ * spec using it must not also ask whether that preview is live.
+ */
+async function neverPaintingCamera(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    Object.defineProperty(HTMLVideoElement.prototype, 'videoWidth', {
+      configurable: true,
+      get: () => 0,
+    });
+  });
+}
+
 const modeGroup = (page: Page) => page.getByRole('radiogroup', { name: 'Chế độ khuôn mặt' });
+/** Story 2.7's group, INSIDE the room. A different legend, on purpose — see the catalogue. */
+const roomModeGroup = (page: Page) => page.getByRole('radiogroup', { name: 'Khuôn mặt của bạn trong phòng' });
 const video = (page: Page) => page.locator('video');
 const meter = (page: Page) => page.getByRole('meter', { name: 'Mức âm micro' });
 /**
@@ -731,17 +817,40 @@ test.describe('phòng — pre-join', () => {
 
     // Mid-handshake, for real: the chip says so and the room has not answered.
     await expect(page.getByText('Đang vào phòng…')).toBeVisible();
+    /**
+     * And the camera the shell opened alongside the handshake is really LIVE
+     * before the press.
+     *
+     * Without this line the press usually landed before `getUserMedia` resolved,
+     * so what ran was `openCamera`'s own abort guard — which stops the stream
+     * itself — and `leave`'s teardown was never reached. Measured: neutering the
+     * camera teardown left this case green while the LiveKit one went red.
+     */
+    await expect.poll(() => probe.videoTrackStates()).toContain('live');
     await page.getByRole('button', { name: 'Rời phòng' }).click();
 
     await expect(page.getByRole('heading', { name: 'Bạn đã rời phòng' })).toBeVisible();
     // The microphone the shell opened is ended, and stays ended.
     await expect.poll(() => probe.audioTrackStates()).not.toContain('live');
+    /**
+     * And the CAMERA, which nothing asserted for a round.
+     *
+     * `leave` does not unmount, so the effect's cleanup never runs on this path:
+     * delete the camera teardown from it and the light stays on behind a heading
+     * that says the person has left. That is the one part of the privacy promise a
+     * user can check without trusting us, and it was resting on a test that only
+     * ever read `audioTrackStates()`.
+     */
+    await expect.poll(() => probe.videoTrackStates()).not.toContain('live');
     // And the abandoned run never comes back to overwrite the screen: no refusal
     // sentence arrives afterwards, because there is no join left to refuse.
     await page.waitForTimeout(3_000);
     await expect(page.getByRole('heading', { name: 'Bạn đã rời phòng' })).toBeVisible();
     await expect(page.locator('main [role="alert"]')).toHaveCount(0);
     await expect.poll(() => probe.audioTrackStates()).not.toContain('live');
+    // Re-read after the wait: a late `getUserMedia` resolving into an abandoned run
+    // is exactly how a camera comes back on behind a screen that says it is off.
+    await expect.poll(() => probe.videoTrackStates()).not.toContain('live');
   });
 
   test('a microphone the SHELL cannot open says so, and the room is joined anyway', async ({ page }) => {
@@ -762,6 +871,171 @@ test.describe('phòng — pre-join', () => {
     // Still a join: the sentence says which half is missing, not that the room is lost.
     await expect.poll(async () => (await probe.counters()).webSockets).toBeGreaterThan(0);
     await expectMediaPlaneOnlyToRoom(probe);
+  });
+
+  test('a camera the SHELL cannot open leaves the face hidden, and says why', async ({ page }) => {
+    /**
+     * The matrix row "camera bị từ chối lúc vào" — and the branch is only
+     * reachable through {@link refuseVideoOnlyDevices}, because a refusal AT
+     * pre-join never produces a decision of "show" for the room to act on.
+     *
+     * Two things are asserted that a render test cannot: that the shell really
+     * asks (the request is counted on the refusing branch), and that the refusal
+     * does not take the room down with it — audio is untouched.
+     */
+    const probe = await guardMediaPlane(page);
+    await refuseVideoOnlyDevices(page);
+    await scenario(page, { signedIn: true });
+    await page.goto(ROOM);
+    // Pre-join is unaffected: it asks for both devices at once and is granted.
+    await expect(video(page)).toBeVisible();
+    await page.getByRole('button', { name: 'Vào phòng', exact: true }).click();
+
+    await expect(shellHeading(page)).toBeVisible();
+    await expect(page.getByText('Không mở được camera. Bạn đang ở chế độ ẩn mặt.')).toBeVisible();
+    // The shell really asked — pre-join's one request plus the shell's one.
+    await expect.poll(() => probe.videoRequests()).toBe(2);
+    // And nothing was left holding a camera afterwards.
+    await expect.poll(() => probe.videoTrackStates()).not.toContain('live');
+    // Nothing re-asks on its own: turning a camera on is a press, never an effect.
+    await page.waitForTimeout(2_000);
+    expect(await probe.videoRequests()).toBe(2);
+  });
+
+  test('Ẩn mặt in the room never asks for a camera at all', async ({ page }) => {
+    /**
+     * "Ẩn mặt là vắng mặt, không phải im lặng": not a muted track, not a black
+     * frame — no camera. The count is EXACT rather than "no more than before",
+     * because pre-join's single `{video, audio}` request at mount is the only one
+     * this session may ever make, and an exact number is what notices a second.
+     */
+    const probe = await guardMediaPlane(page);
+    await scenario(page, { signedIn: true });
+    await page.goto(ROOM);
+    await expect(video(page)).toBeVisible();
+    await page.getByRole('radio', { name: 'Ẩn mặt' }).check();
+    await page.getByRole('button', { name: 'Vào phòng', exact: true }).click();
+
+    await expect(shellHeading(page)).toBeVisible();
+    await expect.poll(async () => (await probe.counters()).webSockets).toBeGreaterThan(0);
+    // Long enough for a shell that WAS going to open a camera to have done it.
+    await page.waitForTimeout(2_000);
+    expect(await probe.videoRequests()).toBe(1);
+    await expect(video(page)).toHaveCount(0);
+    await expect.poll(() => probe.videoTrackStates()).not.toContain('live');
+    await expectMediaPlaneOnlyToRoom(probe);
+  });
+
+  test('"Ẩn mặt" pressed DURING the handshake ends the camera rather than racing it', async ({
+    page,
+  }) => {
+    /**
+     * **BẤT BIẾN 1, as a browser can see it.** This is the defect review round 1
+     * of this story reproduced: the group is offered from the first frame, so a
+     * press lands while `handle.disableVideo` does not exist yet — and the run,
+     * reading the snapshot pre-join handed over, went on to open a camera and
+     * publish the face of the person who had just asked to hide it.
+     *
+     * The handshake has to HANG for the press to land inside it, and a closed port
+     * on `127.0.0.1` does not hang — it is refused at once. `roomTokenUrl` points
+     * the admission at a blackholed address (`192.0.2.0/24`, RFC 5737, carried by
+     * no router), which is the same fixture the microphone's mid-handshake case
+     * uses, so `connecting` lasts as long as this spec needs.
+     */
+    const probe = await guardMediaPlane(page);
+    await scenario(page, { signedIn: true, roomTokenUrl: 'ws://192.0.2.1:7880' });
+    await page.goto(ROOM);
+    await expect(video(page)).toBeVisible();
+    await page.getByRole('button', { name: 'Vào phòng', exact: true }).click();
+
+    // Mid-handshake, for real, with the group already on screen.
+    await expect(page.getByText('Đang vào phòng…')).toBeVisible();
+    await expect(roomModeGroup(page)).toBeVisible();
+    // The camera the shell opened alongside the handshake is really live — without
+    // this the assertion after the press would pass on a run that never opened one.
+    await expect.poll(() => probe.videoTrackStates()).toContain('live');
+
+    /**
+     * Moved by the ARROW KEY rather than by `.check()`, so one case covers both
+     * things the group has to be: the invariant, and a real keyboard radiogroup.
+     * Native radios sharing a `name` are what make the arrows work without a line
+     * of script — and the `name` is the room's own, so a collision with pre-join's
+     * group would break exactly this line.
+     */
+    await roomModeGroup(page).getByRole('radio', { name: 'Để nguyên' }).focus();
+    await page.keyboard.press('ArrowDown');
+    await expect(roomModeGroup(page).getByRole('radio', { name: 'Ẩn mặt' })).toBeChecked();
+
+    // Ended, and it stays ended: the abandoned asynchronous path does not come
+    // back a second later with a camera the person has said no to.
+    await expect.poll(() => probe.videoTrackStates()).not.toContain('live');
+    await page.waitForTimeout(3_000);
+    await expect.poll(() => probe.videoTrackStates()).not.toContain('live');
+    // The screen agrees with the wire, which is the half that was false before.
+    await expect(page.getByText('Bạn đang ẩn mặt.')).toBeVisible();
+    await expect(page.getByText('Đây là hình mọi người đang thấy.')).toHaveCount(0);
+  });
+
+  test('no camera at all: the room disables "Để nguyên" rather than offering it', async ({ page }) => {
+    /**
+     * `room.errorCameraMissing` had nothing executing it. The video-only refusal
+     * was hard-coded to `NotAllowedError`, so only the "you may not" half ran, and
+     * the `NotFoundError` cases all stop at pre-join — where the decision is
+     * already "Ẩn mặt" and the room never asks.
+     *
+     * The disabled radio is the half that matters: a choice offered and then
+     * refused with a sentence is a button whose only possible outcome is bad news.
+     */
+    const probe = await guardMediaPlane(page);
+    await refuseVideoOnlyDevices(page, 'NotFoundError');
+    await scenario(page, { signedIn: true, roomTokenUrl: 'ws://192.0.2.1:7880' });
+    await page.goto(ROOM);
+    await expect(video(page)).toBeVisible();
+    await page.getByRole('button', { name: 'Vào phòng', exact: true }).click();
+
+    await expect(page.getByText('Không thấy camera. Ẩn mặt là lựa chọn duy nhất.')).toBeVisible();
+    await expect(roomModeGroup(page).getByRole('radio', { name: 'Để nguyên' })).toBeDisabled();
+    await expect(roomModeGroup(page).getByRole('radio', { name: 'Ẩn mặt' })).toBeChecked();
+    await expect(roomModeGroup(page).getByRole('radio', { name: 'Ẩn mặt' })).toBeEnabled();
+    // The shell really asked — pre-join's request plus the shell's one.
+    await expect.poll(() => probe.videoRequests()).toBe(2);
+  });
+
+  test('a camera that never produces a frame gives up in bounded time, and says so', async ({
+    page,
+  }) => {
+    /**
+     * **BẤT BIẾN 2, driven.** `whenReady`'s timeout was pinned only as a NUMBER —
+     * `PIPELINE_READY_TIMEOUT_MS > 0` — which is a property of a constant and not
+     * of the function that reads it. Delete the `setTimeout` from `whenReady` and
+     * the promise never settles: the run stops before publishing, no sentence
+     * arrives, and with the pipeline sitting in front of `connect()` it would be
+     * the room's SOUND that goes too. Everything stayed green.
+     *
+     * Here the camera hands over a real track that never paints, so the only thing
+     * that can end the wait is the timeout — and the sentence on screen is what
+     * says it ended.
+     */
+    const probe = await guardMediaPlane(page);
+    await neverPaintingCamera(page);
+    await scenario(page, { signedIn: true, roomTokenUrl: 'ws://192.0.2.1:7880' });
+    await page.goto(ROOM);
+    // The preview element mounts; it is deliberately NOT asked whether it is live,
+    // because `neverPaintingCamera` is what makes that impossible on purpose.
+    await expect(video(page)).toBeVisible();
+    await page.getByRole('button', { name: 'Vào phòng', exact: true }).click();
+
+    await expect(page.getByText('Không dựng được hình để gửi đi. Bạn đang ở chế độ ẩn mặt.')).toBeVisible(
+      { timeout: 15_000 },
+    );
+    // Ẩn mặt, and the camera really let go — a pipeline that gave up must not
+    // leave the device lit.
+    await expect(page.getByText('Bạn đang ẩn mặt.')).toBeVisible();
+    await expect(roomModeGroup(page).getByRole('radio', { name: 'Ẩn mặt' })).toBeChecked();
+    await expect.poll(() => probe.videoTrackStates()).not.toContain('live');
+    // And the room itself was never blocked on it: the handshake is still running
+    // underneath, which is the half of BẤT BIẾN 2 about audio never waiting.
+    await expect(page.getByText('Đang vào phòng…')).toBeVisible();
   });
 
   test('there is no other URL: a second segment is a 404 and a query parameter changes nothing', async ({

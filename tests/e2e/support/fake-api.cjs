@@ -112,6 +112,24 @@ const WEB_ORIGIN = process.env['FAKE_API_WEB_ORIGIN'] ?? 'http://127.0.0.1:3100'
  */
 const LIVEKIT_HANDOFF = process.env['E2E_LIVEKIT_HANDOFF'] ?? '';
 
+/**
+ * Story 2.7 — the same token, with `canPublishSources` narrowed to the microphone.
+ *
+ * NOT a second token builder. `mintRoomToken` produces the token; this decodes it,
+ * replaces ONE key of the `video` claim, and signs the result with the same secret
+ * — so the room, the subject, the instants and every other grant are still whatever
+ * the product decided, and a change to the grant's shape travels here for free. It
+ * is the narrowest possible way to ask a REAL `livekit-server` to refuse a video
+ * publish while `apps/web` is untouched.
+ */
+async function withoutCameraSource(token, apiSecret, jose) {
+  const payload = jose.decodeJwt(token);
+  const video = { ...payload.video, canPublishSources: ['microphone'] };
+  return new jose.SignJWT({ ...payload, video })
+    .setProtectedHeader({ alg: 'HS256' })
+    .sign(new TextEncoder().encode(apiSecret));
+}
+
 function liveKitHandoff() {
   if (LIVEKIT_HANDOFF === '') {
     return null;
@@ -135,7 +153,16 @@ function liveKitHandoff() {
     // Required lazily: a run without the container must not depend on `apps/api`
     // having been built, and none of the other webServer processes needs it.
     const { mintRoomToken } = require('../../../apps/api/dist/rooms/room-token.js');
-    return { url, apiKey, apiSecret, mintRoomToken };
+    /**
+     * `jose` resolved from `apps/api`'s OWN tree, the way
+     * `tests/gates/livekit-token.test.ts` does it: pnpm's isolated `node_modules`
+     * means the repository root may not have a copy, and the copy that matters is
+     * the one the product signs with.
+     */
+    const jose = require('node:module').createRequire(
+      require.resolve('../../../apps/api/dist/rooms/room-token.js'),
+    )('jose');
+    return { url, apiKey, apiSecret, mintRoomToken, jose };
   } catch {
     // No file, or nothing usable in it: the placeholder token below is what every
     // spec outside `tests/e2e/livekit` has always received.
@@ -413,6 +440,12 @@ async function dispatch(req, res) {
        * exists, and there is nothing to simulate.
        */
       roomTokenUrl: typeof next?.roomTokenUrl === 'string' ? next.roomTokenUrl : null,
+      /**
+       * Story 2.7. Narrow the grant to the microphone so a REAL server refuses the
+       * video publish — the only way `room.errorVideoRefused` is reachable, since
+       * the product's own grant allows the camera.
+       */
+      roomTokenWithoutCameraSource: next?.roomTokenWithoutCameraSource === true,
     };
     if (
       state.roomTokenReason !== null &&
@@ -639,17 +672,22 @@ async function dispatch(req, res) {
          * finds `e2e-token.` in the DOM has found a leak.
          */
         const livekit = state.useLiveKit ? liveKitHandoff() : null;
-        const token =
-          livekit === null
-            ? `e2e-token.${randomUUID()}`
-            : await livekit.mintRoomToken({
-                apiKey: livekit.apiKey,
-                apiSecret: livekit.apiSecret,
-                roomId,
-                userId: state.userId,
-                issuedAt,
-                expiresAt,
-              });
+        let token;
+        if (livekit === null) {
+          token = `e2e-token.${randomUUID()}`;
+        } else {
+          token = await livekit.mintRoomToken({
+            apiKey: livekit.apiKey,
+            apiSecret: livekit.apiSecret,
+            roomId,
+            userId: state.userId,
+            issuedAt,
+            expiresAt,
+          });
+          if (state.roomTokenWithoutCameraSource) {
+            token = await withoutCameraSource(token, livekit.apiSecret, livekit.jose);
+          }
+        }
         send(
           res,
           201,
