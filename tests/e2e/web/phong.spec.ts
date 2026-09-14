@@ -846,7 +846,11 @@ test.describe('phòng — pre-join', () => {
     // sentence arrives afterwards, because there is no join left to refuse.
     await page.waitForTimeout(3_000);
     await expect(page.getByRole('heading', { name: 'Bạn đã rời phòng' })).toBeVisible();
-    await expect(page.locator('main [role="alert"]')).toHaveCount(0);
+    // `:not(:empty)` because Story 2.5's ladder banner is a PERSISTENT
+    // `role="alert"` region — a live region inserted together with its content
+    // is commonly missed by AT, so it exists empty and fills. "No alert" has
+    // always meant "nothing announced", which is what an empty region does.
+    await expect(page.locator('main [role="alert"]:not(:empty)')).toHaveCount(0);
     await expect.poll(() => probe.audioTrackStates()).not.toContain('live');
     // Re-read after the wait: a late `getUserMedia` resolving into an abandoned run
     // is exactly how a camera comes back on behind a screen that says it is off.

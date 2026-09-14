@@ -19,23 +19,30 @@ import {
 } from './frame-pipeline';
 import {
   MEDIA_FACE_MODES,
+  NETWORK_RETRY_SECONDS,
   audioPublishOptions,
   cameraProblemFor,
+  chipDebounceMsFor,
+  connectionQualityFor,
   disconnectReasonKeyFor,
   faceModeAllowsVideo,
   faceModeSelectable,
   initialFaceModeFor,
   isLiveConnection,
   joinPhaseFor,
+  networkRungFor,
   participantRowsFor,
   roomConnectionStateFor,
   roomOptionsFor,
+  rungAllowsVideo,
   tokenExpiredAt,
   videoKeyFor,
   videoPublishOptions,
   type CameraProblem,
+  type MediaConnectionQuality,
   type MediaParticipant,
   type MediaVideoPublication,
+  type NetworkRung,
   type RoomConnectionState,
 } from './room-media';
 import { RoomPanel } from './room-panel';
@@ -239,8 +246,62 @@ interface RunHandle {
    */
   videoPaused: boolean;
   videoMuted: boolean;
+  /**
+   * The quality the SDK last reported for the LOCAL participant — Story 2.5.
+   *
+   * Kept rather than re-read because `ConnectionQuality` and the connection
+   * STATE arrive on two different events and {@link networkRungFor} needs both:
+   * a state change has to be able to re-answer the rung with the last quality,
+   * and a quality change with the current state.
+   */
+  quality: MediaConnectionQuality;
+  /**
+   * The rung the room is on RIGHT NOW — the third "wanted" dimension.
+   *
+   * The `videoPaused` / `videoMuted` pair above is the shape: something the
+   * outside world says, written synchronously, and a reconciler that walks
+   * towards it. This one has no `reached` twin because the ladder's only effect
+   * on the media plane is through {@link RunHandle.networkVideoOff}, whose
+   * `reached` state is `camPublished`.
+   *
+   * NOT the rung on screen. The chip lags this by
+   * `--motion-network-chip-debounce`; the ladder acts at once.
+   */
+  wantedRung: NetworkRung;
+  /**
+   * **The LATCH — bậc 3 took the picture off, and only a press puts it back.**
+   *
+   * This is the single field that makes `epic-2-context.md`'s hardest rule true:
+   * "Hệ thống không bao giờ tự đảo ngược quyết định ẩn mặt… Camera chỉ bật lại
+   * khi họ tự bấm." A ladder that read the rung alone would restore the picture
+   * the moment the wifi came back, which is the system deciding to show somebody
+   * face on their behalf.
+   *
+   * Set by `applyRung` whenever a rung arrives that forbids video. Cleared by
+   * `restartCamera` and by nothing else — not by a better rung, not by a
+   * reconnect, not by a mode change.
+   */
+  networkVideoOff: boolean;
+  /**
+   * The ladder has finished for this run — set by `stopClocks`.
+   *
+   * "Rời phòng" and a terminal `Disconnected` both stop the clocks, and both
+   * leave the SDK's listeners attached while it tears itself down. Without this,
+   * a quality or state event arriving in that window would go on writing a rung,
+   * a chip and a countdown behind a screen that says "Đã rời phòng".
+   */
+  ladderStopped: boolean;
   /** Everything the video path holds, released synchronously. Shared with `leave`. */
   releaseVideo: () => void;
+  /**
+   * The chip's debounce and bậc 4's retry clock, stopped — shared with `leave`.
+   *
+   * `leave` does not unmount, so the effect's cleanup never runs on that path;
+   * the same reason {@link RunHandle.releaseVideo} is a field. A timer left
+   * running behind a screen that says "Đã rời phòng" would go on writing state
+   * into a room nobody is in.
+   */
+  stopClocks: () => void;
   /**
    * "Reconcile the video with what `faceModeRef` now says." The ONE entry point.
    *
@@ -326,6 +387,27 @@ export function RoomShell({ decision }: { readonly decision: RoomDecision }) {
   const [selfVideoOn, setSelfVideoOn] = useState(false);
   /** The camera's own bad news. Never fatal to the room, never to the sound. */
   const [videoNoticeKey, setVideoNoticeKey] = useState<MessageKey | null>(null);
+
+  /**
+   * Story 2.5 — what the ladder puts on screen. **Two rungs, one of which
+   * decides; see the invariant stated in the effect below.**
+   *
+   * `liveRung` follows `handle.wantedRung` immediately and is what every
+   * consumer but the chip reads — the banner, the frozen list and the restart
+   * invitation all describe the room as it is, not as it was three seconds ago.
+   * `chipRung` is the debounced copy and goes to the chip alone, so a wobbling
+   * line changes one element once instead of changing four elements four times.
+   *
+   * `networkRetrySeconds` is bậc 4's clock, `null` when no clock is running and
+   * `0` when it has run out — two different states that the banner reads
+   * differently. `networkTookCamera` remembers that the ladder took a picture
+   * which really was on the wire, which is the half of `offersCameraRestart`
+   * nothing else can reconstruct afterwards.
+   */
+  const [liveRung, setLiveRung] = useState<NetworkRung>(1);
+  const [chipRung, setChipRung] = useState<NetworkRung>(1);
+  const [networkRetrySeconds, setNetworkRetrySeconds] = useState<number | null>(null);
+  const [networkTookCamera, setNetworkTookCamera] = useState(false);
 
   /** The run that is on screen. Assigned before the effect's first `await`. */
   const runRef = useRef<RunHandle | null>(null);
@@ -488,7 +570,64 @@ export function RoomShell({ decision }: { readonly decision: RoomDecision }) {
      */
     handle.releaseVideo();
     setVideoNoticeKey(null);
+    /**
+     * The ladder, left with nothing running — the matrix row "bậc 3 rồi rời
+     * phòng: không có trạng thái thang nào sống sót".
+     *
+     * The clocks are the half `leave` has to do by hand, for the reason
+     * {@link RunHandle.stopClocks} gives. The three state values are reset here
+     * rather than left to the panel's `inRoom` gate because a person who leaves
+     * and presses "Thử lại" mounts a fresh run, and a rung remembered from the
+     * last room would paint a chip about a line nobody is on.
+     */
+    handle.stopClocks();
+    setLiveRung(1);
+    setChipRung(1);
+    setNetworkRetrySeconds(null);
+    setNetworkTookCamera(false);
     void handle.room?.disconnect();
+  }, []);
+
+  /**
+   * "Bật lại camera" — the ONLY thing that clears the ladder's latch.
+   *
+   * It deliberately does NOT touch `faceModeRef`. Somebody who pressed "Ẩn mặt"
+   * while the network was down is never offered this button
+   * ({@link offersCameraRestart} refuses it), and if a second caller ever did
+   * reach this function their mode would still decide: `stepVideo` reads the
+   * mode as it always has, so the worst this can do is un-hold a picture the
+   * person has already chosen not to send.
+   *
+   * `wake()` rather than a publish of its own. The reconciler is where the
+   * invariant lives; a second path to `publishTrack` is the loopback Story 2.7
+   * paid for.
+   */
+  const restartCamera = useCallback(() => {
+    const handle = runRef.current;
+    if (handle === null) {
+      return;
+    }
+    /**
+     * Refused while the LIVE rung cannot carry a picture, and the guard is not
+     * dead code even though the button is drawn from that same live rung.
+     *
+     * A press is an event that has already happened by the time this runs: React
+     * can deliver a click on an element the next render is about to remove, and
+     * the state writes below would then clear the latch and hide the invitation
+     * without publishing anything — the button gone for good, and the picture
+     * only ever returning through an auto-republish nobody asked for. Refusing
+     * leaves every fact exactly as it was, so the invitation is still there when
+     * the line comes back.
+     */
+    if (!rungAllowsVideo(handle.wantedRung)) {
+      return;
+    }
+    handle.networkVideoOff = false;
+    setNetworkTookCamera(false);
+    // A deliberate press clears the explanation the previous teardown produced,
+    // exactly as `changeFaceMode` does.
+    setVideoNoticeKey(null);
+    handle.wake();
   }, []);
 
   /**
@@ -557,7 +696,15 @@ export function RoomShell({ decision }: { readonly decision: RoomDecision }) {
       // looking at, and `false` here would have said it should.
       videoPaused: document.visibilityState === 'hidden',
       videoMuted: false,
+      // Bậc 1 until the SDK has measured something. `unknown` is what it reports
+      // until then, and `networkRungFor` reads that as bậc 1 on purpose — see
+      // its docblock for why greeting everybody with a warning would be wrong.
+      quality: 'unknown',
+      wantedRung: 1,
+      networkVideoOff: false,
+      ladderStopped: false,
       releaseVideo: () => undefined,
+      stopClocks: () => undefined,
       // Replaced once the run can act on a press. See {@link RunHandle.wake} for
       // why a press that lands before then is still carried out.
       wake: () => undefined,
@@ -566,6 +713,199 @@ export function RoomShell({ decision }: { readonly decision: RoomDecision }) {
     };
     runRef.current = handle;
     let expiryTimer: ReturnType<typeof setTimeout> | null = null;
+    /**
+     * **THE INVARIANT: there are two rung values, and only one of them decides.**
+     *
+     * `handle.wantedRung` is the truth — the rung the SDK's two signals say the
+     * room is on right now. Everything that DOES anything reads it: the
+     * reconciler, the banner, the frozen list, the restart invitation, and the
+     * refusal inside `restartCamera`.
+     *
+     * `chipRung` is a debounced COPY, and it exists for one reason: stopping the
+     * chip from flickering while a line wobbles. It must never drive behaviour.
+     * It did, and each consequence was its own defect — the camera went off three
+     * seconds before any sentence explained why, the list stayed unfrozen three
+     * seconds into bậc 4, and the chip could read "Mạng tốt" beside "Đang nối
+     * lại…", which is exactly the two-elements-contradicting-each-other failure
+     * the chip's own design exists to prevent.
+     *
+     * So the split is stated HERE, once, the way `faceModeRef` is stated once:
+     * `liveRung` goes to every consumer; `chipRung` goes to the chip and nowhere
+     * else. `RoomPanel` takes them as two separate props for the same reason.
+     *
+     * Neither clock below is a second reconciler and neither holds media state:
+     * one delays a `setState`, the other counts a sentence down. Everything that
+     * decides what happens to a camera still goes through `handle.wake()` →
+     * `syncVideo`.
+     */
+    let chipTimer: ReturnType<typeof setTimeout> | null = null;
+    let retryTicker: ReturnType<typeof setInterval> | null = null;
+    /**
+     * The instant bậc 4 stops promising — a DEADLINE, not a count.
+     *
+     * Three bugs were one mistake: counting ticks instead of holding an instant.
+     * A dip out of bậc 4 and back restarted a full thirty seconds, so a flapping
+     * reconnect renewed the promise for ever and "Chưa nối lại được" could be
+     * retracted after it had been shown; a backgrounded tab throttles
+     * `setInterval`, so thirty seconds became minutes; and "exhausted" was read
+     * off a counter that had been reset. An instant has none of those: it is set
+     * once per episode, every reading is computed from the wall clock, and having
+     * passed is permanent until the episode ends.
+     *
+     * The episode ends on a HEALTHY line — bậc 1 or bậc 2 — and deliberately not
+     * on bậc 3. Going 4 → 3 is a connection that came back with a bad line, which
+     * is exactly the flap this is guarding against; going 4 → 1 is a recovery,
+     * and a later outage deserves its own thirty seconds.
+     */
+    let retryDeadline: number | null = null;
+    /**
+     * The token read, parsed ONCE per run.
+     *
+     * `getComputedStyle` walks the cascade, and the number cannot change while a
+     * room is open — re-reading it on every rung change was work done for no
+     * answer that could differ.
+     */
+    let chipDebounceMs: number | null = null;
+
+    const debounceMs = (): number => {
+      if (chipDebounceMs === null) {
+        chipDebounceMs = chipDebounceMsFor(
+          getComputedStyle(document.documentElement).getPropertyValue(
+            '--motion-network-chip-debounce',
+          ),
+        );
+      }
+      return chipDebounceMs;
+    };
+
+    const stopClocks = (): void => {
+      /**
+       * The ladder is finished for this run, and `applyRung` checks this.
+       *
+       * A quality or state event can still land after "Rời phòng" or a terminal
+       * `Disconnected` — the SDK is mid-teardown and its listeners are still
+       * attached — and without this the rung, the chip and the clock would go on
+       * being written behind a screen that says "Đã rời phòng".
+       */
+      handle.ladderStopped = true;
+      if (chipTimer !== null) {
+        clearTimeout(chipTimer);
+        chipTimer = null;
+      }
+      if (retryTicker !== null) {
+        clearInterval(retryTicker);
+        retryTicker = null;
+      }
+      retryDeadline = null;
+    };
+    handle.stopClocks = stopClocks;
+
+    /** Seconds left, computed from the deadline — never decremented. */
+    const retrySecondsLeft = (): number | null => {
+      if (retryDeadline === null || handle.wantedRung !== 4) {
+        return null;
+      }
+      return Math.max(0, Math.ceil((retryDeadline - Date.now()) / 1_000));
+    };
+
+    const publishRetrySeconds = (): void => {
+      if (!handle.cancelled) {
+        setNetworkRetrySeconds(retrySecondsLeft());
+      }
+    };
+
+    /**
+     * Bậc 4's clock, as a deadline plus a ticker that only READS it.
+     *
+     * The ticker exists to repaint a number, so it is allowed to fire late, be
+     * throttled, or be missing altogether — every value it publishes is derived
+     * from {@link retryDeadline} and the wall clock, so a tab that was asleep for
+     * a minute comes back showing zero rather than showing twenty-eight.
+     */
+    const armRetryClock = (rung: NetworkRung): void => {
+      if (rung === 1 || rung === 2) {
+        // The episode is over: a healthy line earns a later outage a fresh thirty
+        // seconds. Bậc 3 deliberately does NOT end it — see `retryDeadline`.
+        retryDeadline = null;
+      }
+      if (rung === 4 && retryDeadline === null) {
+        retryDeadline = Date.now() + NETWORK_RETRY_SECONDS * 1_000;
+      }
+      publishRetrySeconds();
+
+      const counting = rung === 4 && retryDeadline !== null && Date.now() < retryDeadline;
+      if (!counting) {
+        if (retryTicker !== null) {
+          clearInterval(retryTicker);
+          retryTicker = null;
+        }
+        return;
+      }
+      if (retryTicker !== null) {
+        return;
+      }
+      retryTicker = setInterval(() => {
+        publishRetrySeconds();
+        if (retryDeadline === null || Date.now() >= retryDeadline) {
+          // Stopped at zero: the SDK's own resume carries on, and the screen has
+          // simply stopped promising. See NETWORK_RETRY_SECONDS.
+          if (retryTicker !== null) {
+            clearInterval(retryTicker);
+            retryTicker = null;
+          }
+        }
+      }, 1_000);
+    };
+
+    /**
+     * The chip's hold, and it is NEVER restarted.
+     *
+     * `clearTimeout` + `setTimeout` on every change looks like a debounce and is
+     * a deadline that moves: a line alternating 1 → 3 → 1 → 3 faster than the
+     * window pushes it forward for ever, so the chip changes ZERO times while the
+     * matrix row promises exactly one. A window that is opened once and then left
+     * alone gives at most one change per window and always converges, because
+     * what it commits is `handle.wantedRung` as it stands when the window closes
+     * rather than the value that opened it.
+     */
+    const scheduleChip = (): void => {
+      if (chipTimer !== null) {
+        return;
+      }
+      chipTimer = setTimeout(() => {
+        chipTimer = null;
+        if (!handle.cancelled) {
+          setChipRung(handle.wantedRung);
+        }
+      }, debounceMs());
+    };
+
+    /**
+     * A new rung has arrived — the ladder's ONE entry point, `applyVisibility`'s
+     * shape exactly: write the want synchronously, then `wake()`.
+     *
+     * The early return on an unchanged rung is not an optimisation: the SDK
+     * re-reports a quality it has already reported, and a repeat is not a change
+     * the chip owes anybody an update for.
+     *
+     * Note what is NOT here any more. The latch used to arm on any rung that
+     * forbids video, which armed it for people who had no picture on the wire at
+     * all — see `stepNetworkDrop`, where it arms now.
+     */
+    const applyRung = (rung: NetworkRung): void => {
+      if (handle.cancelled || handle.ladderStopped || rung === handle.wantedRung) {
+        return;
+      }
+      handle.wantedRung = rung;
+      // The LIVE rung, published immediately: every consumer but the chip reads
+      // this one, and none of them may wait three seconds to tell the truth.
+      if (!handle.cancelled) {
+        setLiveRung(rung);
+      }
+      handle.wake();
+      scheduleChip();
+      armRetryClock(rung);
+    };
 
     const stopMic = (): void => {
       handle.micPublished = false;
@@ -888,6 +1228,23 @@ export function RoomShell({ decision }: { readonly decision: RoomDecision }) {
           }
           setAudioBlocked(!room.canPlaybackAudio);
         })
+        /**
+         * Story 2.5 — the ladder's signal, and the filter on it is load-bearing.
+         *
+         * `ConnectionQualityChanged` fires for EVERY participant, ours and
+         * everybody else's (`room/events.d.ts:222`, `(quality, participant)`).
+         * Unfiltered, somebody else's bad wifi would take OUR camera off the
+         * wire — a room in which one person on a train hides four other people's
+         * faces. The rung is about the line between this browser and the server,
+         * which is the local participant's quality and nothing else.
+         */
+        .on(livekit.RoomEvent.ConnectionQualityChanged, (quality: string, participant: Participant) => {
+          if (handle.cancelled || participant.identity !== room.localParticipant.identity) {
+            return;
+          }
+          handle.quality = connectionQualityFor(String(quality));
+          applyRung(networkRungFor(handle.quality, roomConnectionStateFor(String(room.state))));
+        })
         .on(livekit.RoomEvent.ConnectionStateChanged, (state: string) => {
           if (handle.cancelled) {
             return;
@@ -895,10 +1252,31 @@ export function RoomShell({ decision }: { readonly decision: RoomDecision }) {
           const next = roomConnectionStateFor(String(state));
           if (next === 'connected') {
             handle.connected = true;
+            /**
+             * The last quality reading is STALE across a reconnect, and leaving
+             * it pinned the room at bậc 4 for ever.
+             *
+             * `ConnectionQuality` is only re-sent when the server next measures,
+             * so a room that dropped on `lost` and then came back would carry
+             * `lost` into a live connection — frozen grid, no chip, no picture —
+             * until some later update happened to arrive. `unknown` is what the
+             * SDK itself reports before it has measured, and
+             * {@link networkRungFor} reads it as bậc 1: the room is up and
+             * nothing is claimed about a line nobody has looked at yet.
+             */
+            handle.quality = 'unknown';
             // The room is up: a video step that parked on `waiting` can finish.
             // Idempotent — `stepVideo` settles at once if there is nothing to do.
             handle.wake();
           }
+          /**
+           * The rung is re-answered from the SAME two signals, because the state
+           * is the half that VETOES: quality goes on reporting `excellent` for a
+           * moment after the socket has gone, so a room that is reconnecting is
+           * bậc 4 whatever the last measurement said. This is the line the
+           * container-stop probe turns.
+           */
+          applyRung(networkRungFor(handle.quality, next));
           setConnection(next);
           refresh();
         })
@@ -910,6 +1288,9 @@ export function RoomShell({ decision }: { readonly decision: RoomDecision }) {
           // Terminal, not a reconnect: `Reconnecting` is a different event. Nothing
           // may hold a camera open behind a screen that says the room has ended.
           releaseVideo();
+          // And no clock keeps counting behind a screen that says the room ended.
+          stopClocks();
+          setNetworkRetrySeconds(null);
           const key = disconnectReasonKeyFor(reason);
           if (key !== null) {
             setErrorKey(key);
@@ -1201,6 +1582,28 @@ export function RoomShell({ decision }: { readonly decision: RoomDecision }) {
         return 'again';
       };
 
+      /**
+       * Whether the LADDER is holding the picture off — Story 2.5's third
+       * "wanted" dimension, read the way `faceModeAllowsVideo(faceModeRef.current)`
+       * reads the first.
+       *
+       * Two halves, and they are not the same fact said twice:
+       *
+       * - the LATCH is the decision that outlives the rung. Bậc 3 took the
+       *   picture off; the network getting better does not put it back, because
+       *   `epic-2-context.md` says only a press may;
+       * - the LIVE rung is what stops a press landing in the wrong second. The
+       *   button is drawn from the DEBOUNCED rung, so for up to three seconds it
+       *   can still be on screen after the line has gone bad again. Without this
+       *   half, that press would publish straight into the conditions the ladder
+       *   had just refused — and then stay there, because the latch it cleared
+       *   is the only thing that would have taken it off. With it, the press is
+       *   honoured the moment the line can carry it, which is the person's
+       *   decision being carried out rather than the network's.
+       */
+      const networkHoldsVideoOff = (): boolean =>
+        handle.networkVideoOff || !rungAllowsVideo(handle.wantedRung);
+
       /** Ẩn mặt: off the wire, loop stopped, camera ended, tile back to letters. */
       const disableVideo = async (): Promise<void> => {
         const publication = handle.videoPublication;
@@ -1228,6 +1631,60 @@ export function RoomShell({ decision }: { readonly decision: RoomDecision }) {
       };
 
       /**
+       * One step of the LADDER's dimension — the sibling of {@link stepPause}.
+       *
+       * It reuses `disableVideo` rather than a teardown of its own, so "the
+       * ladder took your picture off" and "you pressed Ẩn mặt" leave the machine
+       * in byte-identical states: no publication, no pipeline, no camera, and a
+       * camera light that went out in the same frame. What separates them is one
+       * remembered fact — whether a picture really was on the wire — which is
+       * what decides whether anybody is ever offered it back.
+       *
+       * **It does NOT touch `faceModeRef`.** `giveUpVideo` writes `hide` because
+       * a camera that cannot be opened has no state to go back to; the ladder
+       * has. Moving somebody to "Ẩn mặt" here would make the recovery a mode
+       * change, and `epic-2-context.md` forbids a system event moving anybody's
+       * mode in either direction.
+       */
+      const stepNetworkDrop = async (): Promise<'again' | 'settled'> => {
+        if (!handle.camPublished && handle.camTrack === null && handle.pipeline === null) {
+          return 'settled';
+        }
+        /**
+         * **THE LATCH ARMS HERE, and only for a picture that was really on the
+         * wire.**
+         *
+         * It used to arm in `applyRung`, for any rung that forbids video —
+         * including for somebody already at Ẩn mặt, who had no picture to take.
+         * They would then press "Để nguyên", get nothing, and be offered no
+         * invitation to explain it, because the latch was claiming the network
+         * had taken something it never had. That is the Design Notes' line about
+         * distinguishing "mạng tắt video" from "người dùng tắt video", and
+         * getting it wrong is the fastest way to break the epic's biggest rule.
+         *
+         * Arming it beside `camPublished` makes the two facts one fact: the
+         * ladder holds video off afterwards exactly when it took something, and
+         * the invitation is offered exactly then too. The refusal that keeps
+         * video off at bậc 3 for everybody else is the LIVE half of
+         * `networkHoldsVideoOff`, which needs no latch at all.
+         *
+         * Read HERE rather than when the rung arrived, and that matters too: a
+         * rung landing while `publishVideo` is in flight sees `camPublished`
+         * false, and this step runs after it has settled. The question is "was a
+         * picture on the wire when we took it", not "was one on the wire when the
+         * wifi dipped".
+         */
+        if (handle.camPublished) {
+          handle.networkVideoOff = true;
+          if (!handle.cancelled) {
+            setNetworkTookCamera(true);
+          }
+        }
+        await disableVideo();
+        return 'again';
+      };
+
+      /**
        * One step towards the mode `faceModeRef` now names, and what to do next.
        *
        * `waiting` is the answer while the room is not up yet: the camera and the
@@ -1239,6 +1696,20 @@ export function RoomShell({ decision }: { readonly decision: RoomDecision }) {
         if (handle.cancelled || handle.aborted) {
           releaseVideo();
           return 'settled';
+        }
+        /**
+         * The LADDER's dimension, before the mode's — Story 2.5.
+         *
+         * Order matters in exactly one direction and it is this one. Both
+         * dimensions can say "no picture" at the same time (the matrix row "tụt
+         * bậc khi tab đang ẩn"), and they never contradict — neither ever says
+         * "yes, publish". Putting the ladder first means a tab coming back, or a
+         * mode pressed back to "Để nguyên", cannot republish into a line the
+         * ladder has ruled out: `stepNetworkDrop` settles, and the picture stays
+         * off until a press clears the latch.
+         */
+        if (networkHoldsVideoOff()) {
+          return await stepNetworkDrop();
         }
         if (!faceModeAllowsVideo(faceModeRef.current)) {
           if (!handle.camPublished && handle.camTrack === null && handle.pipeline === null) {
@@ -1468,6 +1939,7 @@ export function RoomShell({ decision }: { readonly decision: RoomDecision }) {
       if (expiryTimer !== null) {
         clearTimeout(expiryTimer);
       }
+      stopClocks();
       stopMic();
       // The draw loop, the canvas track and the camera, all ended — leaving the
       // page, unmounting and leaving the room are one routine, not three.
@@ -1504,10 +1976,15 @@ export function RoomShell({ decision }: { readonly decision: RoomDecision }) {
         micNoticeKey={micNoticeKey}
         videoNoticeKey={videoNoticeKey}
         audioBlocked={audioBlocked}
+        networkRung={liveRung}
+        networkChipRung={chipRung}
+        networkRetrySeconds={networkRetrySeconds}
+        networkTookCamera={networkTookCamera}
         onLeave={leave}
         onEnableAudio={enableAudio}
         onBackToPreJoin={backToPreJoin}
         onChangeFaceMode={changeFaceMode}
+        onRestartCamera={restartCamera}
       />
       {/*
         Where the SDK's `<audio>` elements live. `aria-hidden`, because they are

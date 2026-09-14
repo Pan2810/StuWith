@@ -1,7 +1,19 @@
 import type { MessageKey, Translate } from '../../i18n/messages';
 import { useT } from '../../i18n/use-t';
-import { MEDIA_FACE_MODES } from './room-media';
-import type { JoinPhase, MediaDecision, MediaFaceMode, ParticipantRow } from './room-media';
+import {
+  MEDIA_FACE_MODES,
+  offersCameraRestart,
+  rungBannerKeyFor,
+  rungChipKeyFor,
+  rungChipToneFor,
+} from './room-media';
+import type {
+  JoinPhase,
+  MediaDecision,
+  MediaFaceMode,
+  NetworkRung,
+  ParticipantRow,
+} from './room-media';
 
 /**
  * The room, as markup, with no state and no effect in it.
@@ -49,6 +61,12 @@ export const ROOM_COUNT_ID = 'phong-so-nguoi';
 export const ROOM_FACE_MODE_FIELD = 'phong-che-do-khuon-mat';
 export const ROOM_FACE_MODE_LEGEND_ID = 'phong-che-do-khuon-mat-nhan';
 export const ROOM_SELF_PREVIEW_ID = 'phong-xem-truoc';
+/** Story 2.5's own landmarks: the ladder's chip, its banner, and the frozen list. */
+export const ROOM_NETWORK_CHIP_ID = 'phong-mang';
+export const ROOM_NETWORK_BANNER_ID = 'phong-mang-thong-bao';
+export const ROOM_NETWORK_RESTART_ID = 'phong-mang-bat-lai';
+export const ROOM_NETWORK_COUNTDOWN_ID = 'phong-mang-dem-nguoc';
+export const ROOM_GRID_FROZEN_ID = 'phong-luoi-dong-bang';
 
 /**
  * How a live `<video>` reaches this file: ONE callback ref for every tile.
@@ -175,6 +193,24 @@ const IN_ROOM: ReadonlySet<JoinPhase> = new Set<JoinPhase>(['connecting', 'conne
 const LISTS_PEOPLE: ReadonlySet<JoinPhase> = new Set<JoinPhase>(['connected', 'reconnecting']);
 
 /**
+ * Which phases the LADDER is allowed to say anything on — Story 2.5.
+ *
+ * Deliberately NOT {@link IN_ROOM}, and the difference is `connecting`. Caught by
+ * an existing case rather than by inspection: with the ladder gated on `IN_ROOM`,
+ * the handshake rendered "Mạng tốt" beside "Đang vào phòng…" — a claim about the
+ * quality of a line nobody has measured yet, made by the one element on the
+ * screen whose job is to be trustworthy about the connection. It is the same
+ * reason {@link networkRungFor} answers bậc 1 for every phase but `connected`:
+ * before the room is up, `joinPhaseFor` owns the whole screen.
+ *
+ * And not {@link LISTS_PEOPLE} either, even though the two sets are equal today.
+ * That one is about whether there is anybody to list; this one is about whether
+ * there is a line to describe. Sharing the constant would tie two unrelated
+ * decisions together for the next story to untangle.
+ */
+const NETWORK_SPEAKS: ReadonlySet<JoinPhase> = new Set<JoinPhase>(['connected', 'reconnecting']);
+
+/**
  * What a row is called: the reader by the catalogue's word for themselves, anybody
  * else by the name LiveKit carries — and by the catalogue's word for a person when
  * it carries none, which is every remote row today. See {@link ParticipantRow}.
@@ -210,10 +246,15 @@ export function RoomPanel({
   micNoticeKey,
   videoNoticeKey,
   audioBlocked,
+  networkRung,
+  networkChipRung,
+  networkRetrySeconds,
+  networkTookCamera,
   onLeave,
   onEnableAudio,
   onBackToPreJoin,
   onChangeFaceMode,
+  onRestartCamera,
 }: {
   readonly decision: MediaDecision;
   readonly phase: JoinPhase;
@@ -243,15 +284,73 @@ export function RoomPanel({
   readonly videoNoticeKey: MessageKey | null;
   /** The browser is refusing to play the room until a gesture asks it to. */
   readonly audioBlocked: boolean;
+  /**
+   * Which rung of Story 2.5's ladder the room is on, RIGHT NOW.
+   *
+   * Everything on this screen that describes the room reads this one: the
+   * banner, the frozen list, and whether a restart may be offered. The shell's
+   * docblock states the invariant in full — there are two rung values and only
+   * this one decides. Deriving any of the three from
+   * {@link networkChipRung} meant the camera went off three seconds before a
+   * sentence explained why, the list stayed unfrozen three seconds into bậc 4,
+   * and the chip could read "Mạng tốt" beside "Đang nối lại…".
+   */
+  readonly networkRung: NetworkRung;
+  /**
+   * The same rung, held back by `--motion-network-chip-debounce`, FOR THE CHIP
+   * AND NOTHING ELSE.
+   *
+   * A chip that followed the raw signal would flicker through three states while
+   * somebody's wifi wobbled, which is the one failure the token exists to
+   * prevent. That is the whole of its job: it must never reach a decision.
+   */
+  readonly networkChipRung: NetworkRung;
+  /**
+   * Seconds left on bậc 4's retry clock, or `null` when no clock is running.
+   *
+   * `0` is not `null`: it is the clock having run out, which is what turns the
+   * banner from a promise into a way back out. Both halves are read by
+   * {@link rungBannerKeyFor}.
+   */
+  readonly networkRetrySeconds: number | null;
+  /** The ladder took a picture that really was on the wire. See {@link offersCameraRestart}. */
+  readonly networkTookCamera: boolean;
   readonly onLeave: () => void;
   readonly onEnableAudio: () => void;
   readonly onBackToPreJoin: () => void;
   /** Instant, no confirmation dialog. The ONLY thing that changes the mode. */
   readonly onChangeFaceMode: (mode: MediaFaceMode) => void;
+  /**
+   * The only way back from bậc 3, and it is a PRESS.
+   *
+   * It does not change the face mode and it is not offered to somebody who chose
+   * to hide — `epic-2-context.md` forbids any system event putting a person back
+   * on "Để nguyên", and a button the network made appear would be the system
+   * asking on their behalf if it were offered where the answer was already no.
+   */
+  readonly onRestartCamera: () => void;
 }) {
   const t = useT();
   const inRoom = IN_ROOM.has(phase);
   const listsPeople = LISTS_PEOPLE.has(phase) && rows.length > 0;
+  /**
+   * The ladder speaks only while there is a room to speak about.
+   *
+   * `failed`, `expired` and `left` are screens whose whole subject is that the
+   * person is OUT, with a sentence and a way back; a chip reading "Mạng tốt"
+   * beside "Đã rời phòng" is the two-contradictory-chips failure in its most
+   * obvious form.
+   */
+  const networkSpeaks = NETWORK_SPEAKS.has(phase);
+  // The CHIP, and only the chip, reads the debounced rung.
+  const networkChipKey = networkSpeaks ? rungChipKeyFor(networkChipRung) : null;
+  // Everything below describes the room as it is.
+  const retryExhausted = networkRetrySeconds === 0;
+  const networkBannerKey = networkSpeaks ? rungBannerKeyFor(networkRung, retryExhausted) : null;
+  const gridFrozen = networkSpeaks && networkRung === 4;
+  const canRestartCamera =
+    networkSpeaks && offersCameraRestart(networkRung, faceMode, networkTookCamera);
+  const countingDown = networkSpeaks && networkRetrySeconds !== null && networkRetrySeconds > 0;
 
   return (
     <section className="card" aria-labelledby={ROOM_HEADING_ID}>
@@ -262,8 +361,19 @@ export function RoomPanel({
         live region announces what CHANGED, and a region wrapping the participant
         list would re-read the list every time somebody started speaking.
       */}
+      {/*
+        TWO chips on one line, and {@link rungChipKeyFor} is where the decision
+        that they stand side by side rather than merge is written out. The phase
+        chip answers "am I in this room"; the network chip answers "how good is
+        the line". Both are words first and colour second.
+      */}
       <p id={ROOM_STATUS_ID} className="room-status" role="status">
         <span className={STATUS_TONES[phase]}>{t(STATUS_KEYS[phase])}</span>
+        {networkChipKey === null ? null : (
+          <span id={ROOM_NETWORK_CHIP_ID} className={rungChipToneFor(networkChipRung)}>
+            {t(networkChipKey)}
+          </span>
+        )}
       </p>
 
       {/*
@@ -390,6 +500,113 @@ export function RoomPanel({
       )}
 
       {/*
+        Story 2.5's ladder, as three regions that are ALWAYS MOUNTED and filled
+        when there is something to say.
+
+        A live region inserted together with its content is commonly missed by
+        assistive technology — the region has to exist before the text arrives
+        for the change to be observed. The five sibling notices above mount once
+        and never change their text, so they are left as they are; the ladder's
+        do change (a retry promise becomes a give-up sentence, an invitation
+        appears on recovery), which is exactly where a persistent region earns
+        its cost. Empty, each collapses to `.sr` rather than `hidden`, because
+        `hidden` would take it out of the accessibility tree and defeat the
+        point.
+
+        The COUNTDOWN is deliberately outside the alert. It rewrites itself once
+        a second, and most screen readers re-announce a whole `role="alert"` on
+        every mutation — thirty interruptions for one piece of news. It carries
+        no live role at all: the sentence beside it has already said what is
+        happening, and the number is detail for people who can see it.
+      */}
+      <p
+        id={ROOM_NETWORK_BANNER_ID}
+        className={networkBannerKey === null ? 'sr' : 'notice notice-alert room-network'}
+        role="alert"
+      >
+        {networkBannerKey === null ? '' : t(networkBannerKey)}
+      </p>
+
+      {countingDown ? (
+        <p id={ROOM_NETWORK_COUNTDOWN_ID} className="meta notice-countdown">
+          {t.plural('countdown.retryIn', networkRetrySeconds ?? 0, {
+            seconds: networkRetrySeconds ?? 0,
+          })}
+        </p>
+      ) : null}
+
+      {/*
+        The way out, and it only appears once the clock has stopped promising.
+        Before then the room really is still trying, and a button offering to
+        abandon it would be inviting somebody to leave a session that is about to
+        come back.
+
+        Its label is its OWN key rather than `preJoin.retryJoin`. The sentence
+        above it says to go back to the setup screen; a button reading "Thử lại"
+        under that instruction names a different action from the one just given.
+      */}
+      {networkSpeaks && retryExhausted ? (
+        <p className="room-network">
+          <button type="button" className="button-primary" onClick={onBackToPreJoin}>
+            {t('room.backToPreJoin')}
+          </button>
+        </p>
+      ) : null}
+
+      {/*
+        The invitation, in a region of its own that outlives its content.
+
+        {@link offersCameraRestart} only says yes below bậc 3 and
+        {@link rungBannerKeyFor} only says anything from bậc 3 up, so this and
+        the banner above can never be on screen together. That is the matrix row
+        "hồi phục 3 → 1": the alert has gone, the chip has gone quietly back to
+        "Mạng tốt", and this is the only thing left saying that something
+        happened and that it is the person's to undo.
+
+        `role="status"` and not `alert`: "lên bậc thì im lặng" means the recovery
+        does not sound an alarm. It still has to be announced — a button nobody
+        is told about is a button a screen-reader user never finds — and polite
+        is what says it without interrupting.
+
+        The sentence is PAST tense and its own key. Reusing bậc 3's
+        "Mạng yếu nên video đã tắt để giữ tiếng." would put a present-tense claim
+        about a weak line beside a chip that now reads "Mạng tốt".
+      */}
+      <p
+        id={ROOM_NETWORK_RESTART_ID}
+        className={canRestartCamera ? 'notice room-network' : 'sr'}
+        role="status"
+      >
+        {canRestartCamera ? (
+          <>
+            <span>{t('room.networkVideoWasOff')}</span>
+            <button type="button" className="button-primary" onClick={onRestartCamera}>
+              {t('room.restartCamera')}
+            </button>
+          </>
+        ) : (
+          ''
+        )}
+      </p>
+
+      {/*
+        Bậc 4's frozen list says so IN WORDS, and the words are gated on the RUNG
+        rather than on there being a list.
+
+        Inside `listsPeople` this sentence disappeared exactly when it mattered
+        most: a bậc 4 screen whose list has not arrived, or has emptied, is the
+        case where a reader has least to go on, and it was the one case that
+        froze in silence. A list that has stopped changing looks exactly like a
+        list with nothing happening in it, and the difference is the whole of
+        what a person needs to know — nobody has gone quiet, the room is not
+        reaching us. The class on the `<ul>` is the second channel, never the
+        first.
+      */}
+      <p id={ROOM_GRID_FROZEN_ID} className={gridFrozen ? 'meta' : 'sr'} role="status">
+        {gridFrozen ? t('room.gridFrozen') : ''}
+      </p>
+
+      {/*
         Autoplay refused. Everything else on this screen says the room is up, so
         without this the page is a complete lie: the chip reads "Đang ở trong
         phòng", everybody is listed, and there is silence. The sentence is an
@@ -418,7 +635,11 @@ export function RoomPanel({
           <p id={ROOM_COUNT_ID} className="meta" role="status">
             {t.plural('room.participantCount', rows.length, { count: rows.length })}
           </p>
-          <ul id={ROOM_PARTICIPANTS_ID} className="participant-list" aria-label={t('room.participants')}>
+          <ul
+            id={ROOM_PARTICIPANTS_ID}
+            className={gridFrozen ? 'participant-list participant-list-frozen' : 'participant-list'}
+            aria-label={t('room.participants')}
+          >
             {rows.map((row) => (
               <li key={row.id} className="participant-row">
                 {/*

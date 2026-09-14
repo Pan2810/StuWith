@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:f
 import path from 'node:path';
 import { GenericContainer, Wait, type StartedTestContainer } from 'testcontainers';
 import { LIVEKIT_HANDOFF_FILE, LIVEKIT_PROJECT } from '../../../playwright.config';
+import { LIVEKIT_IMAGE, MEDIA_UDP_PORT, SIGNAL_PORT } from './livekit-container';
 
 /**
  * This file is `tests/e2e/livekit/`, so the repository root is three up.
@@ -53,21 +54,6 @@ const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
  *    what makes `bytesReceived > 0` reachable; the signalling port is mapped
  *    normally because nothing but the client reads it.
  */
-
-const LIVEKIT_IMAGE = 'livekit/livekit-server:v1.13.5';
-
-/** LiveKit's signalling/HTTP port inside the container. */
-const SIGNAL_PORT = 7880;
-
-/**
- * The single UDP mux port, bound to the same number on the host — see fact 3.
- *
- * Deliberately NOT one of the numbers `infra/docker-compose.yml` publishes
- * (7880, 7881, 50000-50019): a developer with the local stack up should be able
- * to run this suite without taking it down, and the one port that must be free is
- * a port nothing else in this repository claims.
- */
-const MEDIA_UDP_PORT = 7882;
 
 /**
  * A key pair for this run and no other, assembled at runtime so that nothing in
@@ -268,12 +254,38 @@ export default async function globalSetup(): Promise<(() => Promise<void>) | voi
    * directory is atomic on every platform this runs on.
    */
   const pending = `${LIVEKIT_HANDOFF_FILE}.pending`;
-  writeFileSync(pending, `${JSON.stringify({ url, apiKey, apiSecret }, null, 2)}\n`, 'utf8');
+  /**
+   * `containerId` is Story 2.5's addition, and it is the whole route by which a
+   * spec can stop the server mid-session — see `livekit-container.ts`. The
+   * fixture destructures only `url`, `apiKey` and `apiSecret`, so an extra key
+   * costs it nothing.
+   */
+  writeFileSync(
+    pending,
+    `${JSON.stringify({ url, apiKey, apiSecret, containerId: container.getId() }, null, 2)}\n`,
+    'utf8',
+  );
   renameSync(pending, LIVEKIT_HANDOFF_FILE);
   process.stdout.write(`[livekit setup] ${LIVEKIT_IMAGE} listening on ${url}\n`);
 
   return async () => {
     rmSync(LIVEKIT_HANDOFF_FILE, { force: true });
-    await container.stop();
+    /**
+     * Tolerant of a container the bậc 4 probe left stopped, but NOT silent.
+     *
+     * The probe starts it again in its own `finally`, so this is the second line
+     * of defence rather than the first — and a teardown that threw would turn
+     * "one probe failed" into "the whole run failed during cleanup", a report
+     * pointing at the wrong thing. Swallowing it outright is the other mistake:
+     * a container this run could not stop is one still holding
+     * {@link MEDIA_UDP_PORT}, and the next run fails to START with a message
+     * about a port and nothing about why. So it is caught and said.
+     */
+    await container.stop().catch((error: unknown) => {
+      process.stdout.write(
+        `[livekit teardown] ${LIVEKIT_IMAGE} did not stop cleanly; UDP ${MEDIA_UDP_PORT} may still ` +
+          `be held: ${error instanceof Error ? error.message : String(error)}\n`,
+      );
+    });
   };
 }

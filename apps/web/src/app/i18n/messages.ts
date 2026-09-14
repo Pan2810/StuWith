@@ -402,6 +402,59 @@ const VI_MESSAGES = {
   'room.errorVideoStop': 'Chưa gỡ được hình khỏi phòng. Hãy rời phòng rồi vào lại nếu người khác vẫn thấy.',
 
   /**
+   * Story 2.5 — thang suy giảm mạng bốn bậc, bằng CHỮ.
+   *
+   * Bảy khoá cho bốn bậc, và số lượng không khớp là điều phải đọc đúng chứ không
+   * phải chỗ còn thiếu:
+   *
+   * - chip chỉ có HAI mức. Bậc 1 và bậc 2 cùng nói "Mạng tốt" vì với người đang
+   *   học thì chúng là một chuyện: đường vẫn tải được hình, không có gì để làm.
+   *   Bậc 2 tụt một lớp simulcast trong im lặng — nói ra là biến một thứ đang
+   *   hoạt động thành một thứ trông như hỏng. Bậc 4 KHÔNG có chip: ở đó chip pha
+   *   đã nói "Đang nối lại…" và hai chip cạnh nhau cùng kể một tin là đúng cái
+   *   mâu thuẫn mà spec cấm;
+   * - banner chỉ có ở bậc 3 và bậc 4. `networkWeakBanner` nói cả nguyên nhân lẫn
+   *   cái được đánh đổi — tắt video ĐỂ giữ tiếng — vì "video của bạn vừa tắt" mà
+   *   không nói vì sao đọc ra là một lỗi;
+   * - `networkGaveUp` là câu sau khi đồng hồ 30 giây hết. Nó không hứa nữa, và
+   *   nó chỉ đúng một lối ra. Đếm ngược trong lúc còn thử thì dùng lại
+   *   `countdown.retryIn` đã có — cùng một câu, cùng một cặp số nhiều, nên hai
+   *   con số ở docblock đầu tệp (3 và 7) không đổi;
+   * - `restartCamera` là lối ra DUY NHẤT khỏi bậc 3, và nhãn của nó là một lời
+   *   mời chứ không phải một thông báo: mạng hồi phục không bao giờ tự bật
+   *   camera, nên câu chữ phải để quyết định lại cho người bấm;
+   * - `gridFrozen` là chữ của "lưới đóng băng". Một lưới đứng im mà không có câu
+   *   nào nói nó đang đứng im chỉ khác một lưới hỏng ở chỗ chúng ta biết, còn
+   *   người dùng thì không.
+   */
+  'room.networkOk': 'Mạng tốt',
+  'room.networkWeak': 'Mạng yếu',
+  'room.networkWeakBanner': 'Mạng yếu nên video đã tắt để giữ tiếng.',
+  'room.networkLostBanner': 'Mất kết nối — đang thử lại.',
+  'room.networkGaveUp': 'Chưa nối lại được. Hãy quay lại màn chuẩn bị rồi vào phòng lại.',
+  'room.restartCamera': 'Bật lại camera',
+  'room.gridFrozen': 'Lưới đang đóng băng cho tới khi nối lại được.',
+  /**
+   * Lời mời bật lại camera nói ở THÌ QUÁ KHỨ, và đó không phải văn phong.
+   *
+   * Nó chỉ hiện sau khi mạng đã hồi phục — chip lúc ấy đọc "Mạng tốt". Dùng lại
+   * `networkWeakBanner` ("Mạng yếu nên video đã tắt…") ở đó là đặt một câu thì
+   * hiện tại cạnh một chip nói điều ngược lại, tức là đúng cái mâu thuẫn hai
+   * phần tử mà cả thiết kế chip sinh ra để tránh. Câu này nói cái đã xảy ra và
+   * để nút bên cạnh nói cái người dùng làm được.
+   *
+   * Nó cũng gỡ một va chạm chuỗi con: "Mạng yếu" là tiền tố của câu banner bậc 3,
+   * nên một locator tìm theo chuỗi con khớp cả hai.
+   */
+  'room.networkVideoWasOff': 'Video của bạn đã tắt lúc mạng yếu.',
+  /**
+   * Nhãn của lối ra ở bậc 4 sau khi hết 30 giây, và nó phải KHỚP với câu ngay
+   * trên nó. `networkGaveUp` bảo "hãy quay lại màn chuẩn bị"; một nút đọc "Thử
+   * lại" dưới câu đó nói một việc khác với chỉ dẫn vừa đưa ra.
+   */
+  'room.backToPreJoin': 'Về màn chuẩn bị',
+
+  /**
    * The ten sentences `packages/contracts` owns, IMPORTED rather than retyped.
    *
    * One string, two consumers — `apps/api` puts it on the wire, this catalogue puts
