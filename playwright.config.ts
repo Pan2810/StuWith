@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { defineConfig } from '@playwright/test';
 
 /**
@@ -63,6 +64,87 @@ const WEB_BIN = 'node node_modules/next/dist/bin/next';
  */
 const placeholder = (label: string): string => `smoke-${label}-${'x'.repeat(32)}`;
 
+/**
+ * Story 2.4 — the `livekit` project, and the one file its two halves share.
+ *
+ * `tests/e2e/livekit/global-setup.ts` starts a real `livekit-server` and writes
+ * the container's URL and key pair HERE; `tests/e2e/support/fake-api.cjs` reads it
+ * lazily and, when it exists, signs a REAL token with `mintRoomToken` from
+ * `apps/api/dist` instead of the Story 2.3 placeholder.
+ *
+ * A file rather than an environment variable, and the reason is measured rather
+ * than stylistic: Playwright starts every `webServer` BEFORE `globalSetup` (each
+ * one is a plugin, and `createGlobalSetupTasks` puts plugin setup first), so the
+ * stand-in API is already listening when the container starts and can never be
+ * handed the key pair through its own environment. What it CAN be handed at
+ * configuration time is the path to look at — which is what this constant is, and
+ * why "no file" is exactly "the behaviour every other project has always had".
+ *
+ * It lives under the output directory Playwright clears at the start of a run,
+ * resolved from THIS FILE's own location rather than from `process.cwd()`. Every
+ * other path here is config-relative (`testDir`, `globalSetup`, each
+ * `webServer.cwd`), and an absolute path anchored to the working directory is a
+ * path that means something different the moment the suite is invoked from
+ * anywhere but the repository root — with the failure showing up as "the probe
+ * quietly used a placeholder token", which reads like a product bug.
+ *
+ * `__dirname` and not `import.meta.url`, which was tried: Playwright loads this
+ * config through `requireOrImport` as CommonJS, and the transform leaves
+ * `import.meta` intact, so the spelling that reads more modern is a
+ * `SyntaxError: Cannot use 'import.meta' outside a module` before any test runs.
+ */
+export const LIVEKIT_PROJECT = 'livekit';
+export const LIVEKIT_HANDOFF_FILE = path.join(__dirname, 'test-results', 'livekit-handoff.json');
+
+/**
+ * The browser settings both browser projects run under, spelled once.
+ *
+ * `web` and `livekit` differ in exactly one thing — whether a real
+ * `livekit-server` is behind the URL the token names — so everything else has to
+ * be the same, and the way to keep it the same is for there to be one copy of it.
+ *
+ * **Locale.** Vietnamese, because Vietnamese is the product's default and the
+ * assertions in this suite are written in it. This became load-bearing with Story
+ * 2.0: `locale` is what Playwright puts in `Accept-Language` and the server now
+ * READS that header, so leaving it unset would give Chromium's default `en-US`
+ * and silently turn every `getByRole('button', { name: 'Vào phòng' })` into an
+ * assertion about the English catalogue. Those cases prove the ACCESSIBLE NAMES
+ * are right, which is a different claim from "the locale is chosen correctly" —
+ * `web/ngon-ngu.spec.ts` owns the second one and sets its own locale per context.
+ *
+ * **Devices.** `--use-fake-device-for-media-stream` gives `getUserMedia` a
+ * synthetic camera (a moving test pattern) and a synthetic microphone (a periodic
+ * tone), so a track really exists, really has a `readyState`, really reaches
+ * `ended` when the screen stops it — and, from Story 2.4, really produces RTP
+ * bytes a second browser can count. `--use-fake-ui-for-media-stream` answers the
+ * permission prompt without a dialog, and `permissions` grants the two to the
+ * context so no spec has to. The REFUSED cases are not produced by withholding
+ * these: `phong.spec.ts` overrides `navigator.mediaDevices.getUserMedia` with
+ * `addInitScript` to throw the named `DOMException`, which is a seam inside the
+ * browser rather than a product seam, and is documented as such there.
+ *
+ * `--autoplay-policy=no-user-gesture-required` lets the `AudioContext` behind the
+ * microphone meter start without a click, which is what makes "the meter moves"
+ * an assertion rather than a hope — and lets a remote audio element play without
+ * one, which is what makes the room audible at all.
+ *
+ * One browser, not three. Chromium is what the product is developed against;
+ * cross-browser matrices are a separate decision with a separate cost.
+ */
+const BROWSER_USE = {
+  baseURL: WEB_BASE_URL,
+  browserName: 'chromium',
+  locale: 'vi-VN',
+  launchOptions: {
+    args: [
+      '--use-fake-device-for-media-stream',
+      '--use-fake-ui-for-media-stream',
+      '--autoplay-policy=no-user-gesture-required',
+    ],
+  },
+  permissions: ['camera', 'microphone'],
+} as const;
+
 const sharedEnv = {
   NODE_ENV: 'test',
   LOG_LEVEL: 'warn',
@@ -75,6 +157,13 @@ const sharedEnv = {
 
 export default defineConfig({
   testDir: './tests/e2e',
+  /**
+   * Starts the `livekit-server` container when the run includes the `livekit`
+   * project, and clears the hand-off file when it does not — so every other run
+   * is byte for byte the run it was before Story 2.4. The teardown it returns
+   * stops the container.
+   */
+  globalSetup: './tests/e2e/livekit/global-setup.ts',
   /**
    * Puts `apps/web/next-env.d.ts` back after the web build rewrote it.
    *
@@ -114,50 +203,35 @@ export default defineConfig({
        */
       name: 'web',
       testMatch: /web\/.*\.spec\.ts$/,
-      use: {
-        baseURL: WEB_BASE_URL,
-        browserName: 'chromium',
-        /**
-         * Vietnamese, because Vietnamese is the product's default and 43 existing
-         * assertions are written in it.
-         *
-         * This became load-bearing with Story 2.0. `locale` is what Playwright puts
-         * in `Accept-Language`, and the server now READS that header: leaving it
-         * unset gives Chromium's default `en-US`, which would silently turn every
-         * `getByRole('button', { name: 'Lưu ngày sinh' })` in this suite into an
-         * assertion about the English catalogue. Those cases are proving that the
-         * ACCESSIBLE NAMES on these screens are right, which is a different claim
-         * from "the locale is chosen correctly" — `web/ngon-ngu.spec.ts` owns the
-         * second one and sets its own locale per context.
-         */
-        locale: 'vi-VN',
-        /**
-         * Story 2.3. Fake devices, granted up front.
-         *
-         * `--use-fake-device-for-media-stream` gives `getUserMedia` a synthetic
-         * camera (a moving test pattern) and a synthetic microphone (a periodic
-         * tone), so a track really exists, really has a `readyState`, and really
-         * reaches `ended` when the screen stops it. `--use-fake-ui-for-media-stream`
-         * answers the permission prompt without a dialog, and `permissions` grants
-         * the two permissions to the context so no spec has to. The REFUSED cases
-         * are not produced by withholding these: `phong.spec.ts` overrides
-         * `navigator.mediaDevices.getUserMedia` with `addInitScript` to throw the
-         * named `DOMException`, which is a seam inside the browser rather than a
-         * product seam, and is documented as such there.
-         *
-         * `--autoplay-policy=no-user-gesture-required` lets the `AudioContext`
-         * behind the microphone meter start without a click, which is what makes
-         * "the meter moves" an assertion rather than a hope.
-         */
-        launchOptions: {
-          args: [
-            '--use-fake-device-for-media-stream',
-            '--use-fake-ui-for-media-stream',
-            '--autoplay-policy=no-user-gesture-required',
-          ],
-        },
-        permissions: ['camera', 'microphone'],
-      },
+      use: BROWSER_USE,
+    },
+    {
+      /**
+       * Story 2.4 — the BOUNDARY PROBE project, and the only thing in this
+       * repository that ever opens the browser ↔ LiveKit boundary.
+       *
+       * Separate from `web` because it needs something `web` must not have: a real
+       * `livekit-server` behind the URL the token names. `tests/e2e/livekit/global-setup.ts`
+       * starts one and hands the stand-in API its key pair, so the token these
+       * specs receive is signed by `mintRoomToken` for that server and refused by
+       * it when the key pair does not match — a mutation on the FAR side, which is
+       * what `deferred-work.md` recorded Story 2.3 as unable to provide.
+       *
+       * Same browser settings as `web`: fake devices, granted permissions, the
+       * product's own locale.
+       */
+      name: LIVEKIT_PROJECT,
+      testMatch: /livekit\/.*\.spec\.ts$/,
+      use: BROWSER_USE,
+      /**
+       * A real budget for real media. Each case drives two browser contexts
+       * through a container: two page loads, two token requests, two ICE/DTLS
+       * handshakes and enough RTP to count bytes. On an idle machine that is two
+       * seconds; sharing a machine with the ~100 cases of the `web` project it is
+       * not, and Playwright's 30-second default turned the difference into a
+       * failure that said "Test timeout" and nothing about the room.
+       */
+      timeout: 120_000,
     },
   ],
   webServer: [
@@ -208,6 +282,13 @@ export default defineConfig({
       env: {
         FAKE_API_PORT: String(FAKE_API_PORT),
         FAKE_API_WEB_ORIGIN: WEB_BASE_URL,
+        /**
+         * Story 2.4. WHERE to look for a real LiveKit, not whether there is one:
+         * this process starts before `globalSetup` does, so the path is all that
+         * can be handed over at configuration time. No file at that path is the
+         * Story 2.3 behaviour, unchanged.
+         */
+        E2E_LIVEKIT_HANDOFF: LIVEKIT_HANDOFF_FILE,
       },
     },
     {

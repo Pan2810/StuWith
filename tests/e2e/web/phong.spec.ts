@@ -21,12 +21,18 @@ import { CREATE_ROOM_PATHNAME, roomPathname, scenario } from '../support/scenari
  *   mistakes a green run for proof about a real permission prompt.
  * - The **negative probe** is the other way round. `guardMediaPlane` wraps
  *   `RTCPeerConnection` and `WebSocket`, records every stream `getUserMedia`
- *   hands out, and listens to every request the page makes. What it asserts:
- *   throughout pre-join and past admission, NOTHING is constructed on the media
- *   plane and no request leaves the web origin or the stand-in API. Its mutation
- *   is on the client — opening a `WebSocket(url)` from the page during pre-join
- *   turns it red — and the spec records that this is not yet a far-side mutation:
- *   the browser ↔ LiveKit boundary does not open in this story.
+ *   hands out and every URL a socket was opened to, and listens to every request
+ *   the page makes. From Story 2.4 it asserts in TWO PHASES, because the claim
+ *   changes at admission and only one half of it was ever about zero:
+ *   {@link expectNoMediaPlane} holds while the pre-join screen is up — nothing on
+ *   the media plane exists, which is what "pre-join cannot be skipped" means in
+ *   the network — and {@link expectMediaPlaneOnlyToRoom} holds after it, where
+ *   the plane is open and the only address it reaches is the one the token named.
+ *   Both mutations are on the client: a `WebSocket(url)` during pre-join turns
+ *   the first, a second origin turns the second. Proving that sound really
+ *   crosses the browser ↔ LiveKit boundary needs a real server on the far side
+ *   and is `tests/e2e/livekit/phong-media.spec.ts`, which is where the far-side
+ *   mutation `deferred-work.md` asked Story 2.4 for now lives.
  */
 
 const ROOM_ID = '019200f1-0000-7000-8000-000000000001';
@@ -36,6 +42,10 @@ const ROOM = roomPathname(ROOM_ID);
 interface MediaPlaneProbe {
   readonly requests: string[];
   readonly counters: () => Promise<{ peerConnections: number; webSockets: number }>;
+  /** Every URL a `WebSocket` was constructed with, in order. Story 2.4. */
+  readonly webSocketUrls: () => Promise<string[]>;
+  /** Every ICE server URL an `RTCPeerConnection` was CONFIGURED with. Story 2.4. */
+  readonly iceServerUrls: () => Promise<string[]>;
   readonly videoTrackStates: () => Promise<string[]>;
   readonly audioTrackStates: () => Promise<string[]>;
   readonly getUserMediaCalls: () => Promise<number>;
@@ -69,24 +79,47 @@ async function guardMediaPlane(page: Page): Promise<MediaPlaneProbe> {
     requests.push(request.url());
   });
   await page.addInitScript(() => {
-    const probe = { peerConnections: 0, webSockets: 0, getUserMediaCalls: 0, streams: [] as MediaStream[] };
+    const probe = {
+      peerConnections: 0,
+      webSockets: 0,
+      getUserMediaCalls: 0,
+      streams: [] as MediaStream[],
+      webSocketUrls: [] as string[],
+      iceServerUrls: [] as string[],
+    };
     (window as unknown as { __stuwithProbe: typeof probe }).__stuwithProbe = probe;
 
-    const counted = <T extends new (...args: never[]) => object>(Original: T, bump: () => void): T =>
+    const counted = <T extends new (...args: never[]) => object>(
+      Original: T,
+      bump: (args: unknown[]) => void,
+    ): T =>
       new Proxy(Original, {
         construct(target, args, newTarget) {
-          bump();
+          bump(args as unknown[]);
           return Reflect.construct(target, args, newTarget) as object;
         },
       });
     if (typeof window.RTCPeerConnection === 'function') {
-      window.RTCPeerConnection = counted(window.RTCPeerConnection, () => {
+      window.RTCPeerConnection = counted(window.RTCPeerConnection, (args) => {
         probe.peerConnections += 1;
+        // The CONFIGURATION as well as the count. After admission a peer
+        // connection is allowed to exist, so the question becomes which addresses
+        // it was built to reach — and an ICE server is an address like any other.
+        const configuration = args[0] as RTCConfiguration | undefined;
+        for (const server of configuration?.iceServers ?? []) {
+          const urls = server.urls;
+          for (const url of typeof urls === 'string' ? [urls] : urls) {
+            probe.iceServerUrls.push(url);
+          }
+        }
       });
     }
     if (typeof window.WebSocket === 'function') {
-      window.WebSocket = counted(window.WebSocket, () => {
+      window.WebSocket = counted(window.WebSocket, (args) => {
         probe.webSockets += 1;
+        // The URL as well as the count, because from Story 2.4 the question is no
+        // longer "was one opened" but "was one opened anywhere it should not be".
+        probe.webSocketUrls.push(String(args[0]));
       });
     }
 
@@ -112,6 +145,14 @@ async function guardMediaPlane(page: Page): Promise<MediaPlaneProbe> {
           .__stuwithProbe;
         return { peerConnections: probe.peerConnections, webSockets: probe.webSockets };
       }),
+    webSocketUrls: () =>
+      page.evaluate(
+        () => (window as unknown as { __stuwithProbe: { webSocketUrls: string[] } }).__stuwithProbe.webSocketUrls,
+      ),
+    iceServerUrls: () =>
+      page.evaluate(
+        () => (window as unknown as { __stuwithProbe: { iceServerUrls: string[] } }).__stuwithProbe.iceServerUrls,
+      ),
     videoTrackStates: () =>
       page.evaluate(() =>
         (window as unknown as { __stuwithProbe: { streams: MediaStream[] } }).__stuwithProbe.streams.flatMap(
@@ -131,15 +172,84 @@ async function guardMediaPlane(page: Page): Promise<MediaPlaneProbe> {
   };
 }
 
-/** The negative probe's assertion, run at the end of a case. */
+/**
+ * The media plane's address, as the stand-in API puts it in the `201`.
+ *
+ * Spelled by hand for the reason every route in `scenario.ts` is: a test that
+ * imports the constant it is checking cannot notice the constant changing under
+ * the product. The `http` spelling is the same host — `livekit-client` falls back
+ * to a plain request against `/rtc/validate` when the socket is refused, and that
+ * request is part of "the media plane", not a stranger.
+ */
+const LIVEKIT_WS_ORIGIN = 'ws://127.0.0.1:7880';
+const LIVEKIT_HTTP_ORIGIN = 'http://127.0.0.1:7880';
+
+/**
+ * The negative probe, for the phase where it is still absolute: BEFORE admission.
+ *
+ * This is the property Story 2.3 shipped and Story 2.4 does not relax — nobody
+ * lands in a room without deciding, so nothing on the media plane may exist while
+ * the pre-join screen is up. After admission the claim changes shape rather than
+ * disappearing; that half is {@link expectMediaPlaneOnlyToRoom}.
+ */
 async function expectNoMediaPlane(probe: MediaPlaneProbe): Promise<void> {
   const counters = await probe.counters();
-  expect(counters.peerConnections, 'no RTCPeerConnection may be constructed in Story 2.3').toBe(0);
-  expect(counters.webSockets, 'no WebSocket may be opened in Story 2.3').toBe(0);
+  expect(counters.peerConnections, 'no RTCPeerConnection may be constructed before admission').toBe(0);
+  expect(counters.webSockets, 'no WebSocket may be opened before admission').toBe(0);
   const strangers = probe.requests.filter(
     (url) => !url.startsWith(WEB_BASE_URL) && !url.startsWith(FAKE_API_BASE_URL),
   );
   expect(strangers, 'no request may leave the web origin or the stand-in API').toEqual([]);
+}
+
+/**
+ * The probe's second phase: the media plane is open, and open to exactly one place.
+ *
+ * "Zero connections" was the whole assertion while nothing connected. Now that
+ * `RoomShell` does, the assertion that carries the same weight is that the ONLY
+ * address it reaches is the one the token named — a socket to any other origin,
+ * or a request to any host but the web origin, the stand-in API and LiveKit, is
+ * still red. The mutation is the same shape as before and still on the client:
+ * point `Room.connect` at a second URL and this turns.
+ *
+ * There is no real LiveKit behind this port in the `web` project, and that is on
+ * purpose: proving that sound crosses the boundary needs a real server and is
+ * `tests/e2e/livekit/phong-media.spec.ts`. What this proves is the address.
+ */
+async function expectMediaPlaneOnlyToRoom(probe: MediaPlaneProbe): Promise<void> {
+  const sockets = await probe.webSocketUrls();
+  expect(sockets.length, 'Story 2.4 must open the media plane once admitted').toBeGreaterThan(0);
+  expect(
+    sockets.filter((url) => !url.startsWith(LIVEKIT_WS_ORIGIN)),
+    'the only socket allowed is the one the token named',
+  ).toEqual([]);
+
+  /**
+   * The `RTCPeerConnection` half, which the first version of this function
+   * dropped entirely.
+   *
+   * Before Story 2.4 the assertion was `peerConnections === 0`, and rewriting the
+   * function for the post-admission phase deleted it rather than adapting it — so
+   * a peer connection built against somebody else's STUN or TURN server became
+   * invisible to a probe whose whole job is to say where the media plane may
+   * reach. `0` is no longer the right claim (2.4 is allowed to build one), so the
+   * claim is about the ADDRESSES it is configured with: every ICE server a
+   * connection is constructed with has to be on the host the token named, and a
+   * configuration is as much a place traffic goes as a URL is.
+   */
+  const strangeIceServers = await probe.iceServerUrls();
+  expect(
+    strangeIceServers.filter((url) => !url.includes('127.0.0.1')),
+    'no RTCPeerConnection may be configured with an ICE server outside the room’s own host',
+  ).toEqual([]);
+
+  const strangers = probe.requests.filter(
+    (url) =>
+      !url.startsWith(WEB_BASE_URL) &&
+      !url.startsWith(FAKE_API_BASE_URL) &&
+      !url.startsWith(LIVEKIT_HTTP_ORIGIN),
+  );
+  expect(strangers, 'no request may leave the web origin, the stand-in API or LiveKit').toEqual([]);
 }
 
 /**
@@ -171,10 +281,56 @@ async function refuseDevices(page: Page, name: string, onlyVideo = false): Promi
   );
 }
 
+/**
+ * Refuse ONLY an audio-only `getUserMedia` — which, on the happy path, is exactly
+ * the one `RoomShell` makes.
+ *
+ * `pre-join.tsx` asks for `{video, audio}` together, so a filter on "has no video
+ * constraint" separates the SHELL's second request from the screen's first without
+ * either of them knowing. That separation is what makes `room.errorMicDenied`
+ * reachable at all: a refusal AT pre-join produces the listen-only decision, so
+ * `audio === 'mic'` and a failing microphone never met anywhere in the suite, and
+ * the branch that renders the sentence could be deleted with everything green.
+ *
+ * A seam inside the browser, like `refuseDevices` above — see the file docblock.
+ */
+async function refuseAudioOnlyDevices(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const devices = navigator.mediaDevices;
+    const original = devices.getUserMedia.bind(devices);
+    devices.getUserMedia = (constraints?: MediaStreamConstraints) => {
+      if (constraints?.video) {
+        return original(constraints);
+      }
+      const probe = (window as unknown as { __stuwithProbe?: { getUserMediaCalls: number } })
+        .__stuwithProbe;
+      if (probe !== undefined) {
+        probe.getUserMediaCalls += 1;
+      }
+      return Promise.reject(new DOMException('refused by the spec', 'NotAllowedError'));
+    };
+  });
+}
+
 const modeGroup = (page: Page) => page.getByRole('radiogroup', { name: 'Chế độ khuôn mặt' });
 const video = (page: Page) => page.locator('video');
 const meter = (page: Page) => page.getByRole('meter', { name: 'Mức âm micro' });
-const shellHeading = (page: Page) => page.getByRole('heading', { name: 'Bạn đã vào phòng' });
+/**
+ * The room's heading, found by ID rather than by sentence.
+ *
+ * It used to key off "Bạn đã vào phòng", and from Story 2.4 that is one of FOUR
+ * sentences it can carry: the heading follows the join phase, so a refused join
+ * says "Chưa vào được phòng" and a left room says "Bạn đã rời phòng". Every use
+ * below means "a shell is on screen rather than pre-join", which is a question
+ * about WHICH component rendered — and the id is what answers that without racing
+ * the phase. In the `web` project nothing is listening on the LiveKit port, so a
+ * join moves from `connecting` to `failed` in milliseconds and a sentence-based
+ * helper would be a coin toss.
+ *
+ * The id is spelled by hand for the reason every route in `scenario.ts` is: a test
+ * that imports the constant it is checking cannot notice the constant changing.
+ */
+const shellHeading = (page: Page) => page.locator('h1#phong-tieu-de');
 
 test.describe('phòng — pre-join', () => {
   test('the created-room screen leads here, so the screen is reachable without typing a URL', async ({
@@ -485,6 +641,10 @@ test.describe('phòng — pre-join', () => {
     await page.getByRole('radio', { name: 'Ẩn mặt' }).check();
     await expect(shellHeading(page)).toHaveCount(0);
 
+    // The half of the probe that is still absolute: nothing on the media plane
+    // exists while the pre-join screen is up.
+    await expectNoMediaPlane(probe);
+
     const tokenRequest = page.waitForRequest(
       (request) =>
         request.url() === `${FAKE_API_BASE_URL}/v1/rooms/${ROOM_ID}/token` && request.method() === 'POST',
@@ -510,13 +670,98 @@ test.describe('phòng — pre-join', () => {
     }));
     expect(leaked).toEqual({ inDom: false, inLocal: false, inSession: false, inCookie: false });
 
-    // Past admission, still no media plane: Story 2.4 owns the connection.
-    await expectNoMediaPlane(probe);
+    // Past admission the plane opens — to the URL the token named and to nothing
+    // else. `expect.poll` because the connection starts in an effect.
+    await expect.poll(async () => (await probe.counters()).webSockets).toBeGreaterThan(0);
+    await expectMediaPlaneOnlyToRoom(probe);
 
     // A reload is pre-join again. The decision lived in memory and nowhere else.
     await page.reload();
     await expect(video(page)).toBeVisible();
     await expect(shellHeading(page)).toHaveCount(0);
+  });
+
+  test('an admission that has already lapsed never opens a socket, and says why', async ({ page }) => {
+    /**
+     * The expiry branch, which nothing executed before this case: deleting BOTH the
+     * pre-connect guard and the `setTimeout` in `RoomShell` left the unit suites,
+     * `--project=web` and `--project=livekit` all green.
+     *
+     * The `201` is real and its `expires_at` is in the past — the one thing the
+     * stand-in API can do that the product cannot, and the alternative (sitting out
+     * a 120-second TTL inside a spec) is a timeout rather than a test.
+     */
+    const probe = await guardMediaPlane(page);
+    await scenario(page, { signedIn: true, expiresAtOffsetSeconds: -1 });
+    await page.goto(ROOM);
+    await expect(video(page)).toBeVisible();
+    await page.getByRole('button', { name: 'Vào phòng', exact: true }).click();
+
+    await expect(shellHeading(page)).toBeVisible();
+    await expect(page.getByText('Chờ quá lâu, hãy vào lại.')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Thử lại', exact: true })).toBeVisible();
+    // And the point of checking BEFORE connecting: a lapsed admission opens
+    // nothing at all, so the negative probe still holds past admission here.
+    await expectNoMediaPlane(probe);
+  });
+
+  test('"Rời phòng" pressed DURING the handshake stops the join rather than racing it', async ({
+    page,
+  }) => {
+    /**
+     * The button is offered from the first frame — somebody who pressed "Vào phòng"
+     * by mistake must not have to wait out a handshake to get out — and for one
+     * round pressing it there did nothing but redraw: `leave` read a room reference
+     * that is only assigned AFTER `getUserMedia`, so the asynchronous run carried on,
+     * connected, and published a microphone behind a screen that said the person had
+     * left.
+     *
+     * The handshake has to HANG for the press to land inside it, and a closed port
+     * on `127.0.0.1` does not hang — it is refused immediately, so the window was
+     * really the SDK's retry backoff. Measured: green alone, red inside the full
+     * run. `roomTokenUrl` points the admission at a blackholed address instead
+     * (`192.0.2.0/24`, RFC 5737, carried by no router), so the TCP connect sits
+     * pending and `connecting` lasts as long as this spec needs.
+     */
+    const probe = await guardMediaPlane(page);
+    await scenario(page, { signedIn: true, roomTokenUrl: 'ws://192.0.2.1:7880' });
+    await page.goto(ROOM);
+    await expect(video(page)).toBeVisible();
+    await page.getByRole('button', { name: 'Vào phòng', exact: true }).click();
+
+    // Mid-handshake, for real: the chip says so and the room has not answered.
+    await expect(page.getByText('Đang vào phòng…')).toBeVisible();
+    await page.getByRole('button', { name: 'Rời phòng' }).click();
+
+    await expect(page.getByRole('heading', { name: 'Bạn đã rời phòng' })).toBeVisible();
+    // The microphone the shell opened is ended, and stays ended.
+    await expect.poll(() => probe.audioTrackStates()).not.toContain('live');
+    // And the abandoned run never comes back to overwrite the screen: no refusal
+    // sentence arrives afterwards, because there is no join left to refuse.
+    await page.waitForTimeout(3_000);
+    await expect(page.getByRole('heading', { name: 'Bạn đã rời phòng' })).toBeVisible();
+    await expect(page.locator('main [role="alert"]')).toHaveCount(0);
+    await expect.poll(() => probe.audioTrackStates()).not.toContain('live');
+  });
+
+  test('a microphone the SHELL cannot open says so, and the room is joined anyway', async ({ page }) => {
+    /**
+     * `room.errorMicDenied` was set in a branch nothing could reach: a refusal at
+     * pre-join yields `audio: 'listen-only'`, so "wanted the microphone AND could
+     * not have it" existed in the code and nowhere else.
+     */
+    const probe = await guardMediaPlane(page);
+    await refuseAudioOnlyDevices(page);
+    await scenario(page, { signedIn: true });
+    await page.goto(ROOM);
+    // Pre-join is unaffected: it asks for both devices at once and is granted.
+    await expect(video(page)).toBeVisible();
+    await page.getByRole('button', { name: 'Vào phòng', exact: true }).click();
+
+    await expect(page.getByText('Không mở được micro. Bạn vẫn nghe được mọi người.')).toBeVisible();
+    // Still a join: the sentence says which half is missing, not that the room is lost.
+    await expect.poll(async () => (await probe.counters()).webSockets).toBeGreaterThan(0);
+    await expectMediaPlaneOnlyToRoom(probe);
   });
 
   test('there is no other URL: a second segment is a 404 and a query parameter changes nothing', async ({
@@ -562,10 +807,19 @@ test.describe('phòng — pre-join', () => {
     );
     await page.getByRole('button', { name: 'Vào phòng chỉ để nghe' }).click();
     await tokenRequest;
+    // The shell asks for NOTHING on the listen-only branch. The count is taken
+    // across admission rather than from zero, because the pre-join screen already
+    // asked (and was refused) on the way in.
+    const asked = await probe.getUserMediaCalls();
     await expect(shellHeading(page)).toBeVisible();
     await expect(page.getByText('Bạn vào chỉ để nghe.')).toBeVisible();
     await expect(page.getByText('Bạn đang ẩn mặt.')).toBeVisible();
-    await expectNoMediaPlane(probe);
+    await expect.poll(async () => (await probe.counters()).webSockets).toBeGreaterThan(0);
+    expect(
+      await probe.getUserMediaCalls(),
+      'listen-only must not open the microphone even once',
+    ).toBe(asked);
+    await expectMediaPlaneOnlyToRoom(probe);
   });
 
   test('with no camera but a microphone: Để nguyên is disabled, Ẩn mặt is the choice, and the meter runs', async ({
@@ -692,10 +946,20 @@ test.describe('phòng — pre-join', () => {
     await expect(shellHeading(page)).toBeVisible();
     await expect(page.getByText('Bạn đang ẩn mặt.')).toBeVisible();
     expect(probe.requests.filter((url) => url.endsWith('/token'))).toHaveLength(2);
-    // Admitted: the shell displays nothing, so nothing stays open behind it.
-    await expect.poll(() => probe.audioTrackStates()).not.toContain('live');
+    /**
+     * Admitted, and then refused by a port with no LiveKit behind it: the camera
+     * never comes back, and the microphone the SHELL opened is ended again rather
+     * than left running behind a screen that says the join failed.
+     */
     expect((await probe.videoTrackStates()).filter((state) => state === 'live')).toEqual([]);
-    await expectNoMediaPlane(probe);
+    // A generous budget on purpose: this is a REAL connection attempt to a port
+    // nothing is listening on, and livekit-client retries once before it gives up.
+    // Five seconds is enough on an idle machine and not enough when the whole
+    // suite is running, which is a flake rather than a finding.
+    await expect(page.getByText('Không vào được phòng.')).toBeVisible({ timeout: 20_000 });
+    await expect.poll(() => probe.audioTrackStates()).not.toContain('live');
+    await expect(page.getByRole('button', { name: 'Thử lại', exact: true })).toBeVisible();
+    await expectMediaPlaneOnlyToRoom(probe);
   });
 
   test('no answer at all keeps the decision and the tracks, with the same sentence and a retry', async ({

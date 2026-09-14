@@ -446,7 +446,8 @@ const COMPOSED: readonly ComposedPair[] = [
     selector: '.avatar-letter',
     color: 'ink-primary',
     background: 'tile-avatar-bg',
-    where: 'the initials tile sets both halves itself — the same pair the grid avatar will use',
+    where:
+      'the initials tile sets both halves itself — the same pair the grid avatar will use, and the same pair every row of Story 2.4’s participant list uses: `.participant-row .avatar-letter` overrides geometry only and declares no colour, so this row is what covers it there too',
   },
   {
     selector: '.choice:has(input[type="radio"]:disabled)',
@@ -471,6 +472,21 @@ const COMPOSED: readonly ComposedPair[] = [
     color: 'warn',
     background: 'warn-container',
     where: 'the heading inside the help block, on the block\'s own surface',
+  },
+  /* Story 2.4 — the room's participant list. */
+  {
+    selector: '.participant-name',
+    color: 'ink-primary',
+    background: 'surface-raised',
+    where:
+      'the name in a `.participant-row`, which is a `surface-raised` island inside a `surface-raised` card. The colour is declared rather than inherited precisely so this row exists',
+  },
+  {
+    selector: '.participant-state',
+    color: 'ink-secondary',
+    background: 'surface-raised',
+    where:
+      '"Đang nói" / "Đang tắt micro" at the end of a `.participant-row`, which sets `surface-raised` itself. It is the ONLY channel those two states have — the row paints no colour for them at all — so it is held to the text minimum rather than to a large-text one',
   },
 ];
 

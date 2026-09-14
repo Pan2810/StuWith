@@ -14,6 +14,7 @@ import { useT } from '../../i18n/use-t';
 import { PROFILE_RETRY_KEY, unavailableMessageKey, type ProfileLoadOutcome } from '../../profile-load';
 import { RATE_LIMITED_STATUS, SESSION_EXPIRED_STATUS, returnPathFor } from '../../session-expiry';
 import { SignInProviderLinks } from '../../sign-in-links';
+import { avatarInitialsFor } from './room-media';
 import {
   FACE_MODES,
   RoomShell,
@@ -286,33 +287,16 @@ export function presenceNoticeFor(faceMode: FaceMode): PresenceNotice {
 }
 
 /**
- * The letters on the avatar: first letter of the first and last word, tone marks
- * stripped, upper-cased, at most two.
+ * The letters on the avatar, re-exported from `room-media.ts`.
  *
- * Diacritics come off by decomposition (`NFD` puts each mark in its own code point,
- * which the combining-mark range U+0300 to U+036F then removes); d with a stroke (U+0111) is the one letter that is not
- * a base plus a mark, so it is mapped by hand. "Trâm Anh" is `TA`, "đặng" is `D`,
- * and a name with nothing usable in it is `?` rather than an empty tile.
+ * Story 2.4 needs the same two letters on every row of the participant list, and
+ * that list is built in `room-media.ts` — a module this file imports, so the
+ * function had to move THERE rather than be imported from here (`no-circular`
+ * with `tsPreCompilationDeps: true` counts a type-only edge too). The name stays
+ * exported from this file because that is where it was tested and where the
+ * pre-join preview below still calls it.
  */
-export function avatarInitialsFor(displayName: string): string {
-  const words = displayName
-    .normalize('NFD')
-    .replace(/[\u0300-\u036F]/g, '')
-    .replace(/\u0111/g, 'd')
-    .replace(/\u0110/g, 'D')
-    .split(/\s+/)
-    .map((word) => word.replace(/[^\p{L}\p{N}]/gu, ''))
-    .filter((word) => word.length > 0);
-  if (words.length === 0) {
-    return '?';
-  }
-  // The first CODE POINT, not the first UTF-16 unit: a letter outside the BMP
-  // would otherwise render half a surrogate pair as a broken glyph.
-  const firstLetterOf = (word: string | undefined): string => [...(word ?? '')][0] ?? '';
-  const first = firstLetterOf(words[0]);
-  const last = words.length > 1 ? firstLetterOf(words[words.length - 1]) : '';
-  return `${first}${last}`.toUpperCase();
-}
+export { avatarInitialsFor };
 
 /* -------------------------------------------------------------------------- *
  * Joining

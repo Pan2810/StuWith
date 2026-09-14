@@ -77,6 +77,56 @@ export interface Scenario {
    * fake rather than three hops later.
    */
   readonly roomTokenReason?: RoomTokenRefusalReason | null;
+  /**
+   * Story 2.4. Which person the scenario is, as a uuid — the id `/v1/auth/me`
+   * reports AND the `sub` the room token is signed with, which is what LiveKit
+   * reads as the participant identity.
+   *
+   * It exists because the LiveKit probe puts two browser contexts in one room, and
+   * two connections under one identity is an eviction rather than two people
+   * (`deferred-work.md`: the second connection replaces the first). Scenario state
+   * is per browser context already, so the two choose their own without
+   * coordinating. Omitted means the fixture's single default person, which is what
+   * every other spec runs as.
+   */
+  readonly userId?: string;
+  /**
+   * Story 2.4. Ask for a REAL LiveKit token — signed by `mintRoomToken` out of
+   * `apps/api/dist` with the key pair of the `livekit-server` container, naming
+   * that container's URL — instead of the Story 2.3 placeholder.
+   *
+   * Opt-in, and only `tests/e2e/livekit` opts in. The container belongs to the
+   * RUN rather than to a project, so a fixture that switched itself on whenever
+   * one was up handed real tokens to the `web` specs the moment both browser
+   * projects were selected — and three of them are asserting precisely that the
+   * placeholder never reaches the DOM and that no socket goes anywhere but
+   * `ws://127.0.0.1:7880`.
+   */
+  readonly useLiveKit?: boolean;
+  /**
+   * Story 2.4. How far from NOW the `201`'s `expires_at` sits, in seconds —
+   * `ROOM_TOKEN_TTL_SECONDS` when omitted, which is what every other spec gets.
+   *
+   * A negative value is the whole point: it is the only way a browser can reach
+   * `RoomShell`'s expiry branch. The real API never mints a lapsed admission, and
+   * the alternative — waiting out a 120-second TTL inside a spec — is a timeout
+   * wearing a test's clothes.
+   */
+  readonly expiresAtOffsetSeconds?: number;
+  /**
+   * Story 2.4. The LiveKit address the `201` hands back — `ws://127.0.0.1:7880`
+   * when omitted, which is what every other spec gets.
+   *
+   * It exists for ONE property: a handshake that HANGS. A closed port on
+   * `127.0.0.1` is refused immediately rather than left pending, so a spec that
+   * wants to press a button "during the handshake" was really racing the SDK's
+   * retry backoff and lost that race under load. A blackholed address
+   * (`192.0.2.0/24`, TEST-NET-1, which RFC 5737 reserves for documentation and
+   * which no router carries) makes the TCP connect sit there instead, so
+   * `connecting` lasts as long as the spec needs and the press always lands where
+   * it is aimed.
+   */
+  readonly roomTokenUrl?: string;
 }
 
 export async function scenario(page: Page, state: Scenario): Promise<void> {

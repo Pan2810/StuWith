@@ -252,3 +252,68 @@ jobs:
           name: playwright-report-web
           path: playwright-report/
           retention-days: 7
+
+  # ── Boundary probe · browser ↔ LiveKit ─────────────────────────────────────
+  # Story 2.4. The ONLY thing in this repository that proves a browser can join a
+  # room and HEAR somebody. `tests/gates/livekit-token.test.ts` reaches a LiveKit
+  # WebSocket upgrade with raw `node:http`, which proves a token is accepted and
+  # says nothing about media; `deferred-work.md` records that Story 2.3's negative
+  # probe had no far-side mutation for exactly this reason.
+  #
+  # Its own job rather than a case inside `web-e2e`: it starts a real
+  # `livekit-server` container through testcontainers, and a failure here means
+  # "the media plane does not work", which is a different diagnosis from "a screen
+  # renders the wrong sentence".
+  livekit-e2e:
+    name: 'Probe · trình duyệt ↔ LiveKit (media thật)'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+
+      - name: Refuse to run with Testcontainers disabled
+        run: |
+          set -euo pipefail
+          # Same guard as gates 3 and 4, and the same reason: the flag turns this
+          # probe into `test.skip`, and a skipped probe reports success having
+          # opened no connection at all. `tests/e2e/livekit/global-setup.ts`
+          # refuses it too — this half can be edited, that half travels with the
+          # suite.
+          if [ -n "${STUWITH_SKIP_TESTCONTAINERS:-}" ]; then
+            echo "STUWITH_SKIP_TESTCONTAINERS is set in CI. The LiveKit probe would skip" >&2
+            echo "without starting a server. Remove it from the workflow environment." >&2
+            exit 1
+          fi
+
+      # `apps/api` is built because the stand-in API signs the probe's token with
+      # the PRODUCT's own `mintRoomToken` out of `apps/api/dist`. That is what
+      # makes the second mutation — dropping `room` from the grant — travel the
+      # whole seam instead of being a unit assertion about an object.
+      #
+      # `realtime-gateway` is built even though the probe never calls it, and the
+      # line looks removable until you try it. `webServer` in playwright.config.ts
+      # is a CONFIG-level array, not a per-project one: Playwright starts every
+      # entry as a plugin before any project is selected, so a run of
+      # `--project=livekit` still spawns `node apps/realtime-gateway/dist/main.js`.
+      # Removed, this job dies before the first test with
+      # "Process from config.webServer was not able to start" — measured, on
+      # 2026-09-14, by deleting the build and running it.
+      - name: Build packages and both processes
+        run: |
+          pnpm run build:packages
+          pnpm --filter api build
+          pnpm --filter realtime-gateway build
+
+      - name: Install Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Browser ↔ LiveKit probe
+        run: pnpm exec playwright test --project=livekit
+
+      - if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report-livekit
+          path: playwright-report/
+          retention-days: 7

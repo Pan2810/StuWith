@@ -577,7 +577,7 @@ Mười mục dưới đây do vòng review 1 của `bmad-code-review` phát hi�
 - source_spec: `_bmad-output/implementation-artifacts/spec-2-3-man-pre-join.md`
   summary: Probe phủ định của 2.3 (không `RTCPeerConnection`/`WebSocket`, không request rời web/fake-api) chỉ có mutation PHÍA CLIENT — ranh giới trình duyệt ↔ LiveKit chưa mở nên chưa có mutation phía xa.
   evidence: `tests/e2e/web/phong.spec.ts` bọc hai constructor bằng `addInitScript` và nghe `page.on('request')`; mở `new WebSocket(url)` ở pre-join làm nó đỏ. Nhưng "phía xa" của ranh giới media là LiveKit và 2.3 không nối nó, nên không có cấu hình server nào để đổi cho probe đỏ. Story 2.4 mở ranh giới đó và phải khai probe MỚI có mutation phía LiveKit (ví dụ đổi `LIVEKIT_URL`/key ký token → kết nối bị từ chối), đồng thời giữ probe phủ định này cho giai đoạn pre-join.
-  status: CHƯA CÓ CHỦ (2026-09-13, Story 2.3 — thuộc 2.4).
+  status: ĐÃ ĐÓNG (2026-09-14, Story 2.4). `tests/e2e/livekit/phong-media.spec.ts` chạy trong project Playwright `livekit`: `tests/e2e/livekit/global-setup.ts` khởi động `livekit/livekit-server:v1.13.5` thật (đúng image `infra/docker-compose.yml` pin) bằng `testcontainers`, fake API ký token bằng chính `mintRoomToken` của `apps/api/dist` với cặp key của container, và HAI browser context cùng vào một phòng. Khẳng định mạnh nhất là `RTCPeerConnection.getStats()` cho `inbound-rtp` audio có `bytesReceived > 0` — tức ICE/DTLS/SRTP đã xong và tiếng thật sự đi qua, chứ không chỉ bắt tay signalling xong. Hai mutation ĐÃ CHẠY THẬT ngày 2026-09-14: (1) phía xa — `containerSecret` khác secret ký token, không đổi một dòng nào của ta, probe đỏ và màn hình dừng ở "Không vào được phòng."; (2) qua cả seam — xoá `room: input.roomId` khỏi grant trong `apps/api/src/rooms/room-token.ts` rồi build lại, probe đỏ. Probe phủ định của 2.3 vẫn còn và nay chia hai giai đoạn: `expectNoMediaPlane` (trước `admitted`, vẫn tuyệt đối 0/0) và `expectMediaPlaneOnlyToRoom` (sau `admitted`, chỉ `decision.url` được mở socket). Job CI mới: `livekit-e2e`.
 
 - source_spec: `_bmad-output/implementation-artifacts/spec-2-3-man-pre-join.md`
   summary: Máy có camera nhưng không có micro rơi vào trạng thái `no-mic` và mất luôn lựa chọn khuôn mặt — cần lần thử `{video:true}` thứ ba và một trạng thái `granted-no-mic` có radiogroup nhưng không có vạch mic.
@@ -587,7 +587,7 @@ Mười mục dưới đây do vòng review 1 của `bmad-code-review` phát hi�
 - source_spec: `_bmad-output/implementation-artifacts/spec-2-3-man-pre-join.md`
   summary: Track camera/mic kết thúc từ bên ngoài (rút thiết bị, OS thu hồi, app khác chiếm) không được lắng nghe — xem trước đóng băng, `device` vẫn `granted`, "Vào phòng" gửi `faceMode:'show'` cho một camera đã chết.
   evidence: `adoptStream` không gắn `ended` listener lên track. Hậu quả ở 2.3 chỉ là xem trước đứng hình; ở 2.4 khi publish track thì đây là lỗi thật. Chủ: 2.4.
-  status: CHƯA CÓ CHỦ (2026-09-13, review vòng 1 spec 2.3).
+  status: ĐÃ ĐÓNG MỘT NỬA (2026-09-14, Story 2.4). Track MICRO mà `RoomShell` publish nay có listener `ended`: unpublish, hàng của chính mình thành "Đang tắt micro", và câu `room.errorMicEnded` giải thích — không tự xin lại, vì mở lại thiết bị là quyết định của người dùng chứ không phải của một effect. NỬA CÒN LẠI VẪN MỞ: track CAMERA của màn pre-join (`adoptStream` trong `page.tsx`) vẫn không nghe `ended`, nên xem trước vẫn đóng băng khi rút camera. 2.4 không publish video nên hậu quả vẫn chỉ là khung hình đứng; chủ của nửa này là 2.7, nơi camera thật sự rời máy.
 
 - source_spec: `_bmad-output/implementation-artifacts/spec-2-3-man-pre-join.md`
   summary: `NotReadableError` trên lần xin `{video,audio}` (camera đang bị app khác giữ) đi thẳng tới `unreadable` mà không thử `{audio}` riêng, nên người có mic tốt bị đẩy sang "chỉ để nghe".
@@ -602,4 +602,59 @@ Mười mục dưới đây do vòng review 1 của `bmad-code-review` phát hi�
 - source_spec: `_bmad-output/implementation-artifacts/spec-2-3-man-pre-join.md`
   summary: `RoomDecision.expiresAt` tới `RoomShell` nhưng không ai quan sát — ngồi ở vỏ phòng quá 120 giây là cầm token chết và chỗ đã hết hạn mà không có tín hiệu nào.
   evidence: `apps/web/src/app/phong/[roomId]/room-shell.tsx` chỉ hiển thị tóm tắt; 2.3 không nối LiveKit nên chưa có hậu quả, nhưng 2.4 phải nối trong cửa sổ TTL hoặc xin lại token (cùng người xin lại = gia hạn, spec 2.2). Chủ: 2.4.
-  status: CHƯA CÓ CHỦ (2026-09-13, review vòng 1 spec 2.3).
+  status: ĐÃ ĐÓNG (2026-09-14, Story 2.4). `tokenExpiredAt(expiresAt, now)` trong `apps/web/src/app/phong/[roomId]/room-media.ts` là người đọc; `RoomShell` kiểm tra trước khi mở socket và đặt một `setTimeout` tới đúng `expiresAt`. Hết hạn TRƯỚC khi `Connected` thì huỷ kết nối, dừng track, hiện câu "Chờ quá lâu, hãy vào lại." và nút về pre-join; sau `Connected` thì KHÔNG áp dụng, vì token mua cái bắt tay chứ không mua phiên — `joinPhaseFor` pin cả hai chiều. Không có retry ngầm và không xin token thứ hai: một lần bấm, một token, một `Room.connect`.
+
+- source_spec: none
+  summary: Duyệt và tìm phòng — vào được lớp đã từng học, lớp mình tạo, hoặc tìm theo keyword (AC2 của Story 2.4).
+  evidence: Tách khỏi intent Story 2.4 ngày 2026-09-14 theo cổng single-goal của bmad-build. Đây là một deliverable ship độc lập: nó cần endpoint đọc/liệt kê phòng ở `apps/api` (chủ ghi `rooms`) cộng một màn duyệt ở `apps/web`, và không chạm LiveKit, không chạm `apps/realtime-gateway`. Hôm nay `/v1` chỉ có `POST /v1/rooms` và `POST /v1/rooms/{roomId}/token`; đường duy nhất trong sản phẩm dẫn tới một phòng là link "Vào phòng" trên màn "Đã tạo phòng" (`create-room-form.tsx`), nên chưa có cách nào quay lại một lớp cũ. Gộp chung vào spec nối LiveKit sẽ đẩy spec vượt xa trần 1600 token và trộn hai PR review được riêng. Mục này cũng là chủ tự nhiên của thẻ thông tin phòng ở pre-join đã defer từ 2.3 (`GET /v1/rooms/{id}`), và phải chọn dứt khoát giữa hai con số "đang có mặt" — `room_participants` (trễ) hay `room_reservations` (chỗ đang giữ).
+  status: CHƯA CÓ CHỦ (2026-09-14, tách từ Story 2.4 — AC2).
+
+- source_spec: none
+  summary: `apps/realtime-gateway` ghi `room_participants` theo tín hiệu LiveKit khi một người vào hoặc rời phòng; `apps/api` chỉ đọc bảng này khi cưỡng chế trần (AC4 của Story 2.4).
+  evidence: Tách khỏi intent Story 2.4 ngày 2026-09-14 theo cổng single-goal. Đo được hôm nay: `apps/realtime-gateway/src/` có đúng tám file (health, http-setup, logging, main, config.token, app.module) — không có kết nối DB nào, không có webhook nào. Deliverable này phải dựng lần đầu: migration bảng `room_participants` + `GRANT` một chủ ghi duy nhất cho `stuwith_realtime` (AD-8, kể cả default privileges trên SEQUENCES), đường nhận webhook LiveKit có xác thực chữ ký, và kết nối `packages/db` đầu tiên của process này. Ship độc lập được vì trần gói hiện đang được cưỡng chế bằng `room_reservations` nguyên tử của Story 2.2, không bằng `room_participants` — nên vào phòng vẫn đúng khi bảng này chưa tồn tại.
+  status: CHƯA CÓ CHỦ (2026-09-14, tách từ Story 2.4 — AC4).
+
+- source_spec: none
+  summary: Bắt tay WebSocket tới `apps/realtime-gateway` xác thực ngay bằng chính session của `apps/api`, và rate limit áp theo cả IP lẫn user (AC5 của Story 2.4).
+  evidence: Tách khỏi intent Story 2.4 ngày 2026-09-14 theo cổng single-goal. `apps/realtime-gateway` hôm nay không có WebSocket, không có auth, không có kết nối DB hay Valkey — deliverable này dựng cả ba lần đầu, nên nó là một PR riêng theo mọi nghĩa. Nó cũng mang một món nợ phải trả TRƯỚC chứ không kế thừa: epic-2-context ghi rõ chiều "theo user" của rate limit đã ship là cơ chế đã hỏng — `request-identity.ts:134-147` băm cookie đang trình chứ không khoá theo tài khoản, vắng mặt trên chính hai chặng đăng nhập, và reset được bằng một lần gia hạn vì `auth.service.ts:536` cấp refresh token mới (trùng với mục retro `epic-1-retro-item-11`). Story nối LiveKit ở web không cần WebSocket này: LiveKit mang sự kiện người tham gia trên chính kết nối media của nó.
+  status: CHƯA CÓ CHỦ (2026-09-14, tách từ Story 2.4 — AC5).
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-4-vao-phong-nghe-thay-nhau.md`
+  summary: Không có track video nào được publish — "Để nguyên" hôm nay không khác "Ẩn mặt" dưới mắt người khác; chủ là Story 2.7.
+  evidence: Quyết định có chủ ý của spec 2.4, không phải việc làm dở. epic-2-context ràng buộc "track publish lên LiveKit luôn là track đã qua pipeline xử lý, kể cả ở chế độ Để nguyên", vì gắn processor SAU khi publish để hở một cửa sổ mà khung hình gốc đã rời máy. Pipeline đó là Story 2.7. Nếu 2.4 publish camera thô để "Để nguyên" có nghĩa ngay thì nó mở đúng cửa sổ epic cấm, và 2.7 sẽ phải đóng lại một thứ đã ship. Đo được hôm nay: `roomOptionsFor` đặt `adaptiveStream: false` và `dynacast: false` tường minh để 2.5 bật chúng có chủ đích, `audioPublishOptions()` khai sẵn `dtx`/`red`/`priority: 'high'` để khi có video thì thứ phải nhường đã được nói ra, và `RoomPanel` vẽ mọi người bằng avatar chữ cái.
+  status: CHƯA CÓ CHỦ (2026-09-14, Story 2.4 — thuộc 2.7).
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-4-vao-phong-nghe-thay-nhau.md`
+  summary: "p90 dưới 5 giây trên 4G phổ thông, tính tới lúc nghe được tiếng đầu tiên" không đo được trong CI — nợ vận hành, không phải nợ test.
+  evidence: Yêu cầu nằm trong epic-2-context. Probe `tests/e2e/livekit/phong-media.spec.ts` khẳng định tiếng đi qua (`bytesReceived > 0`) trên loopback của một runner, và đó là một khẳng định khác: không có RTT 4G, không mất gói, không jitter. Một con số đo ở đây sẽ là con số giả được đọc như số thật, nên spec từ chối dựng nó. Cách đóng: đo vận hành — RUM trên thiết bị thật, hoặc một bản đo có điều tiết mạng — cùng chỗ với track vận hành đang giữ coturn TLS và WAF.
+  status: CHƯA CÓ CHỦ (2026-09-14, Story 2.4).
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-4-vao-phong-nghe-thay-nhau.md`
+  summary: Người tham gia từ xa KHÔNG có tên hiển thị — token không mang claim `name`, nên mọi hàng trong danh sách đều đọc là "Người học".
+  evidence: `apps/api/src/rooms/room-token.ts` chỉ `setSubject(userId)`; LiveKit lấy tên hiển thị từ claim `name` của JWT, nên `Participant.name` luôn `undefined` và chuỗi duy nhất đi kèm một người là `identity` — chính là `users.id`. Đặt id tài khoản lên màn hình trong một sản phẩm lấy "hiện diện tách khỏi danh tính" làm luận điểm là câu trả lời sai, nên `participantRowsFor` để `label` rỗng và `RoomPanel` hiện `room.participantUnnamed`; chữ cái avatar vẫn lấy từ `identity` nên mọi người còn phân biệt được. Hai đường đóng, cả hai đều là quyết định chưa ai làm: thêm claim `name` (hoặc `metadata`) vào token — phải trả lời trước "tên nào được lộ cho người lạ", vì `display_name` là tên thật; hoặc để endpoint đọc phòng trả danh sách tên. Chủ tự nhiên: Story 2.6 (lưới người tham gia) hoặc mục "duyệt và tìm phòng".
+  status: CHƯA CÓ CHỦ (2026-09-14, Story 2.4).
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-4-vao-phong-nghe-thay-nhau.md`
+  summary: Token vào phòng cấp `canPublish: true` mà KHÔNG có `canPublishSources`, nên "không khung hình nào rời máy" hôm nay chỉ được cưỡng chế bằng mã client, không bằng cấu trúc.
+  evidence: `apps/api/src/rooms/room-token.ts:62-67` dựng grant `{room, roomJoin:true, canPublish:true, canSubscribe:true}`. Trước Story 2.4 điều này trơ, vì không trình duyệt nào nối. Nay mặt phẳng media đã mở, và không có gì ở phía server, trong `infra/livekit.yaml`, trong `tests/gates/livekit-token.test.ts` hay trong probe mới chặn một client publish track camera. epic-2-context ra luật "không bao giờ publish track camera trực tiếp — đóng cửa sổ rò khung hình gốc bằng CẤU TRÚC, không bằng canh giờ", mà cấu trúc đó chưa tồn tại: `canPublishSources: ['microphone']` là một dòng biến ràng buộc thành tính chất của token. Story 2.4 không sửa vì Code Map của spec ghi rõ `room-token.ts` là chỉ đọc, và mã hôm nay không publish video nên chưa có người dùng vô ý nào bị lộ — đường duy nhất đi được là tự chạy JS tự viết lên chính mình. Chủ: Story 2.7, phải đặt `canPublishSources` TRƯỚC khi publish video thật.
+  status: CHƯA CÓ CHỦ (2026-09-14, review Story 2.4 — blind-hunter).
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-4-vao-phong-nghe-thay-nhau.md`
+  summary: Trong phòng không có cách bật/tắt micro hay thử lại thiết bị — mọi trục trặc micro chỉ có một lối chữa là rời phòng rồi vào lại.
+  evidence: `room.errorMicEnded` viết thẳng "Hãy vào lại phòng nếu muốn bật lại", và đó đúng là lựa chọn duy nhất: `RoomShell` xin micro một lần trong effect và không có nút nào xin lại. Giá của lối chữa đó không nhỏ — vào lại là một token mới, một hàng `room_reservations` mới dưới TTL 120s, và ở phòng đã đầy thì có thể không còn chỗ để quay lại. Chủ tự nhiên: Story 2.6, nơi `control-bar` của DESIGN.md:341 dựng bốn nút chính gồm Mic.
+  status: CHƯA CÓ CHỦ (2026-09-14, review Story 2.4 — blind-hunter).
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-4-vao-phong-nghe-thay-nhau.md`
+  summary: `PARTICIPANT_REMOVED`, `ROOM_DELETED` và `SERVER_SHUTDOWN` đều đọc thành một câu "Mất kết nối tới phòng." — bị host đuổi khác hẳn với mạng rớt.
+  evidence: `disconnectReasonKeyFor` trong `apps/web/src/app/phong/[roomId]/room-media.ts` chỉ tách hai mã (`CLIENT_INITIATED`, `DUPLICATE_IDENTITY`) và gom phần còn lại vào một câu. Ma trận của 2.4 chỉ khai hai ca đó nên mã đúng spec. Nhưng "bạn vừa bị đuổi khỏi phòng" là một sự thật người dùng cần biết và không suy ra được từ câu mất kết nối — và nó có hệ quả: người bị đuổi sẽ bấm thử lại. Chủ: Story 4.7 (report và thu hồi quyền) hoặc 4.8 (đóng phòng hai bước), là nơi hai mã kia bắt đầu xảy ra thật.
+  status: CHƯA CÓ CHỦ (2026-09-14, review Story 2.4 — blind-hunter).
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-4-vao-phong-nghe-thay-nhau.md`
+  summary: Probe LiveKit chạy dưới `room.auto_create: true` trong khi bản triển khai đặt `false`, và không gì phủ ca "phòng chưa tồn tại".
+  evidence: `tests/e2e/livekit/global-setup.ts` dựng cấu hình riêng với `auto_create: true`, có ghi lý do: `infra/livekit.yaml:25` đặt `false` vì trên stack thật phòng do bên sở hữu quyết định kết nạp tạo ra (AD-9), mà `apps/api` không nằm trong đường của probe. Đánh đổi được ghi chép đàng hoàng, nhưng hệ quả vẫn còn: thứ duy nhất chứng minh mặt phẳng media chạy được đang chạy dưới một chính sách tạo phòng mà production không có, và "token hợp lệ nhưng phòng chưa được tạo" — một câu trả lời 404/refused thật của LiveKit — chưa có ca nào. Chủ: story dựng đường tạo phòng theo AD-9.
+  status: CHƯA CÓ CHỦ (2026-09-14, review Story 2.4 — blind-hunter).
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-4-vao-phong-nghe-thay-nhau.md`
+  summary: `joinPhaseFor` trả `failed` bất cứ khi nào `error !== null`, không kèm điều kiện trạng thái kết nối — nên bất kỳ đường hồi phục nào thêm sau này sẽ vẽ màn hình lỗi đè lên một phòng đang sống.
+  evidence: `apps/web/src/app/phong/[roomId]/room-media.ts` — nhánh `expired` đã được cân nhắc kỹ và có guard `!live`, còn nhánh `error` thì không có đối ứng. Hôm nay vô hại vì `errorKey` chỉ được đặt trên các đường kết thúc phiên và không có đường nào quay lại. Nó thành lỗi thật ngay khi ai đó thêm "thử lại mà không rời phòng", hoặc khi một `Reconnected` đến sau một lỗi tạm. Ghi lại vì đây đúng là loại bất đối xứng mà người đọc sau sẽ tưởng là có chủ ý.
+  status: CHƯA CÓ CHỦ (2026-09-14, review Story 2.4 — verification-gap).
