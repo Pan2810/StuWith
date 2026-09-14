@@ -22,7 +22,7 @@ import { EN_MESSAGES } from './messages.en';
  *
  * Decided by a human on 2026-09-07 (ISO, because `07/09` is two dates in two
  * countries and this file is written in English), and decided on a MEASUREMENT
- * rather than a preference: this catalogue holds 2 plural strings and 6
+ * rather than a preference: this catalogue holds 3 plural strings and 7
  * interpolation templates, and the product does no locale-based routing. A library
  * brings a runtime, an ICU parser and a loading model to serve those three facts,
  * and it brings its own answer to the one question that matters here —
@@ -271,7 +271,85 @@ const VI_MESSAGES = {
   'room.faceHide': 'Bạn đang ẩn mặt.',
   'room.audioMic': 'Micro của bạn đang bật.',
   'room.audioListenOnly': 'Bạn vào chỉ để nghe.',
+  /**
+   * Filter is disabled at pre-join today and Story 2.7 enables it. The sentence
+   * exists now because the panel maps all three modes through a `Record`, so 2.7
+   * cannot ship a room that tells a filtered face it is showing plainly.
+   */
+  'room.faceFilter': 'Bạn đang dùng filter cho khuôn mặt.',
   'room.notRecorded': 'Buổi học này không được ghi lại.',
+
+  /**
+   * Story 2.4 — the room with a media plane under it.
+   *
+   * Every one of these is TEXT for a state that also has a colour, and that is
+   * Epic 2's rule rather than a preference: the "Cắm trại" palette pairs green
+   * with terracotta, which is the hardest pair there is for red-green colour
+   * blindness, and it is carrying the three most important facts on the screen —
+   * who is speaking, whose microphone is off, and whether the connection is up.
+   *
+   * `room.you` exists so a row can name the reader without the product ever
+   * composing a sentence around a display name: the row holds the NAME as data,
+   * and this key is what the panel renders in its place when the row is the
+   * reader's own.
+   */
+  /**
+   * The heading is a CLAIM, so it follows the phase. "Bạn đã vào phòng" printed
+   * above "Không vào được phòng." is the page telling somebody they are in a room
+   * they never reached, in the one element that names the page.
+   */
+  'room.headingJoining': 'Đang vào phòng',
+  'room.headingOutside': 'Chưa vào được phòng',
+  'room.headingLeft': 'Bạn đã rời phòng',
+  'room.statusConnecting': 'Đang vào phòng…',
+  'room.statusConnected': 'Đang ở trong phòng',
+  'room.statusReconnecting': 'Đang nối lại…',
+  'room.statusLeft': 'Đã rời phòng',
+  'room.participants': 'Người trong phòng',
+  /**
+   * What a row says when LiveKit carries no display name — which is EVERY remote
+   * row today. `mintRoomToken` signs `sub` and no `name` claim, so the only string
+   * that arrives with a participant is the account id, and putting that on screen
+   * in a product built on presence without identity would be the wrong answer.
+   * The avatar letters still come from the identity, so people stay apart.
+   */
+  'room.participantUnnamed': 'Người học',
+  /**
+   * The THIRD string that needs a plural. Vietnamese has one plural category, so
+   * both rows carry the same sentence and `Intl.PluralRules` picks between the
+   * English pair.
+   */
+  'room.participantCount.one': 'Có {count} người trong phòng.',
+  'room.participantCount.other': 'Có {count} người trong phòng.',
+  'room.speaking': 'Đang nói',
+  'room.micOff': 'Đang tắt micro',
+  'room.you': 'Bạn',
+  'room.leave': 'Rời phòng',
+  /**
+   * Autoplay refused, which is the failure that looks most like success: the room
+   * is up, everybody is listed, and there is silence. Nothing else on the screen
+   * would admit it, so this sentence and the gesture beside it are the whole of
+   * the fix. `--autoplay-policy=no-user-gesture-required` in the Playwright launch
+   * args means the probe cannot see this branch; `phong.spec.ts` drives it the way
+   * Story 2.3 drove the suspended `AudioContext`, by refusing playback in the page.
+   */
+  'room.audioBlocked': 'Trình duyệt đang chặn âm thanh của phòng.',
+  'room.enableAudio': 'Bật âm thanh',
+  /**
+   * The six refusals of the story's edge-case matrix, one sentence each.
+   *
+   * `errorDuplicate` is the one `deferred-work.md` predicted before any code
+   * could produce it: a room token's `sub` is the account id and LiveKit treats
+   * that as the participant identity, so the same person joining twice evicts
+   * their own first connection. Told plainly, that is a sentence somebody can act
+   * on; told as a disconnection, it is a product that drops people at random.
+   */
+  'room.errorMicDenied': 'Không mở được micro. Bạn vẫn nghe được mọi người.',
+  'room.errorMicEnded': 'Micro đã ngừng hoạt động. Hãy vào lại phòng nếu muốn bật lại.',
+  'room.errorDuplicate': 'Bạn đã vào phòng này ở nơi khác.',
+  'room.errorExpired': 'Chờ quá lâu, hãy vào lại.',
+  'room.errorConnect': 'Không vào được phòng.',
+  'room.errorDisconnected': 'Mất kết nối tới phòng.',
 
   /**
    * The ten sentences `packages/contracts` owns, IMPORTED rather than retyped.

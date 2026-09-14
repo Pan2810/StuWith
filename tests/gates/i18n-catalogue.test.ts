@@ -764,7 +764,12 @@ describe('rule 5 — the counts in the catalogue docblock are counted, not remem
 
   it('agrees with the catalogue about how many strings need a plural', () => {
     const actual = pluralBases(VI_CATALOGUE);
-    expect([...actual].sort()).toEqual(['countdown.retryIn', 'createRoom.capacity'].sort());
+    // The INVENTORY, not just the count: a plural pair renamed or lost is a
+    // different failure from a pair added, and only a named list sees the first.
+    // Story 2.4 added the third — the room's participant count.
+    expect([...actual].sort()).toEqual(
+      ['countdown.retryIn', 'createRoom.capacity', 'room.participantCount'].sort(),
+    );
     expect(Number(claimed?.[1]), `the docblock says ${claimed?.[1]}, the catalogue has ${actual.size}`).toBe(
       actual.size,
     );

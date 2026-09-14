@@ -541,7 +541,13 @@ describe('preJoinStateFor — the state machine', () => {
  * -------------------------------------------------------------------------- */
 
 describe('PreJoinPanel — the shell renders from admitted and from nowhere else', () => {
-  const SHELL_HEADING = VI_TRANSLATE('room.heading');
+  /**
+   * The heading the shell shows ON ARRIVAL, which from Story 2.4 is the JOINING
+   * one: the room's heading follows the join phase, and a freshly mounted shell
+   * has not connected yet. `room-panel.test.tsx` owns the phase-by-phase table;
+   * what this file is about is WHICH branch renders a shell at all.
+   */
+  const SHELL_HEADING = VI_TRANSLATE('room.headingJoining');
 
   it('renders the shell for admitted, with the decision restated and no token in the markup', () => {
     const html = render({ kind: 'admitted', decision: decision({ audio: 'listen-only' }) });
@@ -788,7 +794,7 @@ describe('both locales', () => {
       expect(html).not.toMatch(/preJoin\.[a-zA-Z.0-9]+/);
     }
     const shell = render({ kind: 'admitted', decision: decision() }, { locale });
-    expect(shell).toContain(t('room.heading'));
+    expect(shell).toContain(t('room.headingJoining'));
     expect(shell).not.toMatch(/room\.[a-zA-Z]+/);
   });
 

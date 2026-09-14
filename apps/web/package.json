@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@stuwith/contracts": "workspace:*",
+    "livekit-client": "2.22.3",
     "next": "16.3.0",
     "react": "19.2.8",
     "react-dom": "19.2.8"

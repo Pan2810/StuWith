@@ -28,6 +28,7 @@
  */
 
 const http = require('node:http');
+const fs = require('node:fs');
 const { randomUUID } = require('node:crypto');
 const contracts = require('../../../packages/contracts/dist/index.js');
 
@@ -86,6 +87,61 @@ const HEALTH_PATH = '/__e2e__/healthz';
 
 const PORT = Number(process.env['FAKE_API_PORT'] ?? 3200);
 const WEB_ORIGIN = process.env['FAKE_API_WEB_ORIGIN'] ?? 'http://127.0.0.1:3100';
+
+/**
+ * Story 2.4 — the mode in which the token this fake mints is a REAL one.
+ *
+ * Off unless `tests/e2e/livekit/global-setup.ts` has started a `livekit-server`
+ * container and written its URL and key pair to the hand-off file, so every other
+ * spec keeps the obviously-fake `e2e-token.<uuid>` it has always had and keeps
+ * asserting that the string never reaches the DOM.
+ *
+ * Read per REQUEST rather than once at startup, and that is not laziness for its
+ * own sake: Playwright starts every `webServer` before `globalSetup` (plugin setup
+ * comes first in `createGlobalSetupTasks`), so this process is already listening
+ * when the container starts. An environment variable could never carry the key
+ * pair here; the PATH can, because it is known at configuration time.
+ *
+ * When it IS on, the signature comes from `apps/api/dist` — `mintRoomToken`
+ * itself, not a re-implementation — with the key pair the container was started
+ * with. That is what makes the probe's far-side mutation real: start the container
+ * with a different secret and LiveKit refuses a token this file signed correctly,
+ * which is a mutation in the PROVIDER rather than in our code. The second mutation
+ * (removing `room` from the grant in `apps/api/src/rooms/room-token.ts`) travels
+ * the same path, because the path goes through the product's own minting code.
+ */
+const LIVEKIT_HANDOFF = process.env['E2E_LIVEKIT_HANDOFF'] ?? '';
+
+function liveKitHandoff() {
+  if (LIVEKIT_HANDOFF === '') {
+    return null;
+  }
+  /**
+   * ONE try block around the read, the parse and the require.
+   *
+   * The first version guarded only the read, which left two ways for a request to
+   * die inside a stand-in HTTP server: a `JSON.parse` of a half-written file (the
+   * setup used to write straight to the final path), and a `require` of
+   * `apps/api/dist` in a checkout where `apps/api` was never built. Neither is a
+   * product failure, and both surfaced as a 500 from a fixture two hops from the
+   * cause. `global-setup.ts` now writes atomically and refuses to start without
+   * the build; this is the belt.
+   */
+  try {
+    const { url, apiKey, apiSecret } = JSON.parse(fs.readFileSync(LIVEKIT_HANDOFF, 'utf8'));
+    if (!url || !apiKey || !apiSecret) {
+      return null;
+    }
+    // Required lazily: a run without the container must not depend on `apps/api`
+    // having been built, and none of the other webServer processes needs it.
+    const { mintRoomToken } = require('../../../apps/api/dist/rooms/room-token.js');
+    return { url, apiKey, apiSecret, mintRoomToken };
+  } catch {
+    // No file, or nothing usable in it: the placeholder token below is what every
+    // spec outside `tests/e2e/livekit` has always received.
+    return null;
+  }
+}
 
 /**
  * One scenario PER BROWSER CONTEXT, not one per server.
@@ -151,6 +207,10 @@ function baseUser() {
 function currentUserBody(state) {
   return currentUserSchema.parse({
     ...baseUser(),
+    // Story 2.4: the profile and the room token name the SAME person. A scenario
+    // that picks its own `userId` (the probe's two contexts do) must not be told
+    // one id by `/v1/auth/me` and signed another into the token.
+    id: state.userId,
     profile_completed: state.declared,
     is_over_18: state.declared,
   });
@@ -307,6 +367,52 @@ async function dispatch(req, res) {
        */
       roomTokenStatus: next?.roomTokenStatus ?? 201,
       roomTokenReason: next?.roomTokenReason ?? null,
+      /**
+       * Story 2.4. WHO the token is for — the `sub`, which IS the participant
+       * identity on LiveKit.
+       *
+       * It has to be settable because the probe puts two browser contexts in one
+       * room, and two connections under one identity is the eviction
+       * `deferred-work.md` recorded rather than two people in a room. Scenario
+       * state is already per-context (see {@link SCENARIO_COOKIE}), so the two
+       * contexts choose their own without coordinating.
+       */
+      userId: next?.userId ?? baseUser().id,
+      /**
+       * Story 2.4. Whether THIS scenario wants a real LiveKit token.
+       *
+       * Opt-in per browser context, not "on whenever a container happens to be
+       * running" — which is what it was for one round, and a full
+       * `playwright test` proved it wrong at once: the container is a property of
+       * the RUN, so with both browser projects selected the `web` specs started
+       * receiving real tokens pointing at the container and three of them went
+       * red on assertions about `ws://127.0.0.1:7880` and about `e2e-token.` never
+       * reaching the DOM. Those assertions are right and the fixture was wrong.
+       * Only `tests/e2e/livekit` asks for this.
+       */
+      useLiveKit: next?.useLiveKit === true,
+      /**
+       * Story 2.4. How far from NOW the admission lapses, in seconds.
+       *
+       * `ROOM_TOKEN_TTL_SECONDS` when omitted, so every existing spec is unchanged.
+       * A NEGATIVE value hands the browser a `201` whose seat has already lapsed,
+       * which is the only way to reach the shell's expiry branch in a browser: the
+       * real API cannot produce it, and waiting 120 seconds in a spec is not a
+       * test, it is a timeout. The branch it drives is the one Story 2.3 deferred
+       * and this story is supposed to have closed.
+       */
+      expiresAtOffsetSeconds:
+        typeof next?.expiresAtOffsetSeconds === 'number'
+          ? next.expiresAtOffsetSeconds
+          : ROOM_TOKEN_TTL_SECONDS,
+      /**
+       * The LiveKit address the `201` names. Default `null` means "the placeholder
+       * origin every other spec asserts against"; a spec that needs a handshake
+       * which HANGS rather than one that is refused sets a blackholed address here.
+       * Ignored when a real container is up: `useLiveKit` names a server that
+       * exists, and there is nothing to simulate.
+       */
+      roomTokenUrl: typeof next?.roomTokenUrl === 'string' ? next.roomTokenUrl : null,
     };
     if (
       state.roomTokenReason !== null &&
@@ -524,17 +630,34 @@ async function dispatch(req, res) {
     }
     switch (state.roomTokenStatus) {
       case 201: {
-        const expiresAt = new Date(Date.now() + ROOM_TOKEN_TTL_SECONDS * 1_000).toISOString();
+        const issuedAt = new Date();
+        const expiresAt = new Date(issuedAt.getTime() + state.expiresAtOffsetSeconds * 1_000);
+        /**
+         * Story 2.4: a REAL token against a REAL server when the container is up,
+         * and the Story 2.3 placeholder otherwise. The placeholder is obviously
+         * not a JWT on purpose — nothing presents it anywhere, and a spec that
+         * finds `e2e-token.` in the DOM has found a leak.
+         */
+        const livekit = state.useLiveKit ? liveKitHandoff() : null;
+        const token =
+          livekit === null
+            ? `e2e-token.${randomUUID()}`
+            : await livekit.mintRoomToken({
+                apiKey: livekit.apiKey,
+                apiSecret: livekit.apiSecret,
+                roomId,
+                userId: state.userId,
+                issuedAt,
+                expiresAt,
+              });
         send(
           res,
           201,
           roomTokenResponseSchema.parse({
-            // Obviously not a real JWT, and deliberately so: nothing in Story 2.3
-            // presents it anywhere, and a spec that finds it in the DOM has found
-            // a leak.
-            token: `e2e-token.${randomUUID()}`,
-            url: 'ws://127.0.0.1:7880',
-            expires_at: expiresAt,
+            token,
+            url:
+              livekit === null ? (state.roomTokenUrl ?? 'ws://127.0.0.1:7880') : livekit.url,
+            expires_at: expiresAt.toISOString(),
             room_id: roomId,
           }),
         );

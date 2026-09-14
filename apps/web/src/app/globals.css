@@ -909,6 +909,104 @@ a {
   margin: 0;
 }
 
+/* ==================== phòng học (Story 2.4) ==================== */
+
+/*
+  Một DANH SÁCH, không phải lưới. Lưới composite đi được bằng bàn phím là 2.6
+  (`DESIGN.md:334` đặc tả `tile-participant`), và dựng nửa cái lưới ở đây sẽ để
+  lại một thứ 2.6 phải gỡ ra. Hôm nay mỗi người là một hàng: avatar chữ cái, tên,
+  và trạng thái BẰNG CHỮ.
+
+  `room-status` bọc chip trên một dòng riêng vì nó là `role="status"`: vùng live
+  đọc cái vừa ĐỔI, nên nó phải ôm đúng chip chứ không ôm cả thẻ.
+*/
+.room-status {
+  margin: 0;
+}
+
+.participant-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-2);
+}
+
+/*
+  Sàn 48px cho cả hàng — cùng con số `DESIGN.md` đặt cho nút, vì 2.6 sẽ biến hàng
+  này thành một ô bấm được và một hàng 32px hôm nay là một mục tiêu chạm hỏng mai.
+
+  `flex-wrap` là nửa còn lại của reflow 320px: chuỗi tiếng Việt dài hơn tiếng Anh
+  15–25%, nên "Đang tắt micro" bên cạnh một cái tên dài phải xuống dòng chứ không
+  bị cắt (WCAG 1.4.10).
+*/
+.participant-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--spacing-2) var(--spacing-3);
+  min-height: 48px;
+  padding: var(--spacing-2) var(--spacing-3);
+  border: 2px solid var(--border-ink);
+  border-radius: var(--rounded-md);
+  background: var(--surface-raised);
+  min-width: 0;
+}
+
+/*
+  `avatar-letter` dùng chung với ô xem trước của pre-join, nơi nó co theo khung
+  4:3. Trong một hàng nó phải là một ô cố định, nếu không `clamp(…, 40%, …)` đọc
+  40% của chiều rộng hàng và nuốt cả dòng ở 320px.
+*/
+.participant-row .avatar-letter {
+  width: var(--spacing-12);
+  flex: none;
+  border-radius: var(--rounded-sm);
+  font-size: var(--typography-title-font-size);
+  font-weight: var(--typography-title-font-weight);
+  line-height: var(--typography-title-line-height);
+  letter-spacing: normal;
+  /*
+    Nghiêng -3deg là chữ ký của ô xem trước ở pre-join, nơi nó đứng một mình trong
+    một khung rộng. Trong một hàng 48px nó xoay bên trong một hộp đo theo ô KHÔNG
+    xoay, nên bốn góc thò ra khỏi padding và đè lên tên bên cạnh. Không đổi màu gì
+    ở đây — cặp `ink-primary` trên `tile-avatar-bg` vẫn là cặp `.avatar-letter` đã
+    khai trong `contrast.test.ts`.
+  */
+  transform: none;
+}
+
+/*
+  Màu khai TƯỜNG MINH chứ không thừa kế, và đó là lý do có `contrast.test.ts`:
+  hàng là một đảo `surface-raised` nằm trong một thẻ cũng `surface-raised`, nên
+  cặp thật sự được compose phải có tên trong bảng COMPOSED. Thừa kế im lặng là
+  cách một cặp trôi đi mà không ai thấy.
+*/
+.participant-name {
+  color: var(--ink-primary);
+  font-size: var(--typography-body-strong-font-size);
+  font-weight: var(--typography-body-strong-font-weight);
+  line-height: var(--typography-body-strong-line-height);
+  /* Tên dài xuống dòng trong ô của nó, không đẩy trạng thái ra khỏi hàng. */
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/*
+  Trạng thái là CHỮ, và đó là cả quy tắc: cặp xanh-lá / đất-nung của hệ "Cắm trại"
+  là cặp khó nhất với người mù màu đỏ-lục, mà "đang nói" và "mic tắt" là hai thông
+  tin quan trọng nhất trong phòng (epic-2-context). Nên ô này không tô màu gì cả —
+  nó chỉ là câu, đẩy về cuối hàng.
+*/
+.participant-state {
+  margin-left: auto;
+  font-size: var(--typography-meta-font-size);
+  font-weight: var(--typography-meta-font-weight);
+  line-height: var(--typography-meta-line-height);
+  color: var(--ink-secondary);
+}
+
 /* ===================== reduced motion ===================== */
 
 /*
