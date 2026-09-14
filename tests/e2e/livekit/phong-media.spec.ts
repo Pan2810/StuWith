@@ -218,7 +218,23 @@ async function joinAs(
   const page = await context.newPage();
   await scenario(page, { signedIn: true, userId, useLiveKit: true, ...extra });
   await page.goto(room);
-  await expect(page.locator('video')).toBeVisible();
+  /**
+   * A PRECONDITION, not a claim — so it gets a generous window rather than the
+   * 5s default.
+   *
+   * Measured on CI 2026-09-14: the simulcast case runs immediately after the
+   * container is stopped and started again, and on a loaded runner the fake
+   * camera's preview took longer than five seconds to paint. Playwright then
+   * retried the WHOLE serial file, so one slow `getUserMedia` cost fourteen
+   * re-runs and reported `1 flaky` — a probe suite that retries itself green is
+   * a probe suite nobody can read. No case in this file asserts how FAST the
+   * pre-join preview appears; every case asserts what happens once it is there.
+   *
+   * The local run cannot surface this: `playwright.config.ts` sets `retries: 2`
+   * under CI and `0` here, so a flake is a hard failure locally and a green tick
+   * with a footnote in CI.
+   */
+  await expect(page.locator('video')).toBeVisible({ timeout: 30_000 });
   if (faceMode === 'hide') {
     // Scoped to PRE-JOIN's own group. Unscoped it is unambiguous only because the
     // room's group has not mounted yet — a fact about the order of two screens,
