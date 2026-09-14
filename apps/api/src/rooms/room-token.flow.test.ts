@@ -186,6 +186,7 @@ describe('Matrix: a valid request', () => {
       roomJoin: true,
       canPublish: true,
       canSubscribe: true,
+      canPublishSources: ['microphone', 'camera'],
     });
   });
 

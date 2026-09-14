@@ -70,13 +70,45 @@ describe('mintRoomToken — the claims, one by one', () => {
 
   it('grants join, publish and subscribe for EXACTLY the one room, and nothing else', async () => {
     const { payload } = await decode(await mintRoomToken(input()));
-    // `toEqual`, so a fifth key — any fifth key — is a failure, not a surprise.
+    // `toEqual`, so a SIXTH key — any sixth key — is a failure, not a surprise.
     expect(payload['video']).toEqual({
       room: ROOM,
       roomJoin: true,
       canPublish: true,
       canSubscribe: true,
+      canPublishSources: ['microphone', 'camera'],
     });
+  });
+
+  it('names the two sources a study room has, and never a third', async () => {
+    /**
+     * Story 2.7. `canPublish: true` with no source list let a client publish
+     * whatever it liked — a screen share above all — and nothing on this side
+     * refused it. Pinned BY NAME on top of the exact-equality above, because the
+     * failure to catch is a widened array rather than a missing key, and a widened
+     * array reads as a harmless extra string.
+     *
+     * What this does NOT claim is in the type's docblock: LiveKit cannot tell a
+     * canvas track from a camera track, so this grant does not enforce AD-30
+     * rule (b).
+     */
+    const { payload } = await decode(await mintRoomToken(input()));
+    const video = payload['video'] as Record<string, unknown>;
+    /**
+     * The presence check comes FIRST, and it is not ceremony: the previous
+     * spelling cast straight to an array, so deleting the key threw a `TypeError`
+     * out of the test body instead of failing with the name of what was missing.
+     */
+    expect(video).toHaveProperty('canPublishSources');
+    const sources = video['canPublishSources'];
+    expect(Array.isArray(sources)).toBe(true);
+    // The ARRAY, said positively — a name promising "the two sources and never a
+    // third" that only checks two absent substrings passes against `[]`, against
+    // `['camera']`, and against a list carrying a fourth source spelled otherwise.
+    expect(sources).toEqual(['microphone', 'camera']);
+    expect(sources).not.toContain('screen_share');
+    expect(sources).not.toContain('screen_share_audio');
+    expect(JSON.stringify(payload)).not.toContain('screen_share');
   });
 
   it.each(['roomCreate', 'roomAdmin', 'roomList'])(

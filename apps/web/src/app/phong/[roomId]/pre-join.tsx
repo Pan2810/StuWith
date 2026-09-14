@@ -14,7 +14,7 @@ import { useT } from '../../i18n/use-t';
 import { PROFILE_RETRY_KEY, unavailableMessageKey, type ProfileLoadOutcome } from '../../profile-load';
 import { RATE_LIMITED_STATUS, SESSION_EXPIRED_STATUS, returnPathFor } from '../../session-expiry';
 import { SignInProviderLinks } from '../../sign-in-links';
-import { avatarInitialsFor } from './room-media';
+import { BLOCKED_DEVICE_ERRORS, MISSING_DEVICE_ERRORS, avatarInitialsFor } from './room-media';
 import {
   FACE_MODES,
   RoomShell,
@@ -94,24 +94,11 @@ export function mediaConstraintsFor(stage: MediaStage): MediaStreamConstraints {
 }
 
 /**
- * The error names the two families of refusal go by.
- *
- * `NotAllowedError` is the standard name; `PermissionDeniedError` is what an
- * older Chromium spelled it; `SecurityError` is "this page is not allowed to ask"
- * (an insecure context, a `Permissions-Policy`), which for the person is the same
- * wall with the same way round it. `NotFoundError` and its old spelling say "no
- * such device"; `OverconstrainedError` with `video: true` can only mean the same.
+ * The two families of refusal now live in `room-media.ts`, and the reason is in
+ * their docblock: `RoomShell` classifies the SAME browser vocabulary for the room's
+ * own camera, and two readings of it disagreed about an unplugged device. This
+ * screen reads the declaration rather than keeping a second copy of it.
  */
-const BLOCKED_ERRORS: ReadonlySet<string> = new Set([
-  'NotAllowedError',
-  'PermissionDeniedError',
-  'SecurityError',
-]);
-const MISSING_DEVICE_ERRORS: ReadonlySet<string> = new Set([
-  'NotFoundError',
-  'DevicesNotFoundError',
-  'OverconstrainedError',
-]);
 
 /**
  * The state one `getUserMedia` answer puts the screen in, given which request it
@@ -133,7 +120,7 @@ export function deviceStateFor(errorName: string | null, stage: MediaStage): Dev
   if (errorName === null) {
     return stage === 'audio-only' ? 'no-camera' : 'granted';
   }
-  if (BLOCKED_ERRORS.has(errorName)) {
+  if (BLOCKED_DEVICE_ERRORS.has(errorName)) {
     return 'blocked';
   }
   if (stage === 'video-only') {

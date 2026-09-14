@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 08-21-2026 21:27
-last_updated: 09-14-2026 23:40
+last_updated: 09-15-2026 00:20
 project: StuWith
 project_key: NOKEY
 tracking_system: file-system
@@ -53,7 +53,7 @@ development_status:
   2-4-vào-phòng-và-nghe-thấy-nhau: review
   2-5-thang-suy-giảm-mạng-bốn-bậc: backlog
   2-6-lưới-người-tham-gia-đi-được-bằng-bàn-phím: backlog
-  2-7-ba-chế-độ-khuôn-mặt-xử-lý-client-side: backlog
+  2-7-ba-chế-độ-khuôn-mặt-xử-lý-client-side: in-progress
   2-8-chat-cả-phòng-với-lọc-nội-dung-và-report: backlog
   epic-2-retrospective: optional
 

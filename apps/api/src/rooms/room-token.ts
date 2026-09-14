@@ -14,7 +14,8 @@ import { SignJWT } from 'jose';
  *
  * ## What it grants, and — more importantly — what it does not
  *
- * `roomJoin`, `canPublish`, `canSubscribe`, for exactly ONE room. Not `roomCreate`,
+ * `roomJoin`, `canPublish`, `canSubscribe` and the two sources a study room has —
+ * `microphone` and `camera` — for exactly ONE room. Not `roomCreate`,
  * not `roomAdmin`, not `roomList`: a token that could create rooms would let any
  * signed-in person bypass the plan cap by inventing a room LiveKit knows and
  * `rooms` does not; one that could administer would let them remove others; one
@@ -47,15 +48,34 @@ export interface RoomTokenInput {
 /**
  * The `video` claim, spelled once as a TYPE so the test can decode into it.
  *
- * Exactly these four keys. The three admin grants are not optional members that
- * happen to be absent — they are not members at all, so a value carrying one does
- * not typecheck as this.
+ * Exactly these FIVE keys — four until Story 2.7 added `canPublishSources`. The
+ * three admin grants are not optional members that happen to be absent: they are
+ * not members at all, so a value carrying one does not typecheck as this.
+ *
+ * ## `canPublishSources`, and what it does NOT do
+ *
+ * Story 2.4 opened the media plane with `canPublish: true` and no source list, so
+ * a client could publish anything it liked — a screen share, a second camera —
+ * and nothing on this side would refuse it. The two names below are the only two
+ * the product ever publishes, so listing them turns "we only send a face and a
+ * voice" from a property of `apps/web` into a property of the token.
+ *
+ * **The scope is narrow and reading it wider is a mistake with consequences.**
+ * This does not enforce AD-30 rule (b), which says the frames leaving the machine
+ * must already have been through the face pipeline: LiveKit sees a canvas track
+ * and a camera track as the same thing — both are the `camera` source — so no
+ * grant here can tell a processed frame from a raw one. That rule is a STRUCTURAL
+ * property of the client, held by `frame-pipeline.ts` and measured at
+ * `RTCRtpSender.track.id` in `tests/e2e/livekit/phong-media.spec.ts`. Anybody who
+ * reads this claim as "the sources are locked down at the server" has read it
+ * wrong, and `deferred-work.md` says so in the entry this closed.
  */
 export interface RoomVideoGrant {
   readonly room: string;
   readonly roomJoin: true;
   readonly canPublish: true;
   readonly canSubscribe: true;
+  readonly canPublishSources: readonly ['microphone', 'camera'];
 }
 
 export async function mintRoomToken(input: RoomTokenInput): Promise<string> {
@@ -64,6 +84,7 @@ export async function mintRoomToken(input: RoomTokenInput): Promise<string> {
     roomJoin: true,
     canPublish: true,
     canSubscribe: true,
+    canPublishSources: ['microphone', 'camera'],
   };
 
   return new SignJWT({ video })

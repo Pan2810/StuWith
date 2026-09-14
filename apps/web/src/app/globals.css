@@ -1007,6 +1007,93 @@ a {
   color: var(--ink-secondary);
 }
 
+/* ===================== video trong phòng (Story 2.7) ===================== */
+
+/*
+  Nhóm chọn chế độ khuôn mặt NGAY TRONG PHÒNG. Nó dùng lại `.field-group`,
+  `.choice-list` và `.choice` của pre-join — kể cả `.choice:has(input:disabled)`
+  cho mục Filter "Sắp có" — nên ở đây chỉ còn khoảng cách. Dùng lại chứ không
+  chép: một cặp màu thứ hai cho cùng một control là một cặp nữa phải có tên trong
+  bảng COMPOSED của `contrast.test.ts`, và là một cặp nữa có thể trôi đi.
+
+  Story 2.6 sẽ dời nhóm này vào popover của `control-bar`; lúc đó lớp này là chỗ
+  duy nhất phải sửa.
+*/
+.face-mode-group {
+  margin-block: var(--spacing-3);
+}
+
+/* Ô xem trước chính mình: khung hình, rồi câu "Đây là hình mọi người đang thấy." */
+.room-self {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-2);
+  margin-block: var(--spacing-3);
+}
+
+/*
+  Khung 4:3 như `.preview` của pre-join, nhưng là một lớp RIÊNG và đó là điều
+  quan trọng nhất ở khối này: `.preview-video` lật gương (`scaleX(-1)`) vì người
+  ta quen nhìn mình trong gương, còn đây là khung hình ĐANG ĐI LÊN DÂY. Lật nó
+  sẽ khiến ô xem trước nói sai về thứ người khác nhận — đúng cái lời hứa mà câu
+  bên dưới ô đang đưa ra.
+
+  `max-width` 320px để trên màn rộng ô không phình thành một cái gương; ở 320px
+  nó co theo cột như mọi thứ khác.
+*/
+.room-video {
+  position: relative;
+  aspect-ratio: 4 / 3;
+  width: 100%;
+  max-width: 320px;
+  min-width: 0;
+  border: 2px solid var(--border-ink);
+  border-radius: var(--rounded-lg);
+  background: var(--surface-sunken);
+  overflow: hidden;
+}
+
+/*
+  Một lớp cho MỌI `<video>` của phòng — ô của mình và ô trong hàng — nên không có
+  chỗ nào cho một biến thể lật gương lẻn vào.
+
+  `object-fit: contain`, và lý do là một lập luận đã từng SAI ở đây. Bản trước ghi
+  `cover` với giải thích "pipeline đã letterbox rồi nên phần bị cắt chỉ là viền
+  đen". Không đúng: `pipelineSizeFor` giữ nguyên tỉ lệ CỦA CAMERA, nên một camera
+  4:3 vẽ đầy một canvas 4:3 và không có viền nào cả. Đặt khung hình 4:3 đó vào ô
+  vuông 48px của một hàng, `cover` cắt mất khoảng một phần tư chiều ngang — tức là
+  cắt vào KHUÔN MẶT, đúng thứ mà cái ô sinh ra để hiện. `contain` thì thu nhỏ cho
+  lọt và để lại viền, đọc ra là một bức hình đầy đủ.
+*/
+.room-video-frame {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+/*
+  Khuôn mặt trong một hàng, đúng chỗ và đúng cỡ của `.avatar-letter`: 48px, sàn
+  mục tiêu chạm của `DESIGN.md`, và `flex: none` vì một hàng ở 320px không còn
+  chỗ cho một ô co giãn. Hai trạng thái cùng hình dạng nên hàng không nhảy khi
+  ai đó bật hay tắt camera.
+*/
+.participant-video {
+  /*
+    `display: block` khai tường minh: đây là một `<span>`, mặc định `inline`, và
+    một hộp inline bỏ qua `width`/`height` — ô sẽ co theo dòng chữ chứ không theo
+    hai con số ngay bên dưới.
+  */
+  display: block;
+  width: var(--spacing-12);
+  height: var(--spacing-12);
+  flex: none;
+  border: 2px solid var(--border-ink);
+  border-radius: var(--rounded-sm);
+  background: var(--surface-sunken);
+  overflow: hidden;
+}
+
 /* ===================== reduced motion ===================== */
 
 /*

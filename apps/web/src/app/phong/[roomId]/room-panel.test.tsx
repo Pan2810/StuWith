@@ -3,8 +3,16 @@ import { describe, expect, it } from 'vitest';
 import { LOCALES, type Locale } from '../../i18n/locale';
 import { VI_TRANSLATE, translatorFor } from '../../i18n/messages';
 import { I18nProvider } from '../../i18n/use-t';
-import type { JoinPhase, MediaDecision, ParticipantRow } from './room-media';
-import { ROOM_COUNT_ID, ROOM_HEADING_ID, ROOM_PARTICIPANTS_ID, ROOM_STATUS_ID, RoomPanel } from './room-panel';
+import type { JoinPhase, MediaDecision, MediaFaceMode, ParticipantRow } from './room-media';
+import {
+  ROOM_COUNT_ID,
+  ROOM_FACE_MODE_LEGEND_ID,
+  ROOM_HEADING_ID,
+  ROOM_PARTICIPANTS_ID,
+  ROOM_SELF_PREVIEW_ID,
+  ROOM_STATUS_ID,
+  RoomPanel,
+} from './room-panel';
 
 /**
  * The room's markup, for every phase and every row shape, as real HTML.
@@ -33,32 +41,63 @@ const row = (overrides: Partial<ParticipantRow> = {}): ParticipantRow => ({
   initials: 'A1',
   speaking: false,
   micOn: true,
+  videoKey: null,
   isSelf: false,
   ...overrides,
 });
+
+/** The callback ref the panel is handed. Never invoked here — SSR calls no ref. */
+const noVideoRef = (): void => undefined;
+
+/**
+ * One `<input>` tag, pulled out whole, so an assertion about its attributes does
+ * not depend on the ORDER ReactDOMServer happens to serialise them in.
+ *
+ * The first spelling matched `/aria-checked="true"[^>]*value="hide"/` across the
+ * document, which is three tests that go red on a React upgrade that reorders
+ * attributes — for no product reason at all, and in a way whose failure message
+ * says nothing about what actually broke.
+ */
+function inputWithValue(html: string, value: string): string {
+  const match = new RegExp(`<input[^>]*value="${value}"[^>]*>`).exec(html);
+  return match?.[0] ?? '';
+}
 
 function render(
   phase: JoinPhase,
   options: {
     readonly decision?: MediaDecision;
     readonly rows?: readonly ParticipantRow[];
+    /** Defaults to the decision's mode, which is what the shell starts from. */
+    readonly faceMode?: MediaFaceMode;
+    readonly showAvailable?: boolean;
+    readonly selfVideoOn?: boolean;
     readonly errorKey?: Parameters<typeof RoomPanel>[0]['errorKey'];
     readonly micNoticeKey?: Parameters<typeof RoomPanel>[0]['micNoticeKey'];
+    readonly videoNoticeKey?: Parameters<typeof RoomPanel>[0]['videoNoticeKey'];
     readonly audioBlocked?: boolean;
     readonly locale?: Locale;
   } = {},
 ): string {
+  const decision = options.decision ?? DECISION;
   const panel = (
     <RoomPanel
-      decision={options.decision ?? DECISION}
+      decision={decision}
       phase={phase}
       rows={options.rows ?? []}
+      faceMode={options.faceMode ?? decision.faceMode}
+      showAvailable={options.showAvailable ?? true}
+      selfVideoOn={options.selfVideoOn ?? false}
+      selfVideoKey="@self"
+      videoRef={noVideoRef}
       errorKey={options.errorKey ?? null}
       micNoticeKey={options.micNoticeKey ?? null}
+      videoNoticeKey={options.videoNoticeKey ?? null}
       audioBlocked={options.audioBlocked ?? false}
       onLeave={() => undefined}
       onEnableAudio={() => undefined}
       onBackToPreJoin={() => undefined}
+      onChangeFaceMode={() => undefined}
     />
   );
   return renderToStaticMarkup(
@@ -329,6 +368,8 @@ describe('both locales', () => {
         rows: [row({ isSelf: true, speaking: true }), row({ id: REMOTE_IDENTITY, micOn: false })],
         errorKey: 'room.errorConnect',
         micNoticeKey: 'room.errorMicEnded',
+        videoNoticeKey: 'room.errorCameraEnded',
+        selfVideoOn: true,
         audioBlocked: true,
       });
       // The phase's OWN heading, because there are four of them now.
@@ -353,5 +394,177 @@ describe('both locales', () => {
     expect(t.plural('room.participantCount', 1, { count: 1 })).not.toBe(
       t.plural('room.participantCount', 2, { count: 2 }),
     );
+  });
+});
+
+/* -------------------------------------------------------------------------- *
+ * Story 2.7 — the mode group, the preview, and a face in a row
+ * -------------------------------------------------------------------------- */
+
+describe('the face-mode group, in the room', () => {
+  it.each(['connecting', 'connected', 'reconnecting'] as const)(
+    'is offered from the first frame — %s included',
+    (phase) => {
+      /**
+       * `connecting` is the row that matters and it is the one a "render it when
+       * the list renders" version would drop. Somebody who pressed "Vào phòng" by
+       * mistake, or changed their mind during a slow handshake, must be able to
+       * take their face off the wire before the wire exists — and the shell's
+       * reconciler is built so that press is the one that wins.
+       */
+      const html = render(phase);
+      expect(html).toContain('role="radiogroup"');
+      expect(html).toContain(`id="${ROOM_FACE_MODE_LEGEND_ID}"`);
+      expect(html).toContain(VI_TRANSLATE('room.faceModeLegend'));
+    },
+  );
+
+  it.each(['failed', 'expired', 'left'] as const)('is gone once the room is not there — %s', (phase) => {
+    // A group that could still be pressed after the room ended would be three
+    // controls whose only possible effect is on a connection nobody has.
+    expect(render(phase)).not.toContain('role="radiogroup"');
+  });
+
+  it('is a labelled group of three radios, with exactly one of them checked', () => {
+    const html = render('connected', { faceMode: 'hide' });
+    for (const label of ['room.modeShow', 'room.modeHide', 'room.modeFilter'] as const) {
+      expect(html).toContain(VI_TRANSLATE(label));
+    }
+    expect(html).toContain(`aria-labelledby="${ROOM_FACE_MODE_LEGEND_ID}"`);
+    // `aria-checked` written out as well as implied, and on exactly the one in force.
+    expect((html.match(/aria-checked="true"/g) ?? []).length).toBe(1);
+    expect((html.match(/type="radio"/g) ?? []).length).toBe(3);
+    expect(inputWithValue(html, 'hide')).toContain('aria-checked="true"');
+  });
+
+  it('checks the mode IN FORCE, not the one the admission carried', () => {
+    /**
+     * The defect review round 1 reproduced, in its markup form: the person pressed
+     * "Ẩn mặt" in the room, and the screen went on reading the snapshot pre-join
+     * handed over. One prop decides both the radio and the sentence beside it, so
+     * the two cannot disagree.
+     */
+    const html = render('connected', {
+      decision: { faceMode: 'show', audio: 'mic' },
+      faceMode: 'hide',
+    });
+    expect(html).toContain(VI_TRANSLATE('room.faceHide'));
+    expect(html).not.toContain(VI_TRANSLATE('room.faceShow'));
+    expect(inputWithValue(html, 'hide')).toContain('aria-checked="true"');
+    expect(inputWithValue(html, 'show')).toContain('aria-checked="false"');
+  });
+
+  it('offers Filter and refuses it, labelled "Sắp có"', () => {
+    // The ML pipeline is a separate deliverable (`deferred-work.md`). A selectable
+    // Filter today would open a camera and publish an UNFILTERED face under a
+    // label promising a filter.
+    const html = render('connected');
+    expect(html).toContain(VI_TRANSLATE('room.modeFilter'));
+    expect(html).toContain(VI_TRANSLATE('room.comingSoon'));
+    expect(inputWithValue(html, 'filter')).toContain('disabled=""');
+  });
+
+  it('disables "Để nguyên" when there is no camera, and leaves "Ẩn mặt" alone', () => {
+    const html = render('connected', { showAvailable: false, faceMode: 'hide' });
+    expect(inputWithValue(html, 'show')).toContain('disabled=""');
+    expect(inputWithValue(html, 'hide')).not.toContain('disabled=""');
+  });
+
+  it('keeps "Để nguyên" selectable while a camera exists', () => {
+    expect(inputWithValue(render('connected'), 'show')).not.toContain('disabled=""');
+  });
+});
+
+describe('the preview of oneself is a CLAIM, so both halves have to be true', () => {
+  it('renders only when the mode is "show" AND the canvas track is published', () => {
+    const html = render('connected', { faceMode: 'show', selfVideoOn: true });
+    expect(html).toContain(`id="${ROOM_SELF_PREVIEW_ID}"`);
+    expect(html).toContain(VI_TRANSLATE('room.selfPreview'));
+  });
+
+  it('is absent while nothing is published, even in "show"', () => {
+    // The window between pressing "Để nguyên" and the publish landing. A preview
+    // here would promise a picture the room has not been sent.
+    const html = render('connected', { faceMode: 'show', selfVideoOn: false });
+    expect(html).not.toContain(`id="${ROOM_SELF_PREVIEW_ID}"`);
+    expect(html).not.toContain(VI_TRANSLATE('room.selfPreview'));
+  });
+
+  it('is absent in "hide" even if a publish is still coming down', () => {
+    /**
+     * THE state review round 1 found: a live preview under "Đây là hình mọi người
+     * đang thấy" with "Ẩn mặt" selected beside it. Checking `faceMode` here as
+     * well as `selfVideoOn` makes it unrenderable rather than unlikely.
+     */
+    const html = render('connected', { faceMode: 'hide', selfVideoOn: true });
+    expect(html).not.toContain(`id="${ROOM_SELF_PREVIEW_ID}"`);
+  });
+
+  it('never uses the mirrored pre-join class, because the wire is not a mirror', () => {
+    // `.preview-video` flips the picture (`scaleX(-1)`), which is right for
+    // somebody looking at themselves and wrong for the frames the room receives.
+    const html = render('connected', { faceMode: 'show', selfVideoOn: true });
+    expect(html).not.toContain('preview-video');
+    expect(html).toContain('room-video-frame');
+  });
+});
+
+describe('a row draws a face or the letters, never both', () => {
+  it('draws a video for a row whose camera is on', () => {
+    const html = render('connected', { rows: [row({ videoKey: `${REMOTE_IDENTITY}:TR_1`, initials: 'A1' })] });
+    expect(html).toContain('<video');
+    expect(html).toContain('participant-video');
+    expect(html).not.toContain('>A1<');
+  });
+
+  it('draws the letters for a row whose camera is off', () => {
+    const html = render('connected', { rows: [row({ videoKey: null, initials: 'A1' })] });
+    expect(html).toContain('>A1<');
+    expect(html).not.toContain('participant-video');
+  });
+
+  it('hides the picture from a screen reader, which reads the name on the next line', () => {
+    const html = render('connected', { rows: [row({ videoKey: `${REMOTE_IDENTITY}:TR_1` })] });
+    expect(html).toMatch(/class="participant-video" aria-hidden="true"/);
+  });
+
+  it('mutes every tile, so nobody is heard twice', () => {
+    // The room's sound comes from the hidden audio host the shell owns. An unmuted
+    // tile would be a second copy of the same voice, half a second apart.
+    const html = render('connected', { rows: [row({ videoKey: `${REMOTE_IDENTITY}:TR_1` })] });
+    expect(html).toContain('muted=""');
+  });
+});
+
+describe('the camera’s bad news is its own sentence', () => {
+  it.each([
+    'room.errorCameraDenied',
+    'room.errorCameraMissing',
+    'room.errorCameraEnded',
+    'room.errorVideoPipeline',
+    'room.errorVideoRefused',
+  ] as const)('renders %s as an alert, without leaving the room', (key) => {
+    const html = render('connected', { rows: [row()], videoNoticeKey: key });
+    expect(html).toContain(VI_TRANSLATE(key));
+    expect(html).toContain('role="alert"');
+    // Still in the room: the list and the way out are both still there.
+    expect(html).toContain(`id="${ROOM_PARTICIPANTS_ID}"`);
+    expect(html).toContain(VI_TRANSLATE('room.leave'));
+  });
+
+  it('is separate from the microphone’s, because one can be lost without the other', () => {
+    const html = render('connected', {
+      rows: [row()],
+      micNoticeKey: 'room.errorMicEnded',
+      videoNoticeKey: 'room.errorCameraEnded',
+    });
+    expect(html).toContain(VI_TRANSLATE('room.errorMicEnded'));
+    expect(html).toContain(VI_TRANSLATE('room.errorCameraEnded'));
+  });
+
+  it('says nothing about a camera when nothing happened to it', () => {
+    const html = render('connected', { rows: [row()] });
+    expect(html).not.toContain(VI_TRANSLATE('room.errorCameraEnded'));
+    expect(html).not.toContain(VI_TRANSLATE('room.errorVideoRefused'));
   });
 });

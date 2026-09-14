@@ -426,10 +426,33 @@ suite('Story 2.2 — a real livekit-server accepts the token apps/api mints, for
         roomJoin: true,
         canPublish: true,
         canSubscribe: true,
+        canPublishSources: ['microphone', 'camera'],
       });
       for (const grant of ['roomCreate', 'roomAdmin', 'roomList']) {
         expect(video).not.toHaveProperty(grant);
       }
+    });
+  });
+
+  it('permits the microphone and the camera as sources, and nothing else', () => {
+    /**
+     * Story 2.7, and pinned BY NAME on top of the exact-equality above for the
+     * reason the admin grants are: the failure this catches is somebody WIDENING
+     * the array rather than deleting it, and one more string in a list of two
+     * reads as harmless. `screen_share` is the one that is not — a study room that
+     * can share a screen is a room that can put somebody's desktop on the wire.
+     *
+     * Read off the token a real `livekit-server` has just accepted, so it is a
+     * claim about what the deployment issues rather than about a literal in a
+     * source file.
+     */
+    return minted().then((token) => {
+      const video = joseFromApi().decodeJwt(token)['video'] as Record<string, unknown>;
+      const sources = video['canPublishSources'] as readonly string[];
+      expect(sources).toEqual(['microphone', 'camera']);
+      expect(sources).not.toContain('screen_share');
+      expect(sources).not.toContain('screen_share_audio');
+      expect(JSON.stringify(video)).not.toContain('screen_share');
     });
   });
 });
